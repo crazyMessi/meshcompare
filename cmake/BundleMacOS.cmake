@@ -5,13 +5,26 @@ function(meshcompare_configure_macos_bundle target_name)
 
 	find_program(CODESIGN_EXECUTABLE codesign REQUIRED)
 	if(MESHCOMPARE_DEPLOY_QT)
-		find_program(
+		if(NOT TARGET Qt5::qmake)
+			message(FATAL_ERROR
+				"Qt5::qmake is required to locate the matching macdeployqt.")
+		endif()
+		get_target_property(
+			MESHCOMPARE_QMAKE_EXECUTABLE
+			Qt5::qmake
+			IMPORTED_LOCATION)
+		get_filename_component(
+			MESHCOMPARE_QT_BIN_DIR
+			"${MESHCOMPARE_QMAKE_EXECUTABLE}"
+			DIRECTORY)
+		set(
 			MACDEPLOYQT_EXECUTABLE
-			macdeployqt
-			HINTS
-				"/opt/homebrew/opt/qt@5/bin"
-				"/usr/local/opt/qt@5/bin"
-			REQUIRED)
+			"${MESHCOMPARE_QT_BIN_DIR}/macdeployqt")
+		if(NOT EXISTS "${MACDEPLOYQT_EXECUTABLE}")
+			message(FATAL_ERROR
+				"macdeployqt was not found next to the configured Qt qmake: "
+				"${MACDEPLOYQT_EXECUTABLE}")
+		endif()
 	endif()
 
 	get_target_property(meshcompare_glew_target_type external-glew TYPE)

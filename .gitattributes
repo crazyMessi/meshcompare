@@ -1,0 +1,3 @@
+# Preserve upstream formatting (including CRLF and historical trailing
+# whitespace) without making repository-level whitespace checks noisy.
+third_party/meshlab/** linguist-vendored -diff -whitespace

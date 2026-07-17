@@ -5,28 +5,33 @@ It keeps the MeshLab-style viewport engine behind a Renderer Adapter while
 owning its window, workflow, diagnostics, application data, build, and macOS
 bundle.
 
-## Source dependency
+## Dependencies
 
-The default layout is:
+The customized MeshLab/VCGLib viewport engine and its GLEW, EasyExif, and
+Eigen sources are vendored in this repository:
 
 ```text
-work/
-├── meshlab_lizd/  # viewport engine source
-└── meshcompare/   # this independent application
+meshcompare/
+├── src/
+└── third_party/meshlab/
 ```
 
-`MESHCOMPARE_MESHLAB_SOURCE_DIR` can point to another compatible MeshLab
-engine checkout. Configuration fails early when the required safe OpenGL
-context and GPU-buffer contracts are missing.
+Configuration and compilation do not download source code or read a sibling
+repository. The remaining build prerequisites are CMake 3.18 or newer, a C/C++
+toolchain, Qt 5.15, and the platform OpenGL SDK. On macOS, packaging also uses
+the `macdeployqt` installed alongside that Qt and the standard Xcode command
+line tools.
 
 ## Build
 
 ```bash
-cmake -S . -B build -G Ninja \
+cmake -S . -B build \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_PREFIX_PATH="$(brew --prefix qt@5)"
-cmake --build build --target meshcompare -j 8
+  -DCMAKE_PREFIX_PATH=/path/to/Qt/5.15
+cmake --build build --target meshcompare --parallel
 ```
+
+`CMAKE_PREFIX_PATH` can be omitted when Qt 5.15 is already discoverable.
 
 The macOS application is written to:
 
@@ -42,8 +47,8 @@ platform plugin are deployed into the signed bundle.
 Tests remain available as an opt-in build:
 
 ```bash
-cmake -S . -B build-tests -G Ninja -DBUILD_TESTING=ON
-cmake --build build-tests -j 8
+cmake -S . -B build-tests -DBUILD_TESTING=ON
+cmake --build build-tests --parallel
 ctest --test-dir build-tests -R '^meshcompare-' --output-on-failure
 ```
 
