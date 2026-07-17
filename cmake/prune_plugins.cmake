@@ -1,0 +1,11 @@
+if(NOT DEFINED PLUGIN_DIR OR NOT DEFINED KEEP_NAME)
+    message(FATAL_ERROR "PLUGIN_DIR and KEEP_NAME are required.")
+endif()
+
+file(GLOB plugin_files LIST_DIRECTORIES false "${PLUGIN_DIR}/*")
+foreach(plugin_file IN LISTS plugin_files)
+    get_filename_component(plugin_name "${plugin_file}" NAME)
+    if(NOT plugin_name STREQUAL KEEP_NAME)
+        file(REMOVE "${plugin_file}")
+    endif()
+endforeach()

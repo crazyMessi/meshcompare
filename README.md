@@ -1,0 +1,111 @@
+# Mesh Compare
+
+Mesh Compare is the standalone, single-workspace mesh comparison application.
+It keeps the MeshLab-style viewport engine behind a Renderer Adapter while
+owning its window, workflow, diagnostics, application data, build, and macOS
+bundle.
+
+## Source dependency
+
+The default layout is:
+
+```text
+work/
+├── meshlab_lizd/  # viewport engine source
+└── meshcompare/   # this independent application
+```
+
+`MESHCOMPARE_MESHLAB_SOURCE_DIR` can point to another compatible MeshLab
+engine checkout. Configuration fails early when the required safe OpenGL
+context and GPU-buffer contracts are missing.
+
+## Build
+
+```bash
+cmake -S . -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH="$(brew --prefix qt@5)"
+cmake --build build --target meshcompare -j 8
+```
+
+The macOS application is written to:
+
+```text
+build/dist/meshcompare.app
+```
+
+The build imports only `meshlab-common`, `io_base`, VCGLib, and the viewport
+sources it needs. It does not build or package MeshLab's MainWindow, filters,
+edit tools, render plugins, or decorators. On macOS, Qt frameworks and the
+platform plugin are deployed into the signed bundle.
+
+Tests remain available as an opt-in build:
+
+```bash
+cmake -S . -B build-tests -G Ninja -DBUILD_TESTING=ON
+cmake --build build-tests -j 8
+ctest --test-dir build-tests -R '^meshcompare-' --output-on-failure
+```
+
+## Launch
+
+Open the application normally, or pass 2–8 meshes to enter comparison mode
+immediately. Ordinary mesh files are displayed in one linked viewport per
+mesh:
+
+```bash
+open build/dist/meshcompare.app --args reference_gt.obj candidate.obj
+```
+
+Open one MeshLab project containing 2–8 mesh layers by itself to load its
+layers, names, order, and transforms into a single overlapping viewport:
+
+```bash
+open build/dist/meshcompare.app --args comparison.mlp
+```
+
+On macOS, `.mlp` is also registered as a document type, so a project can be
+opened from Finder. The in-app Open dialog and drag-and-drop accept the same
+project files. An MLP project cannot be mixed with ordinary mesh paths in one
+open request. Every listed mesh layer participates in comparison; saved
+MeshLab visibility flags are not used.
+
+The first mesh whose name contains the approved `gt` token becomes the initial
+Reference. If no mesh matches, the first imported mesh is used and the status
+area explains the fallback.
+
+## Application data
+
+On macOS, Mesh Compare uses its own application-data directory:
+
+```text
+~/Library/Application Support/VCG/MeshCompare/
+```
+
+The camera pose library is:
+
+```text
+~/Library/Application Support/VCG/MeshCompare/meshlab_lizd_camera_poses.json
+```
+
+On first launch, when this file does not yet exist, Mesh Compare copies an
+existing legacy library from the customized MeshLab data directory. It prefers
+an existing `MeshLab_64bit_fp` library and otherwise uses `MeshLab_64bit_dp`.
+Migration copies once; it never renames, deletes, or rewrites the legacy file.
+
+## Diagnostics
+
+The upper-right diagnostics menu contains only Reset Camera, Orthographic,
+Wireframe Overlay, Show Normals, Copy Diagnostics, Open Local Log, and About.
+Copied diagnostics include renderer and OpenGL information but never mesh
+source paths.
+
+The local JSONL log is stored at:
+
+```text
+~/Library/Application Support/VCG/MeshCompare/meshcompare-diagnostics.jsonl
+```
+
+It rotates before exceeding 2 MiB and retains one previous file named
+`meshcompare-diagnostics.previous.jsonl`. Logged mesh names containing `/` or
+`\` are replaced with `path_like_name_omitted`.
