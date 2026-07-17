@@ -23,6 +23,25 @@ SurfaceMeshSnapshot triangleAtZ(double z, bool reverseWinding = false)
     return mesh;
 }
 
+SurfaceMeshSnapshot twoLayerTriangles(bool oppositeNormals)
+{
+    SurfaceMeshSnapshot mesh;
+    mesh.vertices = {
+        SurfacePoint3D{0.0, 0.0, 0.0},
+        SurfacePoint3D{1.0, 0.0, 0.0},
+        SurfacePoint3D{0.0, 1.0, 0.0},
+        SurfacePoint3D{0.0, 0.0, 0.001},
+        SurfacePoint3D{1.0, 0.0, 0.001},
+        SurfacePoint3D{0.0, 1.0, 0.001},
+    };
+    mesh.faces = {
+        std::array<int, 3>{0, 1, 2},
+        oppositeNormals ? std::array<int, 3>{3, 5, 4}
+                        : std::array<int, 3>{3, 4, 5},
+    };
+    return mesh;
+}
+
 SurfaceComparisonOptions quickOptions()
 {
     SurfaceComparisonOptions options;
@@ -63,6 +82,225 @@ private slots:
         };
 
         QCOMPARE(mesh.vertices[1][0] - mesh.vertices[0][0], 1.0);
+    }
+
+    void distanceToReferenceComputesExactPerVertexTriangleDistances()
+    {
+        SurfaceMeshSnapshot source;
+        source.vertices = {
+            SurfacePoint3D{0.25, 0.25, 1.0},
+            SurfacePoint3D{2.0, 0.0, 0.0},
+            SurfacePoint3D{-1.0, -1.0, 0.0},
+            SurfacePoint3D{0.5, 0.5, 0.0},
+        };
+        const SurfaceMeshSnapshot reference = triangleAtZ(0.0);
+
+        const SurfaceComparisonOutcome outcome = compareSampledSurfaces(
+            source,
+            reference,
+            SurfaceComparisonMetric::DistanceToReference,
+            SurfaceComparisonOptions{});
+
+        QVERIFY2(outcome.result.ok, qPrintable(outcome.result.error));
+        QCOMPARE(outcome.comparison.vertexDistances.size(), 4);
+        QVERIFY(qAbs(outcome.comparison.vertexDistances[0] - 1.0) < 1e-12);
+        QVERIFY(qAbs(outcome.comparison.vertexDistances[1] - 1.0) < 1e-12);
+        QVERIFY(
+            qAbs(outcome.comparison.vertexDistances[2] - std::sqrt(2.0))
+            < 1e-12);
+        QVERIFY(qAbs(outcome.comparison.vertexDistances[3]) < 1e-12);
+        QCOMPARE(outcome.comparison.distanceStatistics.vertexCount, 4);
+        QCOMPARE(outcome.comparison.distanceStatistics.finiteVertexCount, 4);
+        QVERIFY(
+            qAbs(outcome.comparison.distanceStatistics.maxDistance - std::sqrt(2.0))
+            < 1e-12);
+    }
+
+    void distanceToReferenceBuildsOneIndexForTheWholeVertexBatch()
+    {
+        SurfaceMeshSnapshot source;
+        for (int index = 0; index < 100; ++index) {
+            source.vertices.append(
+                SurfacePoint3D{double(index) / 100.0, 0.25, 0.5});
+        }
+        int indexBuildMessages = 0;
+
+        const SurfaceComparisonOutcome outcome = compareSampledSurfaces(
+            source,
+            triangleAtZ(0.0),
+            SurfaceComparisonMetric::DistanceToReference,
+            SurfaceComparisonOptions{},
+            [&indexBuildMessages](int, const QString& message) {
+                if (message == QStringLiteral(
+                                   "Building reference triangle index...")) {
+                    ++indexBuildMessages;
+                }
+                return true;
+            });
+
+        QVERIFY2(outcome.result.ok, qPrintable(outcome.result.error));
+        QCOMPARE(indexBuildMessages, 1);
+        QCOMPARE(outcome.comparison.vertexDistances.size(), 100);
+    }
+
+    void distanceVertexColorsMatchMatplotlibViridisWithSqrtClamping()
+    {
+        const QVector<double> distances = {
+            0.0,
+            0.00015625,
+            0.0025,
+            0.01,
+            0.0225,
+            0.04,
+            1.0,
+            std::numeric_limits<double>::infinity(),
+            std::numeric_limits<double>::quiet_NaN(),
+        };
+
+        const QVector<QColor> colors = distanceToVertexColors(distances);
+
+        QCOMPARE(colors.size(), distances.size());
+        QCOMPARE(colors[0], QColor(68, 1, 84, 255));
+        QCOMPARE(colors[1], QColor(72, 24, 106, 255));
+        QCOMPARE(colors[2], QColor(59, 82, 139, 255));
+        QCOMPARE(colors[3], QColor(33, 145, 140, 255));
+        QCOMPARE(colors[4], QColor(94, 201, 98, 255));
+        QCOMPARE(colors[5], QColor(253, 231, 37, 255));
+        QCOMPARE(colors[6], QColor(253, 231, 37, 255));
+        QCOMPARE(colors[7], QColor(0, 0, 0, 255));
+        QCOMPARE(colors[8], QColor(0, 0, 0, 255));
+        QCOMPARE(
+            distanceToVertexColors({0.0, 1.0}, 0.0),
+            QVector<QColor>({
+                QColor(68, 1, 84, 255),
+                QColor(68, 1, 84, 255)}));
+    }
+
+    void doubleLayerIsDeterministicAndDetectsOnlyOppositeNearbyNormals()
+    {
+        SurfaceComparisonOptions options;
+        options.sampleCount = 512;
+        options.nearestNeighborCount = 20;
+        options.oppositeNormalAngleDegrees = 170.0;
+        options.doubleLayerRandomSeed = 0;
+
+        const SurfaceComparisonOutcome sameDirection = compareSampledSurfaces(
+            twoLayerTriangles(false),
+            {},
+            SurfaceComparisonMetric::DoubleLayer,
+            options);
+        const SurfaceComparisonOutcome opposite = compareSampledSurfaces(
+            twoLayerTriangles(true),
+            {},
+            SurfaceComparisonMetric::DoubleLayer,
+            options);
+        const SurfaceComparisonOutcome repeated = compareSampledSurfaces(
+            twoLayerTriangles(true),
+            {},
+            SurfaceComparisonMetric::DoubleLayer,
+            options);
+
+        QVERIFY2(sameDirection.result.ok, qPrintable(sameDirection.result.error));
+        QVERIFY2(opposite.result.ok, qPrintable(opposite.result.error));
+        QVERIFY2(repeated.result.ok, qPrintable(repeated.result.error));
+        QCOMPARE(
+            sameDirection.comparison.vertexScores,
+            QVector<double>(6, 0.0));
+        QVERIFY(opposite.comparison.doubleLayerStatistics.meanSampleScore > 0.0);
+        QVERIFY(
+            opposite.comparison.doubleLayerStatistics.affectedVertexFraction
+            > 0.0);
+        QCOMPARE(
+            repeated.comparison.vertexScores,
+            opposite.comparison.vertexScores);
+        QCOMPARE(
+            repeated.comparison.doubleLayerStatistics.meanSampleScore,
+            opposite.comparison.doubleLayerStatistics.meanSampleScore);
+    }
+
+    void doubleLayerProjectsFaceMaximumsAndUsesTheReferenceOrangeRedColors()
+    {
+        const QVector<std::array<int, 3>> faces = {
+            std::array<int, 3>{0, 1, 2},
+            std::array<int, 3>{2, 3, 4},
+        };
+
+        const QVector<double> vertexScores =
+            projectFaceMaximumScoresToVertices(
+                {0.25, 0.75},
+                faces,
+                5);
+        const QVector<QColor> colors = doubleLayerVertexColors(
+            {0.0, 0.25, 0.5625, 1.0});
+
+        QCOMPARE(
+            vertexScores,
+            QVector<double>({0.25, 0.25, 0.75, 0.75, 0.75}));
+        QCOMPARE(
+            colors,
+            QVector<QColor>({
+                QColor(180, 180, 180, 255),
+                QColor(255, 105, 24, 255),
+                QColor(255, 52, 36, 255),
+                QColor(255, 0, 48, 255),
+            }));
+    }
+
+    void newAnalysisDefaultsValidationAndCancellationAreModeSpecific()
+    {
+        const SurfaceComparisonOptions defaults;
+        QCOMPARE(defaults.sampleCount, 500000);
+        QCOMPARE(defaults.distanceColorMax, 0.04);
+        QCOMPARE(defaults.nearestNeighborCount, 20);
+        QCOMPARE(defaults.oppositeNormalAngleDegrees, 170.0);
+        QCOMPARE(defaults.doubleLayerRandomSeed, std::uint32_t(0));
+        QCOMPARE(defaults.randomSeed, std::uint32_t(0x4d595df4u));
+
+        SurfaceComparisonOptions invalid = defaults;
+        invalid.sampleCount = 0;
+        QVERIFY(!validateSurfaceComparisonOptions(
+                     SurfaceComparisonMetric::DoubleLayer,
+                     invalid)
+                     .ok);
+        invalid = defaults;
+        invalid.nearestNeighborCount = 0;
+        QVERIFY(!validateSurfaceComparisonOptions(
+                     SurfaceComparisonMetric::DoubleLayer,
+                     invalid)
+                     .ok);
+        invalid = defaults;
+        invalid.oppositeNormalAngleDegrees =
+            std::numeric_limits<double>::quiet_NaN();
+        QVERIFY(!validateSurfaceComparisonOptions(
+                     SurfaceComparisonMetric::DoubleLayer,
+                     invalid)
+                     .ok);
+        invalid = defaults;
+        invalid.oppositeNormalAngleDegrees = 181.0;
+        QVERIFY(!validateSurfaceComparisonOptions(
+                     SurfaceComparisonMetric::DoubleLayer,
+                     invalid)
+                     .ok);
+
+        int progressCalls = 0;
+        SurfaceComparisonOptions quick = defaults;
+        quick.sampleCount = 64;
+        const SurfaceComparisonOutcome cancelled = compareSampledSurfaces(
+            twoLayerTriangles(true),
+            {},
+            SurfaceComparisonMetric::DoubleLayer,
+            quick,
+            [&progressCalls](int, const QString&) {
+                ++progressCalls;
+                return false;
+            });
+        QVERIFY(!cancelled.result.ok);
+        QCOMPARE(
+            cancelled.result.error,
+            QStringLiteral("Analysis cancelled."));
+        QCOMPARE(progressCalls, 1);
+        QVERIFY(cancelled.comparison.vertexScores.isEmpty());
+        QCOMPARE(cancelled.comparison.doubleLayerStatistics.sampleCount, 0);
     }
 
     void identicalTrianglesHavePerfectScores()

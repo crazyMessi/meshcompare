@@ -13,6 +13,8 @@
 enum class SurfaceComparisonMetric {
     PrecisionAtThreshold,
     NormalAgreement,
+    DistanceToReference,
+    DoubleLayer,
 };
 
 using SurfacePoint3D = std::array<double, 3>;
@@ -28,6 +30,26 @@ struct SurfaceComparisonOptions {
     float distanceThreshold = 0.004f;
     bool useAbsoluteNormalDot = true;
     std::uint32_t randomSeed = 0x4d595df4u;
+    double distanceColorMax = 0.04;
+    int nearestNeighborCount = 20;
+    double oppositeNormalAngleDegrees = 170.0;
+    std::uint32_t doubleLayerRandomSeed = 0;
+};
+
+struct DistanceToReferenceStatistics {
+    int vertexCount = 0;
+    int finiteVertexCount = 0;
+    double meanDistance = 0.0;
+    double percentile99Distance = 0.0;
+    double maxDistance = 0.0;
+};
+
+struct DoubleLayerStatistics {
+    int sampleCount = 0;
+    double meanSampleScore = 0.0;
+    double affectedSampleFraction = 0.0;
+    double affectedFaceFraction = 0.0;
+    double affectedVertexFraction = 0.0;
 };
 
 struct SurfaceComparisonResult {
@@ -35,6 +57,10 @@ struct SurfaceComparisonResult {
     int coloredFaceCount = 0;
     double globalScore = 0.0;
     QVector<double> faceScores;
+    QVector<double> vertexDistances;
+    QVector<double> vertexScores;
+    DistanceToReferenceStatistics distanceStatistics;
+    DoubleLayerStatistics doubleLayerStatistics;
 };
 
 struct SurfaceComparisonOutcome {
@@ -84,3 +110,12 @@ SurfaceComparisonOutcome compareSampledSurfaces(
     AnalysisCancellation cancellationRequested = {});
 
 QVector<QColor> surfaceScoreColors(const QVector<double>& faceScores);
+QVector<QColor> distanceToVertexColors(
+    const QVector<double>& vertexDistances,
+    double maxDistance = 0.04);
+QVector<QColor> doubleLayerVertexColors(
+    const QVector<double>& vertexScores);
+QVector<double> projectFaceMaximumScoresToVertices(
+    const QVector<double>& faceScores,
+    const QVector<std::array<int, 3>>& faces,
+    int vertexCount);

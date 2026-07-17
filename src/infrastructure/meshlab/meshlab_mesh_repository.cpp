@@ -49,9 +49,13 @@ public:
             normalTransform.transposeInPlace();
         }
         bool recomputeNormals = !invertible;
+        const bool hasVertexColors =
+            mesh.hasDataMask(MeshModel::MM_VERTCOLOR);
 
         positions_.reserve(mesh.cm.vn);
         normals_.reserve(mesh.cm.vn);
+        if (hasVertexColors)
+            colors_.reserve(mesh.cm.vn);
         std::unordered_map<const CVertexO*, int> denseIndices;
         denseIndices.reserve(static_cast<std::size_t>(mesh.cm.vn));
         for (const CVertexO& vertex : mesh.cm.vert) {
@@ -89,6 +93,14 @@ public:
                 MeshPoint3D{{double(transformedNormal[0]),
                              double(transformedNormal[1]),
                              double(transformedNormal[2])}});
+            if (hasVertexColors) {
+                const auto& color = vertex.C();
+                colors_.append(QColor(
+                    int(color[0]),
+                    int(color[1]),
+                    int(color[2]),
+                    int(color[3])));
+            }
         }
 
         faces_.reserve(mesh.cm.fn);
@@ -119,6 +131,14 @@ public:
     MeshPoint3D vertexNormal(int index) const override
     {
         return normals_.at(index);
+    }
+    bool hasVertexColors() const override
+    {
+        return !colors_.isEmpty();
+    }
+    QColor vertexColor(int index) const override
+    {
+        return colors_.at(index);
     }
     int faceCount() const override { return faces_.size(); }
     std::array<int, 3> faceVertexIndices(int index) const override
@@ -154,6 +174,7 @@ private:
     QString validationError_;
     QVector<MeshPoint3D> positions_;
     QVector<MeshPoint3D> normals_;
+    QVector<QColor> colors_;
     QVector<std::array<int, 3>> faces_;
 };
 

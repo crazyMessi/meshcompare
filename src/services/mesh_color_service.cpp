@@ -16,8 +16,127 @@ namespace
 struct TargetSnapshot
 {
     MeshId meshId = 0;
+    int vertexCount = 0;
+    int faceCount = 0;
     SurfaceMeshSnapshot surface;
 };
+
+QVector<QColor> sourceOrFallbackVertexColors(
+    const IMeshGeometryView& geometry)
+{
+    QVector<QColor> colors;
+    colors.reserve(geometry.vertexCount());
+    if (geometry.hasVertexColors()) {
+        bool valid = true;
+        for (int index = 0; index < geometry.vertexCount(); ++index) {
+            const QColor color = geometry.vertexColor(index);
+            if (!color.isValid()) {
+                valid = false;
+                break;
+            }
+            colors.append(color);
+        }
+        if (valid && colors.size() == geometry.vertexCount())
+            return colors;
+        colors.clear();
+    }
+
+    colors.fill(QColor(180, 180, 180, 255), geometry.vertexCount());
+    return colors;
+}
+
+bool doubleLayerCacheOptionsMatch(
+    const SurfaceComparisonOptions& left,
+    const SurfaceComparisonOptions& right)
+{
+    return left.sampleCount == right.sampleCount &&
+           left.nearestNeighborCount == right.nearestNeighborCount &&
+           left.oppositeNormalAngleDegrees ==
+               right.oppositeNormalAngleDegrees &&
+           left.doubleLayerRandomSeed == right.doubleLayerRandomSeed;
+}
+
+AnalysisSummary distanceSummary(
+    const DistanceToReferenceStatistics& statistics)
+{
+    AnalysisSummary summary;
+    summary.kind = AnalysisKind::DistanceToReference;
+    summary.distance.vertexCount = statistics.vertexCount;
+    summary.distance.finiteVertexCount = statistics.finiteVertexCount;
+    summary.distance.meanDistance = statistics.meanDistance;
+    summary.distance.percentile99Distance =
+        statistics.percentile99Distance;
+    summary.distance.maxDistance = statistics.maxDistance;
+    return summary;
+}
+
+AnalysisSummary doubleLayerSummary(
+    const DoubleLayerStatistics& statistics)
+{
+    AnalysisSummary summary;
+    summary.kind = AnalysisKind::DoubleLayer;
+    summary.doubleLayer.sampleCount = statistics.sampleCount;
+    summary.doubleLayer.meanSampleScore = statistics.meanSampleScore;
+    summary.doubleLayer.affectedSampleFraction =
+        statistics.affectedSampleFraction;
+    summary.doubleLayer.affectedFaceFraction =
+        statistics.affectedFaceFraction;
+    summary.doubleLayer.affectedVertexFraction =
+        statistics.affectedVertexFraction;
+    return summary;
+}
+
+bool validUnitValue(double value)
+{
+    return std::isfinite(value) && value >= 0.0 && value <= 1.0;
+}
+
+bool validDistanceComparison(
+    const SurfaceComparisonResult& comparison,
+    int vertexCount)
+{
+    if (comparison.vertexDistances.size() != vertexCount ||
+        comparison.distanceStatistics.vertexCount != vertexCount ||
+        comparison.distanceStatistics.finiteVertexCount != vertexCount ||
+        !std::isfinite(comparison.distanceStatistics.meanDistance) ||
+        !std::isfinite(comparison.distanceStatistics.percentile99Distance) ||
+        !std::isfinite(comparison.distanceStatistics.maxDistance) ||
+        comparison.distanceStatistics.meanDistance < 0.0 ||
+        comparison.distanceStatistics.percentile99Distance < 0.0 ||
+        comparison.distanceStatistics.maxDistance < 0.0 ||
+        comparison.distanceStatistics.meanDistance >
+            comparison.distanceStatistics.maxDistance ||
+        comparison.distanceStatistics.percentile99Distance >
+            comparison.distanceStatistics.maxDistance) {
+        return false;
+    }
+    for (double distance : comparison.vertexDistances) {
+        if (!std::isfinite(distance) || distance < 0.0)
+            return false;
+    }
+    return true;
+}
+
+bool validDoubleLayerComparison(
+    const SurfaceComparisonResult& comparison,
+    int vertexCount)
+{
+    const DoubleLayerStatistics& statistics =
+        comparison.doubleLayerStatistics;
+    if (comparison.vertexScores.size() != vertexCount ||
+        statistics.sampleCount <= 0 ||
+        !validUnitValue(statistics.meanSampleScore) ||
+        !validUnitValue(statistics.affectedSampleFraction) ||
+        !validUnitValue(statistics.affectedFaceFraction) ||
+        !validUnitValue(statistics.affectedVertexFraction)) {
+        return false;
+    }
+    for (double score : comparison.vertexScores) {
+        if (!validUnitValue(score))
+            return false;
+    }
+    return true;
+}
 
 OperationResult copySurfaceSnapshot(
     const IMeshGeometryView& geometry,
@@ -87,6 +206,7 @@ public:
         quint64 batchSerial,
         SurfaceMeshSnapshot reference,
         QVector<TargetSnapshot> targets,
+        QHash<MeshId, SurfaceComparisonResult> reusableComparisons,
         std::shared_ptr<std::atomic_bool> cancellation)
         : owner_(&owner),
           comparer_(comparer),
@@ -94,6 +214,7 @@ public:
           batchSerial_(batchSerial),
           reference_(std::move(reference)),
           targets_(std::move(targets)),
+          reusableComparisons_(std::move(reusableComparisons)),
           cancellation_(std::move(cancellation))
     {
     }
@@ -147,15 +268,33 @@ private:
                         message);
                     return !cancellation_->load(std::memory_order_acquire);
                 };
-            const SurfaceComparisonOutcome outcome = comparer_.compare(
-                target.surface,
-                reference_,
-                request_.metric,
-                request_.options,
-                progress,
-                [this] {
-                    return cancellation_->load(std::memory_order_acquire);
-                });
+            SurfaceComparisonOutcome outcome;
+            bool reusedRawComparison = false;
+            const auto reusable =
+                reusableComparisons_.constFind(target.meshId);
+            if (reusable != reusableComparisons_.cend()) {
+                outcome.result = OperationResult::success();
+                outcome.comparison = reusable.value();
+                reusedRawComparison = true;
+                owner_->queueProgress(
+                    request_.generation,
+                    batchSerial_,
+                    target.meshId,
+                    100,
+                    QStringLiteral("Reusing cached analysis field..."));
+            }
+            else {
+                outcome = comparer_.compare(
+                    target.surface,
+                    reference_,
+                    request_.metric,
+                    request_.options,
+                    progress,
+                    [this] {
+                        return cancellation_->load(
+                            std::memory_order_acquire);
+                    });
+            }
             if (!outcome.result.ok) {
                 owner_->queueCompletion(failedBatch(
                     request_.generation,
@@ -164,32 +303,78 @@ private:
                     outcome.result.error));
                 return;
             }
-            bool validScores =
-                outcome.comparison.faceScores.size() == target.surface.faces.size() &&
-                outcome.comparison.coloredFaceCount == target.surface.faces.size() &&
-                std::isfinite(outcome.comparison.globalScore) &&
-                outcome.comparison.globalScore >= 0.0 &&
-                outcome.comparison.globalScore <= 1.0;
-            for (double faceScore : outcome.comparison.faceScores) {
-                if (!std::isfinite(faceScore) || faceScore < 0.0 || faceScore > 1.0) {
-                    validScores = false;
-                    break;
-                }
-            }
-            if (!validScores) {
-                owner_->queueCompletion(failedBatch(
-                    request_.generation,
-                    batchSerial_,
-                    request_.metric,
-                    QStringLiteral("Analysis returned invalid comparison scores.")));
-                return;
-            }
-
             MeshAnalysisResult result;
             result.result = OperationResult::success();
             result.meshId = target.meshId;
-            result.globalScore = outcome.comparison.globalScore;
-            result.faceColors = surfaceScoreColors(outcome.comparison.faceScores);
+            result.rawComparison = outcome.comparison;
+            result.reusedRawComparison = reusedRawComparison;
+            if (request_.metric ==
+                SurfaceComparisonMetric::DistanceToReference) {
+                if (!validDistanceComparison(
+                        outcome.comparison,
+                        target.vertexCount)) {
+                    owner_->queueCompletion(failedBatch(
+                        request_.generation,
+                        batchSerial_,
+                        request_.metric,
+                        QStringLiteral(
+                            "Distance analysis returned an invalid vertex field.")));
+                    return;
+                }
+                result.vertexColors = distanceToVertexColors(
+                    outcome.comparison.vertexDistances,
+                    request_.options.distanceColorMax);
+                result.analysisSummary =
+                    distanceSummary(outcome.comparison.distanceStatistics);
+            }
+            else if (request_.metric ==
+                     SurfaceComparisonMetric::DoubleLayer) {
+                if (!validDoubleLayerComparison(
+                        outcome.comparison,
+                        target.vertexCount)) {
+                    owner_->queueCompletion(failedBatch(
+                        request_.generation,
+                        batchSerial_,
+                        request_.metric,
+                        QStringLiteral(
+                            "Double-layer analysis returned an invalid vertex field.")));
+                    return;
+                }
+                result.vertexColors = doubleLayerVertexColors(
+                    outcome.comparison.vertexScores);
+                result.analysisSummary =
+                    doubleLayerSummary(
+                        outcome.comparison.doubleLayerStatistics);
+            }
+            else {
+                bool validScores =
+                    outcome.comparison.faceScores.size() ==
+                        target.faceCount &&
+                    outcome.comparison.coloredFaceCount ==
+                        target.faceCount &&
+                    std::isfinite(outcome.comparison.globalScore) &&
+                    outcome.comparison.globalScore >= 0.0 &&
+                    outcome.comparison.globalScore <= 1.0;
+                for (double faceScore : outcome.comparison.faceScores) {
+                    if (!std::isfinite(faceScore) ||
+                        faceScore < 0.0 || faceScore > 1.0) {
+                        validScores = false;
+                        break;
+                    }
+                }
+                if (!validScores) {
+                    owner_->queueCompletion(failedBatch(
+                        request_.generation,
+                        batchSerial_,
+                        request_.metric,
+                        QStringLiteral(
+                            "Analysis returned invalid comparison scores.")));
+                    return;
+                }
+                result.globalScore = outcome.comparison.globalScore;
+                result.faceColors =
+                    surfaceScoreColors(outcome.comparison.faceScores);
+            }
             staged.append(std::move(result));
         }
 
@@ -198,6 +383,8 @@ private:
         result.generation = request_.generation;
         result.batchSerial = batchSerial_;
         result.metric = request_.metric;
+        result.referenceId = request_.referenceId;
+        result.options = request_.options;
         result.meshes = std::move(staged);
         owner_->queueCompletion(std::move(result));
     }
@@ -210,6 +397,7 @@ private:
     quint64 batchSerial_ = 0;
     SurfaceMeshSnapshot reference_;
     QVector<TargetSnapshot> targets_;
+    QHash<MeshId, SurfaceComparisonResult> reusableComparisons_;
     std::shared_ptr<std::atomic_bool> cancellation_;
 };
 
@@ -263,10 +451,18 @@ OperationResult MeshColorService::startAnalysis(const AnalysisRequest& request)
     if (!optionsValidation.ok)
         return optionsValidation;
 
+    if (cacheGeneration_ != request.generation) {
+        distanceCache_.clear();
+        doubleLayerCache_.clear();
+        cacheGeneration_ = request.generation;
+    }
+
     QSet<MeshId> expectedTargets;
     for (const MeshEntry& mesh : state_.meshes()) {
-        if (mesh.id != state_.referenceId())
+        if (request.metric == SurfaceComparisonMetric::DoubleLayer ||
+            mesh.id != state_.referenceId()) {
             expectedTargets.insert(mesh.id);
+        }
     }
     QSet<MeshId> requestedTargets;
     for (MeshId targetId : request.targetIds) {
@@ -278,27 +474,89 @@ OperationResult MeshColorService::startAnalysis(const AnalysisRequest& request)
     }
     if (requestedTargets != expectedTargets ||
         request.targetIds.size() != expectedTargets.size()) {
-        return OperationResult::failure(QStringLiteral(
-            "Analysis targets must contain every non-Reference mesh exactly once."));
+        return OperationResult::failure(
+            request.metric == SurfaceComparisonMetric::DoubleLayer
+                ? QStringLiteral(
+                      "Double-layer targets must contain every mesh exactly once.")
+                : QStringLiteral(
+                      "Analysis targets must contain every non-Reference mesh exactly once."));
+    }
+
+    QHash<MeshId, SurfaceComparisonResult> reusableComparisons;
+    if (request.metric ==
+        SurfaceComparisonMetric::DistanceToReference) {
+        for (MeshId targetId : request.targetIds) {
+            const auto cached = distanceCache_.constFind(targetId);
+            if (cached != distanceCache_.cend() &&
+                cached->generation == request.generation &&
+                cached->referenceId == request.referenceId) {
+                reusableComparisons.insert(
+                    targetId, cached->comparison);
+            }
+        }
+    }
+    else if (request.metric == SurfaceComparisonMetric::DoubleLayer) {
+        for (MeshId targetId : request.targetIds) {
+            const auto cached = doubleLayerCache_.constFind(targetId);
+            if (cached != doubleLayerCache_.cend() &&
+                cached->generation == request.generation &&
+                doubleLayerCacheOptionsMatch(
+                    cached->options, request.options)) {
+                reusableComparisons.insert(
+                    targetId, cached->comparison);
+            }
+        }
     }
 
     SurfaceMeshSnapshot referenceSnapshot;
     QVector<TargetSnapshot> targetSnapshots;
+    QVector<QColor> referenceVertexColors;
     try {
-        const MeshEntry* referenceEntry = state_.mesh(request.referenceId);
-        const IMeshGeometryView* referenceGeometry =
-            resources_.geometry(referenceEntry->resourceId);
-        if (referenceGeometry == nullptr) {
-            return OperationResult::failure(
-                QStringLiteral("Reference mesh geometry is unavailable."));
+        OperationResult copied;
+        if (request.metric != SurfaceComparisonMetric::DoubleLayer) {
+            const MeshEntry* referenceEntry =
+                state_.mesh(request.referenceId);
+            const IMeshGeometryView* referenceGeometry =
+                resources_.geometry(referenceEntry->resourceId);
+            if (referenceGeometry == nullptr) {
+                return OperationResult::failure(
+                    QStringLiteral(
+                        "Reference mesh geometry is unavailable."));
+            }
+            if (request.metric ==
+                SurfaceComparisonMetric::DistanceToReference) {
+                referenceVertexColors =
+                    sourceOrFallbackVertexColors(*referenceGeometry);
+            }
+            const bool needsReferenceSurface =
+                request.metric !=
+                    SurfaceComparisonMetric::DistanceToReference ||
+                reusableComparisons.size() != request.targetIds.size();
+            if (needsReferenceSurface) {
+                copied = copySurfaceSnapshot(
+                    *referenceGeometry, &referenceSnapshot);
+                if (!copied.ok)
+                    return copied;
+            }
         }
-        OperationResult copied =
-            copySurfaceSnapshot(*referenceGeometry, &referenceSnapshot);
-        if (!copied.ok)
-            return copied;
 
         targetSnapshots.reserve(request.targetIds.size());
         for (MeshId targetId : request.targetIds) {
+            TargetSnapshot target;
+            target.meshId = targetId;
+            const auto reusable =
+                reusableComparisons.constFind(targetId);
+            if (reusable != reusableComparisons.cend()) {
+                target.vertexCount =
+                    request.metric ==
+                            SurfaceComparisonMetric::DistanceToReference
+                    ? reusable->vertexDistances.size()
+                    : reusable->vertexScores.size();
+                target.faceCount = reusable->faceScores.size();
+                targetSnapshots.append(std::move(target));
+                continue;
+            }
+
             const MeshEntry* entry = state_.mesh(targetId);
             Q_ASSERT(entry != nullptr);
             const IMeshGeometryView* geometry = resources_.geometry(entry->resourceId);
@@ -306,11 +564,11 @@ OperationResult MeshColorService::startAnalysis(const AnalysisRequest& request)
                 return OperationResult::failure(
                     QStringLiteral("Target mesh geometry is unavailable."));
             }
-            TargetSnapshot target;
-            target.meshId = targetId;
             copied = copySurfaceSnapshot(*geometry, &target.surface);
             if (!copied.ok)
                 return copied;
+            target.vertexCount = target.surface.vertices.size();
+            target.faceCount = target.surface.faces.size();
             targetSnapshots.append(std::move(target));
         }
     }
@@ -334,6 +592,7 @@ OperationResult MeshColorService::startAnalysis(const AnalysisRequest& request)
             candidateSerial,
             std::move(referenceSnapshot),
             std::move(targetSnapshots),
+            std::move(reusableComparisons),
             candidateCancellation));
     }
     catch (const std::exception& exception) {
@@ -347,6 +606,8 @@ OperationResult MeshColorService::startAnalysis(const AnalysisRequest& request)
     active_ = true;
     activeGeneration_ = request.generation;
     activeMetric_ = request.metric;
+    activeReferenceId_ = request.referenceId;
+    activeReferenceVertexColors_ = std::move(referenceVertexColors);
     activeBatchSerial_ = candidateSerial;
     nextBatchSerial_ = candidateSerial;
     cancellation_ = std::move(candidateCancellation);
@@ -382,6 +643,8 @@ void MeshColorService::stopAnalysis(bool notify)
     const bool wasActive = active_;
     active_ = false;
     activeGeneration_ = 0;
+    activeReferenceId_ = 0;
+    activeReferenceVertexColors_.clear();
     state_.finishAnalysis();
 
     if (notify && wasActive && !shuttingDown_) {
@@ -519,47 +782,113 @@ void MeshColorService::completeAnalysis(AnalysisBatchResult result)
     cancellation_.reset();
 
     if (result.generation != activeGeneration_ ||
-        result.generation != state_.generation()) {
+        result.generation != state_.generation() ||
+        (result.result.ok &&
+         result.referenceId != activeReferenceId_)) {
         result.result = OperationResult::failure(
             QStringLiteral("Analysis result belongs to a stale workspace generation."));
     }
 
     if (result.result.ok) {
+        const bool distanceMetric =
+            result.metric ==
+            SurfaceComparisonMetric::DistanceToReference;
+        const bool doubleLayerMetric =
+            result.metric == SurfaceComparisonMetric::DoubleLayer;
+        const bool vertexMetric = distanceMetric || doubleLayerMetric;
         QVector<MeshColorStateUpdate> stateUpdates;
         QVector<MeshColorPresentationUpdate> rendererUpdates;
-        stateUpdates.reserve(result.meshes.size());
-        rendererUpdates.reserve(result.meshes.size());
+        const int referenceUpdateCount = distanceMetric ? 1 : 0;
+        stateUpdates.reserve(
+            result.meshes.size() + referenceUpdateCount);
+        rendererUpdates.reserve(
+            result.meshes.size() + referenceUpdateCount);
         QSet<MeshId> resultIds;
-        const ColorMode mode = result.metric == SurfaceComparisonMetric::PrecisionAtThreshold
-            ? ColorMode::PrecisionResult
-            : ColorMode::NormalAgreementResult;
         for (const MeshAnalysisResult& meshResult : result.meshes) {
-            if (resultIds.contains(meshResult.meshId) ||
-                state_.mesh(meshResult.meshId) == nullptr ||
-                meshResult.faceColors.isEmpty() ||
-                !std::isfinite(meshResult.globalScore)) {
+            bool valid = !resultIds.contains(meshResult.meshId) &&
+                         state_.mesh(meshResult.meshId) != nullptr;
+            if (vertexMetric) {
+                const AnalysisKind expectedKind = distanceMetric
+                    ? AnalysisKind::DistanceToReference
+                    : AnalysisKind::DoubleLayer;
+                valid = valid && !meshResult.vertexColors.isEmpty() &&
+                        meshResult.faceColors.isEmpty() &&
+                        meshResult.analysisSummary.kind == expectedKind;
+            }
+            else {
+                valid = valid && meshResult.vertexColors.isEmpty() &&
+                        meshResult.faceColors.size() > 0 &&
+                        std::isfinite(meshResult.globalScore);
+            }
+            if (!valid) {
                 result.result = OperationResult::failure(
                     QStringLiteral("Analysis returned an invalid target result batch."));
                 break;
             }
             resultIds.insert(meshResult.meshId);
             ColorPresentation presentation;
-            presentation.mode = mode;
-            presentation.faceColors = meshResult.faceColors;
-            stateUpdates.append(
-                {meshResult.meshId, presentation, meshResult.globalScore, true});
+            if (vertexMetric) {
+                presentation.mode = ColorMode::VertexColor;
+                presentation.vertexColors = meshResult.vertexColors;
+                presentation.referenceDependent = distanceMetric;
+                stateUpdates.append(
+                    {meshResult.meshId,
+                     presentation,
+                     0.0,
+                     false,
+                     meshResult.analysisSummary});
+            }
+            else {
+                presentation.mode =
+                    result.metric ==
+                            SurfaceComparisonMetric::PrecisionAtThreshold
+                    ? ColorMode::PrecisionResult
+                    : ColorMode::NormalAgreementResult;
+                presentation.faceColors = meshResult.faceColors;
+                stateUpdates.append(
+                    {meshResult.meshId,
+                     presentation,
+                     meshResult.globalScore,
+                     true});
+            }
             rendererUpdates.append({meshResult.meshId, presentation});
         }
 
         if (result.result.ok) {
             QSet<MeshId> expectedIds;
             for (const MeshEntry& mesh : state_.meshes()) {
-                if (!mesh.isReference)
+                if (doubleLayerMetric || !mesh.isReference)
                     expectedIds.insert(mesh.id);
             }
             if (resultIds != expectedIds) {
                 result.result = OperationResult::failure(
                     QStringLiteral("Analysis did not return every target mesh."));
+            }
+        }
+
+        if (result.result.ok && distanceMetric) {
+            const MeshEntry* reference =
+                state_.mesh(activeReferenceId_);
+            if (reference == nullptr ||
+                activeReferenceVertexColors_.isEmpty()) {
+                result.result = OperationResult::failure(
+                    QStringLiteral(
+                        "Distance analysis reference colors are unavailable."));
+            }
+            else {
+                ColorPresentation presentation;
+                presentation.mode = ColorMode::VertexColor;
+                presentation.vertexColors =
+                    activeReferenceVertexColors_;
+                presentation.referenceDependent = true;
+                stateUpdates.append(
+                    {reference->id,
+                     presentation,
+                     0.0,
+                     false,
+                     AnalysisSummary{}});
+                rendererUpdates.append(
+                    {reference->id, presentation});
             }
         }
 
@@ -578,6 +907,32 @@ void MeshColorService::completeAnalysis(AnalysisBatchResult result)
                 }
                 else {
                     state_.commitPreparedColorUpdates(std::move(preparedState));
+                    if (distanceMetric) {
+                        for (const MeshAnalysisResult& meshResult :
+                             result.meshes) {
+                            DistanceCacheEntry cached;
+                            cached.generation = result.generation;
+                            cached.referenceId = result.referenceId;
+                            cached.comparison =
+                                meshResult.rawComparison;
+                            distanceCache_.insert(
+                                meshResult.meshId,
+                                std::move(cached));
+                        }
+                    }
+                    else if (doubleLayerMetric) {
+                        for (const MeshAnalysisResult& meshResult :
+                             result.meshes) {
+                            DoubleLayerCacheEntry cached;
+                            cached.generation = result.generation;
+                            cached.options = result.options;
+                            cached.comparison =
+                                meshResult.rawComparison;
+                            doubleLayerCache_.insert(
+                                meshResult.meshId,
+                                std::move(cached));
+                        }
+                    }
                 }
             }
         }
@@ -585,6 +940,8 @@ void MeshColorService::completeAnalysis(AnalysisBatchResult result)
 
     active_ = false;
     activeGeneration_ = 0;
+    activeReferenceId_ = 0;
+    activeReferenceVertexColors_.clear();
     state_.finishAnalysis();
     emit analysisFinished(std::move(result));
 }

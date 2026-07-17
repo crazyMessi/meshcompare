@@ -12,6 +12,12 @@ public:
     virtual int vertexCount() const = 0;
     virtual MeshPoint3D vertexPosition(int index) const = 0;
     virtual MeshPoint3D vertexNormal(int index) const = 0;
+    virtual bool hasVertexColors() const { return false; }
+    virtual QColor vertexColor(int index) const
+    {
+        Q_UNUSED(index);
+        return {};
+    }
     virtual int faceCount() const = 0;
     virtual std::array<int, 3> faceVertexIndices(int index) const = 0;
 };

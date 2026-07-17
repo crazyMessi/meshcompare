@@ -39,9 +39,17 @@ void appendNotice(QString& destination, const QString& notice)
 
 QString analysisMetricName(SurfaceComparisonMetric metric)
 {
-    return metric == SurfaceComparisonMetric::PrecisionAtThreshold
-               ? QStringLiteral("precision")
-               : QStringLiteral("normal_agreement");
+    switch (metric) {
+    case SurfaceComparisonMetric::PrecisionAtThreshold:
+        return QStringLiteral("precision");
+    case SurfaceComparisonMetric::NormalAgreement:
+        return QStringLiteral("normal_agreement");
+    case SurfaceComparisonMetric::DistanceToReference:
+        return QStringLiteral("distance");
+    case SurfaceComparisonMetric::DoubleLayer:
+        return QStringLiteral("double_layer");
+    }
+    return QStringLiteral("unknown");
 }
 } // namespace
 

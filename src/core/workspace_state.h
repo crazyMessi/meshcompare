@@ -19,6 +19,8 @@ struct MeshEntry {
     ColorPresentation presentation;
     double score = 0.0;
     bool hasScore = false;
+    bool visible = true;
+    AnalysisSummary analysisSummary;
 };
 
 struct MeshColorStateUpdate {
@@ -26,6 +28,7 @@ struct MeshColorStateUpdate {
     ColorPresentation presentation;
     double score = 0.0;
     bool hasScore = false;
+    AnalysisSummary analysisSummary;
 };
 
 class PreparedColorStateUpdate {
@@ -69,15 +72,21 @@ public:
     const MeshEntry* mesh(MeshId id) const;
     MeshId selectedMeshId() const;
     MeshId referenceId() const;
+    SceneLayoutMode layoutMode() const;
 
     void beginLoading();
     void cancelLoading();
     OperationResult validateWorkspace(
         const QVector<MeshEntry>& meshes,
         MeshId referenceId) const;
-    OperationResult commitWorkspace(QVector<MeshEntry> meshes, MeshId referenceId);
+    OperationResult commitWorkspace(
+        QVector<MeshEntry> meshes,
+        MeshId referenceId,
+        SceneLayoutMode layoutMode = SceneLayoutMode::ComparisonGrid);
     OperationResult setSelectedMesh(MeshId id);
     OperationResult setReference(MeshId id);
+    OperationResult setLayoutMode(SceneLayoutMode layoutMode);
+    OperationResult setMeshVisible(MeshId id, bool visible);
     OperationResult beginAnalysis();
     void finishAnalysis();
     OperationResult validateColorUpdates(
@@ -97,4 +106,5 @@ private:
     QVector<MeshEntry> meshes_;
     MeshId selectedMeshId_ = 0;
     MeshId referenceId_ = 0;
+    SceneLayoutMode layoutMode_ = SceneLayoutMode::ComparisonGrid;
 };

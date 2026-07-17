@@ -4,6 +4,7 @@
 #include <memory>
 
 #include <QObject>
+#include <QHash>
 #include <QVector>
 
 #include "core/mesh_resource_provider.h"
@@ -28,6 +29,10 @@ struct MeshAnalysisResult
     MeshId meshId = 0;
     double globalScore = 0.0;
     QVector<QColor> faceColors;
+    QVector<QColor> vertexColors;
+    AnalysisSummary analysisSummary;
+    SurfaceComparisonResult rawComparison;
+    bool reusedRawComparison = false;
 };
 
 struct AnalysisBatchResult
@@ -36,6 +41,8 @@ struct AnalysisBatchResult
     quint64 generation = 0;
     quint64 batchSerial = 0;
     SurfaceComparisonMetric metric = SurfaceComparisonMetric::PrecisionAtThreshold;
+    MeshId referenceId = 0;
+    SurfaceComparisonOptions options;
     QVector<MeshAnalysisResult> meshes;
 };
 
@@ -81,6 +88,20 @@ signals:
 private:
     friend class MeshColorAnalysisThread;
 
+    struct DistanceCacheEntry
+    {
+        quint64 generation = 0;
+        MeshId referenceId = 0;
+        SurfaceComparisonResult comparison;
+    };
+
+    struct DoubleLayerCacheEntry
+    {
+        quint64 generation = 0;
+        SurfaceComparisonOptions options;
+        SurfaceComparisonResult comparison;
+    };
+
     void queueProgress(
         quint64 generation,
         quint64 batchSerial,
@@ -108,6 +129,11 @@ private:
     quint64 activeBatchSerial_ = 0;
     quint64 activeGeneration_ = 0;
     SurfaceComparisonMetric activeMetric_ = SurfaceComparisonMetric::PrecisionAtThreshold;
+    MeshId activeReferenceId_ = 0;
+    QVector<QColor> activeReferenceVertexColors_;
+    QHash<MeshId, DistanceCacheEntry> distanceCache_;
+    QHash<MeshId, DoubleLayerCacheEntry> doubleLayerCache_;
+    quint64 cacheGeneration_ = 0;
     bool active_ = false;
     bool shuttingDown_ = false;
 };

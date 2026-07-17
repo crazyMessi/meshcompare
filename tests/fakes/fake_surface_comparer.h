@@ -41,6 +41,55 @@ public:
         enqueue({OperationResult::failure(error), {}});
     }
 
+    void enqueueDistanceSuccess(
+        QVector<double> vertexDistances,
+        DistanceToReferenceStatistics statistics = {})
+    {
+        SurfaceComparisonOutcome outcome;
+        outcome.result = OperationResult::success();
+        outcome.comparison.vertexDistances = std::move(vertexDistances);
+        if (statistics.vertexCount == 0) {
+            statistics.vertexCount = outcome.comparison.vertexDistances.size();
+            statistics.finiteVertexCount =
+                outcome.comparison.vertexDistances.size();
+            for (double distance : outcome.comparison.vertexDistances) {
+                statistics.meanDistance += distance;
+                statistics.maxDistance =
+                    qMax(statistics.maxDistance, distance);
+            }
+            if (!outcome.comparison.vertexDistances.isEmpty()) {
+                statistics.meanDistance /=
+                    outcome.comparison.vertexDistances.size();
+                statistics.percentile99Distance = statistics.maxDistance;
+            }
+        }
+        outcome.comparison.distanceStatistics = statistics;
+        enqueue(std::move(outcome));
+    }
+
+    void enqueueDoubleLayerSuccess(
+        QVector<double> vertexScores,
+        DoubleLayerStatistics statistics = {})
+    {
+        SurfaceComparisonOutcome outcome;
+        outcome.result = OperationResult::success();
+        outcome.comparison.vertexScores = std::move(vertexScores);
+        if (statistics.sampleCount == 0) {
+            statistics.sampleCount = 1;
+            statistics.affectedVertexFraction = 0.0;
+            for (double score : outcome.comparison.vertexScores) {
+                if (score > 0.0)
+                    statistics.affectedVertexFraction += 1.0;
+            }
+            if (!outcome.comparison.vertexScores.isEmpty()) {
+                statistics.affectedVertexFraction /=
+                    outcome.comparison.vertexScores.size();
+            }
+        }
+        outcome.comparison.doubleLayerStatistics = statistics;
+        enqueue(std::move(outcome));
+    }
+
     void pauseNextComparison()
     {
         QMutexLocker lock(&mutex_);

@@ -45,6 +45,20 @@ WorkspaceImportOutcome failureOutcome(
 
 QString analysisScoreLabel(const MeshEntry& mesh)
 {
+    if (mesh.analysisSummary.kind == AnalysisKind::DistanceToReference) {
+        return QStringLiteral("D p99 %1").arg(
+            mesh.analysisSummary.distance.percentile99Distance,
+            0,
+            'g',
+            4);
+    }
+    if (mesh.analysisSummary.kind == AnalysisKind::DoubleLayer) {
+        return QStringLiteral("DL %1%").arg(
+            mesh.analysisSummary.doubleLayer.affectedFaceFraction * 100.0,
+            0,
+            'f',
+            1);
+    }
     if (!mesh.hasScore)
         return {};
 
@@ -303,8 +317,7 @@ OperationResult WorkspaceController::setReference(MeshId id)
 
     QVector<MeshColorPresentationUpdate> clearUpdates;
     for (const MeshEntry& mesh : state_.meshes()) {
-        if (mesh.presentation.mode == ColorMode::PrecisionResult ||
-            mesh.presentation.mode == ColorMode::NormalAgreementResult) {
+        if (isReferenceDependent(mesh.presentation)) {
             clearUpdates.append({mesh.id, ColorPresentation{}});
         }
     }
@@ -366,8 +379,10 @@ OperationResult WorkspaceController::startAnalysis(
     request.metric = metric;
     request.options = options;
     for (const MeshEntry& mesh : state_.meshes()) {
-        if (!mesh.isReference)
+        if (metric == SurfaceComparisonMetric::DoubleLayer ||
+            !mesh.isReference) {
             request.targetIds.append(mesh.id);
+        }
     }
     const OperationResult started = colorService_->startAnalysis(request);
     if (!started.ok)

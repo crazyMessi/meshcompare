@@ -163,6 +163,54 @@ private slots:
         QVERIFY(staged.repository != nullptr);
     }
 
+    void importsPlyVertexColorsIntoGeometrySnapshot()
+    {
+        QVERIFY(loadIoBasePlugin());
+
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString path =
+            directory.filePath(QStringLiteral("colored-triangle.ply"));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+        const QByteArray ply = QByteArrayLiteral(
+            "ply\n"
+            "format ascii 1.0\n"
+            "element vertex 3\n"
+            "property float x\n"
+            "property float y\n"
+            "property float z\n"
+            "property uchar red\n"
+            "property uchar green\n"
+            "property uchar blue\n"
+            "property uchar alpha\n"
+            "element face 1\n"
+            "property list uchar int vertex_indices\n"
+            "end_header\n"
+            "0 0 0 255 0 0 255\n"
+            "1 0 0 0 255 0 128\n"
+            "0 1 0 0 0 255 64\n"
+            "3 0 1 2\n");
+        QCOMPARE(file.write(ply), ply.size());
+        file.close();
+
+        MeshLabMeshLoader loader;
+        MeshLabMeshRepository repository;
+        QVector<LoadedMesh> loaded;
+        const OperationResult result =
+            loader.loadFile(path, repository, &loaded);
+
+        QVERIFY2(result.ok, qPrintable(result.error));
+        QCOMPARE(loaded.size(), 1);
+        const IMeshGeometryView* geometry =
+            repository.geometry(loaded.front().resourceId);
+        QVERIFY(geometry != nullptr);
+        QVERIFY(geometry->hasVertexColors());
+        QCOMPARE(geometry->vertexColor(0), QColor(255, 0, 0, 255));
+        QCOMPARE(geometry->vertexColor(1), QColor(0, 255, 0, 128));
+        QCOMPARE(geometry->vertexColor(2), QColor(0, 0, 255, 64));
+    }
+
     void importsMeshLabProjectAsAnOrderedOverlayInWorldSpace()
     {
         QVERIFY(loadIoBasePlugin());

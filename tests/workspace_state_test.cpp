@@ -207,6 +207,33 @@ private slots:
         QCOMPARE(state.selectedMeshId(), MeshId(2));
     }
 
+    void layerVisibilityKeepsAtLeastOneMeshVisible()
+    {
+        WorkspaceState state;
+        state.beginLoading();
+        QVERIFY(state
+                    .commitWorkspace(
+                        {makeEntry(1), makeEntry(2), makeEntry(3)},
+                        1,
+                        SceneLayoutMode::Overlay)
+                    .ok);
+        for (const MeshEntry& mesh : state.meshes())
+            QVERIFY(mesh.visible);
+
+        QVERIFY(state.setMeshVisible(2, false).ok);
+        QVERIFY(state.setMeshVisible(3, false).ok);
+        QVERIFY(!state.mesh(2)->visible);
+        QVERIFY(!state.mesh(3)->visible);
+
+        const OperationResult lastVisible =
+            state.setMeshVisible(1, false);
+        QVERIFY(!lastVisible.ok);
+        QVERIFY(state.mesh(1)->visible);
+        QVERIFY(!state.setMeshVisible(99, false).ok);
+        QVERIFY(state.setMeshVisible(2, true).ok);
+        QVERIFY(state.mesh(2)->visible);
+    }
+
     void fatalTransitionEntersFatalPhase()
     {
         WorkspaceState state;
@@ -251,6 +278,46 @@ private slots:
         QVERIFY(!state.meshes().at(0).hasScore);
         QVERIFY(!state.meshes().at(1).hasScore);
         QVERIFY(!state.meshes().at(2).hasScore);
+    }
+
+    void changingReferenceClearsDistanceButPreservesDoubleLayer()
+    {
+        MeshEntry distance = makeEntry(1);
+        distance.presentation.mode = ColorMode::VertexColor;
+        distance.presentation.vertexColors = {
+            QColor(Qt::red), QColor(Qt::green), QColor(Qt::blue)};
+        distance.presentation.referenceDependent = true;
+        distance.analysisSummary.kind = AnalysisKind::DistanceToReference;
+        distance.analysisSummary.distance.meanDistance = 0.001;
+        distance.analysisSummary.distance.percentile99Distance = 0.004;
+        distance.analysisSummary.distance.maxDistance = 0.02;
+
+        MeshEntry doubleLayer = makeEntry(2);
+        doubleLayer.presentation.mode = ColorMode::VertexColor;
+        doubleLayer.presentation.vertexColors = {
+            QColor(Qt::gray), QColor(Qt::yellow), QColor(Qt::red)};
+        doubleLayer.analysisSummary.kind = AnalysisKind::DoubleLayer;
+        doubleLayer.analysisSummary.doubleLayer.sampleCount = 10;
+        doubleLayer.analysisSummary.doubleLayer.meanSampleScore = 0.1;
+        doubleLayer.analysisSummary.doubleLayer.affectedSampleFraction = 0.2;
+        doubleLayer.analysisSummary.doubleLayer.affectedFaceFraction = 0.3;
+        doubleLayer.analysisSummary.doubleLayer.affectedVertexFraction = 0.4;
+
+        WorkspaceState state;
+        state.beginLoading();
+        QVERIFY(state.commitWorkspace({distance, doubleLayer}, 1).ok);
+
+        QVERIFY(state.setReference(2).ok);
+
+        QCOMPARE(state.mesh(1)->presentation.mode, ColorMode::Default);
+        QCOMPARE(state.mesh(1)->analysisSummary.kind, AnalysisKind::None);
+        QCOMPARE(state.mesh(2)->presentation.mode, ColorMode::VertexColor);
+        QCOMPARE(
+            state.mesh(2)->analysisSummary.kind,
+            AnalysisKind::DoubleLayer);
+        QCOMPARE(
+            state.mesh(2)->analysisSummary.doubleLayer.affectedFaceFraction,
+            0.3);
     }
 
     void changingReferenceRejectsUnknownMesh()
@@ -342,6 +409,128 @@ private slots:
         strayAnalytical.uniformColor = QColor(Qt::blue);
         QVERIFY(!state.validateColorUpdates({{2, strayAnalytical, 0.9, true}}).ok);
         QVERIFY(!state.validateColorUpdates({{2, precision, 1.01, true}}).ok);
+    }
+
+    void vertexColorUpdateValidatesAndCommitsAtomically()
+    {
+        WorkspaceState state;
+        state.beginLoading();
+        QVERIFY(state.commitWorkspace({makeEntry(1), makeEntry(2)}, 1).ok);
+
+        ColorPresentation vertexAnalysis;
+        vertexAnalysis.mode = ColorMode::PrecisionResult;
+        vertexAnalysis.vertexColors = {
+            QColor(Qt::red), QColor(Qt::green), QColor(Qt::blue)};
+        PreparedColorStateUpdate prepared;
+        QVERIFY(state
+                    .prepareColorUpdates(
+                        {{2, vertexAnalysis, 0.75, true}},
+                        &prepared)
+                    .ok);
+        state.commitPreparedColorUpdates(std::move(prepared));
+        QCOMPARE(
+            state.mesh(2)->presentation.vertexColors,
+            vertexAnalysis.vertexColors);
+
+        ColorPresentation bothDomains = vertexAnalysis;
+        bothDomains.faceColors = {QColor(Qt::yellow)};
+        QVERIFY(!state
+                     .validateColorUpdates(
+                         {{2, bothDomains, 0.75, true}})
+                     .ok);
+
+        ColorPresentation invalidVertex = vertexAnalysis;
+        invalidVertex.vertexColors[1] = QColor();
+        QVERIFY(!state
+                     .validateColorUpdates(
+                         {{2, invalidVertex, 0.75, true}})
+                     .ok);
+
+        ColorPresentation strayDefault;
+        strayDefault.vertexColors = {QColor(Qt::red)};
+        QVERIFY(!state
+                     .validateColorUpdates(
+                         {{2, strayDefault, 0.0, false}})
+                     .ok);
+
+        ColorPresentation strayUniform;
+        strayUniform.mode = ColorMode::UniformColor;
+        strayUniform.uniformColor = QColor(Qt::white);
+        strayUniform.vertexColors = {QColor(Qt::red)};
+        QVERIFY(!state
+                     .validateColorUpdates(
+                         {{2, strayUniform, 0.0, false}})
+                     .ok);
+    }
+
+    void typedVertexAnalysisSummaryMustMatchItsPresentation()
+    {
+        WorkspaceState state;
+        state.beginLoading();
+        QVERIFY(state.commitWorkspace({makeEntry(1), makeEntry(2)}, 1).ok);
+
+        ColorPresentation vertexPresentation;
+        vertexPresentation.mode = ColorMode::VertexColor;
+        vertexPresentation.vertexColors = {
+            QColor(Qt::red), QColor(Qt::green), QColor(Qt::blue)};
+        vertexPresentation.referenceDependent = true;
+        AnalysisSummary distance;
+        distance.kind = AnalysisKind::DistanceToReference;
+        distance.distance.vertexCount = 3;
+        distance.distance.finiteVertexCount = 3;
+        distance.distance.meanDistance = 0.001;
+        distance.distance.percentile99Distance = 0.004;
+        distance.distance.maxDistance = 0.02;
+
+        PreparedColorStateUpdate prepared;
+        QVERIFY(state
+                    .prepareColorUpdates(
+                        {{2,
+                          vertexPresentation,
+                          0.0,
+                          false,
+                          distance}},
+                        &prepared)
+                    .ok);
+        state.commitPreparedColorUpdates(std::move(prepared));
+        QCOMPARE(
+            state.mesh(2)->analysisSummary.kind,
+            AnalysisKind::DistanceToReference);
+        QCOMPARE(
+            state.mesh(2)->analysisSummary.distance.percentile99Distance,
+            0.004);
+
+        AnalysisSummary invalidDistance = distance;
+        invalidDistance.distance.maxDistance = -1.0;
+        QVERIFY(!state
+                     .validateColorUpdates(
+                         {{2,
+                           vertexPresentation,
+                           0.0,
+                           false,
+                           invalidDistance}})
+                     .ok);
+
+        ColorPresentation uniform;
+        uniform.mode = ColorMode::UniformColor;
+        uniform.uniformColor = QColor(Qt::white);
+        QVERIFY(!state
+                     .validateColorUpdates(
+                         {{2, uniform, 0.0, false, distance}})
+                     .ok);
+
+        AnalysisSummary doubleLayer;
+        doubleLayer.kind = AnalysisKind::DoubleLayer;
+        doubleLayer.doubleLayer.sampleCount = 10;
+        doubleLayer.doubleLayer.affectedFaceFraction = 1.1;
+        QVERIFY(!state
+                     .validateColorUpdates(
+                         {{2,
+                           vertexPresentation,
+                           0.0,
+                           false,
+                           doubleLayer}})
+                     .ok);
     }
 
     void clearingColoringResetsAllPresentationsAndScoresAtOnce()

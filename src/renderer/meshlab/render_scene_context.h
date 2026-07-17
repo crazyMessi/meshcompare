@@ -38,6 +38,7 @@ struct RenderSceneSettings
 struct RenderPresentationUpload
 {
     bool faceColorsChanged = false;
+    bool vertexColorsChanged = false;
 };
 
 // Isolates the MeshLab buffer/publication boundary from the CPU transaction.

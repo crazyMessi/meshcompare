@@ -3,7 +3,6 @@
 #include <functional>
 
 #include <QApplication>
-#include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QLabel>
@@ -127,7 +126,7 @@ class ColoringPanelTest : public QObject
     Q_OBJECT
 
 private slots:
-    void exposesEnglishModesAndExactAdvancedDefaults()
+    void exposesTheApprovedColoringModes()
     {
         WorkspaceState state;
         makeReady(state);
@@ -139,11 +138,27 @@ private slots:
         QVERIFY(panel.palette().brush(QPalette::Window).isOpaque());
 
         auto* tabs = panel.findChild<QTabBar*>(QStringLiteral("coloringModeTabs"));
+        QVERIFY(tabs != nullptr);
+        QCOMPARE(tabs->count(), 3);
+        QCOMPARE(tabs->tabText(0), QStringLiteral("Uniform Color"));
+        QCOMPARE(tabs->tabText(1), QStringLiteral("Distance"));
+        QCOMPARE(tabs->tabText(2), QStringLiteral("Double Layer"));
+    }
+
+    void exposesExactAdvancedDefaults()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingColoringCommands commands(state);
+        ColoringPanel panel(state, commands);
+
         auto* samples = panel.findChild<QSpinBox*>(QStringLiteral("sampleCountSpin"));
-        auto* threshold =
-            panel.findChild<QDoubleSpinBox*>(QStringLiteral("distanceThresholdSpin"));
-        auto* absolute =
-            panel.findChild<QCheckBox*>(QStringLiteral("absoluteNormalDotCheck"));
+        auto* distanceColorMax =
+            panel.findChild<QDoubleSpinBox*>(QStringLiteral("distanceColorMaxSpin"));
+        auto* nearestNeighborCount =
+            panel.findChild<QSpinBox*>(QStringLiteral("nearestNeighborCountSpin"));
+        auto* oppositeNormalAngle =
+            panel.findChild<QDoubleSpinBox*>(QStringLiteral("oppositeNormalAngleSpin"));
         auto* advancedToggle =
             panel.findChild<QToolButton*>(QStringLiteral("advancedParametersToggle"));
         auto* advanced =
@@ -151,22 +166,24 @@ private slots:
         auto* chooseColor =
             panel.findChild<QPushButton*>(QStringLiteral("chooseUniformColorButton"));
 
-        QVERIFY(tabs != nullptr);
-        QCOMPARE(tabs->count(), 3);
-        QCOMPARE(tabs->tabText(0), QStringLiteral("Uniform Color"));
-        QCOMPARE(tabs->tabText(1), QStringLiteral("Precision"));
-        QCOMPARE(tabs->tabText(2), QStringLiteral("Normal Agreement"));
         QVERIFY(samples != nullptr);
         QCOMPARE(samples->minimum(), 1);
         QCOMPARE(samples->maximum(), 5000000);
         QCOMPARE(samples->value(), 500000);
-        QVERIFY(threshold != nullptr);
-        QCOMPARE(threshold->decimals(), 6);
-        QCOMPARE(threshold->minimum(), 0.0);
-        QCOMPARE(threshold->maximum(), 1000000.0);
-        QCOMPARE(threshold->value(), 0.004);
-        QVERIFY(absolute != nullptr);
-        QVERIFY(absolute->isChecked());
+        QVERIFY(distanceColorMax != nullptr);
+        QCOMPARE(distanceColorMax->decimals(), 6);
+        QCOMPARE(distanceColorMax->minimum(), 0.0);
+        QCOMPARE(distanceColorMax->maximum(), 1000000.0);
+        QCOMPARE(distanceColorMax->value(), 0.04);
+        QVERIFY(nearestNeighborCount != nullptr);
+        QCOMPARE(nearestNeighborCount->minimum(), 1);
+        QCOMPARE(nearestNeighborCount->maximum(), 1000);
+        QCOMPARE(nearestNeighborCount->value(), 20);
+        QVERIFY(oppositeNormalAngle != nullptr);
+        QCOMPARE(oppositeNormalAngle->decimals(), 1);
+        QCOMPARE(oppositeNormalAngle->minimum(), 0.0);
+        QCOMPARE(oppositeNormalAngle->maximum(), 180.0);
+        QCOMPARE(oppositeNormalAngle->value(), 170.0);
         QVERIFY(advancedToggle != nullptr);
         QVERIFY(advanced != nullptr);
         QVERIFY(advanced->isHidden());
@@ -176,6 +193,42 @@ private slots:
         QTest::mouseClick(advancedToggle, Qt::LeftButton);
 
         QVERIFY(!advanced->isHidden());
+    }
+
+    void doubleLayerHidesReferenceAndTargetsEveryMesh()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingColoringCommands commands(state);
+        ColoringPanel panel(state, commands);
+        auto* tabs = panel.findChild<QTabBar*>(QStringLiteral("coloringModeTabs"));
+        auto* referenceRow =
+            panel.findChild<QWidget*>(QStringLiteral("referenceRow"));
+        auto* reference =
+            panel.findChild<QComboBox*>(QStringLiteral("referenceCombo"));
+        auto* targets =
+            panel.findChild<QLabel*>(QStringLiteral("targetSummaryLabel"));
+        QVERIFY(tabs != nullptr);
+        QVERIFY(referenceRow != nullptr);
+        QVERIFY(reference != nullptr);
+        QVERIFY(targets != nullptr);
+
+        tabs->setCurrentIndex(2);
+
+        QVERIFY(referenceRow->isHidden());
+        QVERIFY(!reference->isEnabled());
+        QCOMPARE(
+            targets->text(),
+            QStringLiteral(
+                "Targets: mesh-1.obj, mesh-2.obj, mesh-3.obj"));
+
+        tabs->setCurrentIndex(1);
+
+        QVERIFY(!referenceRow->isHidden());
+        QVERIFY(reference->isEnabled());
+        QCOMPARE(
+            targets->text(),
+            QStringLiteral("Targets: mesh-2.obj, mesh-3.obj"));
     }
 
     void uniformUsesTheMeshSelectedAtApplyTime()
@@ -229,7 +282,7 @@ private slots:
         QCOMPARE(commands.uniformMeshCalls, QVector<MeshId>({3}));
     }
 
-    void precisionRoutesTheExactDefaultOptions()
+    void distanceRoutesTheExactDefaultOptions()
     {
         WorkspaceState state;
         makeReady(state);
@@ -246,13 +299,11 @@ private slots:
 
         QCOMPARE(commands.analysisMetrics.size(), 1);
         QCOMPARE(commands.analysisMetrics.front(),
-                 SurfaceComparisonMetric::PrecisionAtThreshold);
-        QCOMPARE(commands.analysisOptions.front().sampleCount, 500000);
-        QCOMPARE(commands.analysisOptions.front().distanceThreshold, 0.004f);
-        QVERIFY(commands.analysisOptions.front().useAbsoluteNormalDot);
+                 SurfaceComparisonMetric::DistanceToReference);
+        QCOMPARE(commands.analysisOptions.front().distanceColorMax, 0.04);
     }
 
-    void normalAgreementRoutesTheExactDefaultOptions()
+    void doubleLayerRoutesTheExactDefaultOptions()
     {
         WorkspaceState state;
         makeReady(state);
@@ -269,10 +320,15 @@ private slots:
 
         QCOMPARE(commands.analysisMetrics.size(), 1);
         QCOMPARE(commands.analysisMetrics.front(),
-                 SurfaceComparisonMetric::NormalAgreement);
+                 SurfaceComparisonMetric::DoubleLayer);
         QCOMPARE(commands.analysisOptions.front().sampleCount, 500000);
-        QCOMPARE(commands.analysisOptions.front().distanceThreshold, 0.004f);
-        QVERIFY(commands.analysisOptions.front().useAbsoluteNormalDot);
+        QCOMPARE(commands.analysisOptions.front().nearestNeighborCount, 20);
+        QCOMPARE(
+            commands.analysisOptions.front().oppositeNormalAngleDegrees,
+            170.0);
+        QCOMPARE(
+            commands.analysisOptions.front().doubleLayerRandomSeed,
+            std::uint32_t(0));
     }
 
     void referenceSelectionUsesTheCommandAndRefreshesAfterSuccess()

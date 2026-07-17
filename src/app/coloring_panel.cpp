@@ -3,7 +3,6 @@
 #include "coloring_commands.h"
 #include "../core/workspace_state.h"
 
-#include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
 #include <QDoubleSpinBox>
@@ -62,19 +61,20 @@ ColoringPanel::ColoringPanel(
     modeTabs_->setDrawBase(false);
     modeTabs_->setExpanding(true);
     modeTabs_->addTab(tr("Uniform Color"));
-    modeTabs_->addTab(tr("Precision"));
-    modeTabs_->addTab(tr("Normal Agreement"));
+    modeTabs_->addTab(tr("Distance"));
+    modeTabs_->addTab(tr("Double Layer"));
     root->addWidget(modeTabs_);
 
-    auto* referenceRow = new QWidget(this);
-    auto* referenceLayout = new QHBoxLayout(referenceRow);
+    referenceRow_ = new QWidget(this);
+    referenceRow_->setObjectName(QStringLiteral("referenceRow"));
+    auto* referenceLayout = new QHBoxLayout(referenceRow_);
     referenceLayout->setContentsMargins(0, 0, 0, 0);
     referenceLayout->setSpacing(6);
-    referenceLayout->addWidget(new QLabel(tr("Reference"), referenceRow));
-    referenceCombo_ = new QComboBox(referenceRow);
+    referenceLayout->addWidget(new QLabel(tr("Reference"), referenceRow_));
+    referenceCombo_ = new QComboBox(referenceRow_);
     referenceCombo_->setObjectName(QStringLiteral("referenceCombo"));
     referenceLayout->addWidget(referenceCombo_, 1);
-    root->addWidget(referenceRow);
+    root->addWidget(referenceRow_);
 
     modeStack_ = new QStackedWidget(this);
     modeStack_->addWidget(buildUniformPage());
@@ -223,34 +223,55 @@ QWidget* ColoringPanel::buildAnalysisPage()
 
     advancedParameters_ = new QWidget(page);
     advancedParameters_->setObjectName(QStringLiteral("advancedParameters"));
-    auto* advancedLayout = new QFormLayout(advancedParameters_);
+    auto* advancedLayout = new QVBoxLayout(advancedParameters_);
     advancedLayout->setContentsMargins(12, 0, 0, 0);
     advancedLayout->setSpacing(6);
 
-    sampleCountSpin_ = new QSpinBox(advancedParameters_);
+    distanceParameters_ = new QWidget(advancedParameters_);
+    distanceParameters_->setObjectName(QStringLiteral("distanceParameters"));
+    auto* distanceLayout = new QFormLayout(distanceParameters_);
+    distanceLayout->setContentsMargins(0, 0, 0, 0);
+    distanceLayout->setSpacing(6);
+    distanceColorMaxSpin_ = new QDoubleSpinBox(distanceParameters_);
+    distanceColorMaxSpin_->setObjectName(
+        QStringLiteral("distanceColorMaxSpin"));
+    distanceColorMaxSpin_->setDecimals(6);
+    distanceColorMaxSpin_->setRange(0.0, 1000000.0);
+    distanceColorMaxSpin_->setValue(0.04);
+    distanceLayout->addRow(tr("Maximum distance"), distanceColorMaxSpin_);
+    advancedLayout->addWidget(distanceParameters_);
+
+    doubleLayerParameters_ = new QWidget(advancedParameters_);
+    doubleLayerParameters_->setObjectName(
+        QStringLiteral("doubleLayerParameters"));
+    auto* doubleLayerLayout = new QFormLayout(doubleLayerParameters_);
+    doubleLayerLayout->setContentsMargins(0, 0, 0, 0);
+    doubleLayerLayout->setSpacing(6);
+
+    sampleCountSpin_ = new QSpinBox(doubleLayerParameters_);
     sampleCountSpin_->setObjectName(QStringLiteral("sampleCountSpin"));
     sampleCountSpin_->setRange(1, 5000000);
     sampleCountSpin_->setValue(500000);
-    advancedLayout->addRow(tr("Samples"), sampleCountSpin_);
+    doubleLayerLayout->addRow(tr("Samples"), sampleCountSpin_);
 
-    distanceThresholdRow_ = new QWidget(advancedParameters_);
-    auto* distanceLayout = new QHBoxLayout(distanceThresholdRow_);
-    distanceLayout->setContentsMargins(0, 0, 0, 0);
-    distanceThresholdSpin_ = new QDoubleSpinBox(distanceThresholdRow_);
-    distanceThresholdSpin_->setObjectName(
-        QStringLiteral("distanceThresholdSpin"));
-    distanceThresholdSpin_->setDecimals(6);
-    distanceThresholdSpin_->setRange(0.0, 1000000.0);
-    distanceThresholdSpin_->setValue(0.004);
-    distanceLayout->addWidget(distanceThresholdSpin_);
-    advancedLayout->addRow(tr("Distance threshold"), distanceThresholdRow_);
+    nearestNeighborCountSpin_ = new QSpinBox(doubleLayerParameters_);
+    nearestNeighborCountSpin_->setObjectName(
+        QStringLiteral("nearestNeighborCountSpin"));
+    nearestNeighborCountSpin_->setRange(1, 1000);
+    nearestNeighborCountSpin_->setValue(20);
+    doubleLayerLayout->addRow(
+        tr("Nearest neighbors"), nearestNeighborCountSpin_);
 
-    absoluteNormalDotCheck_ = new QCheckBox(
-        tr("Ignore normal direction"), advancedParameters_);
-    absoluteNormalDotCheck_->setObjectName(
-        QStringLiteral("absoluteNormalDotCheck"));
-    absoluteNormalDotCheck_->setChecked(true);
-    advancedLayout->addRow(QString(), absoluteNormalDotCheck_);
+    oppositeNormalAngleSpin_ = new QDoubleSpinBox(doubleLayerParameters_);
+    oppositeNormalAngleSpin_->setObjectName(
+        QStringLiteral("oppositeNormalAngleSpin"));
+    oppositeNormalAngleSpin_->setDecimals(1);
+    oppositeNormalAngleSpin_->setRange(0.0, 180.0);
+    oppositeNormalAngleSpin_->setValue(170.0);
+    oppositeNormalAngleSpin_->setSuffix(tr("°"));
+    doubleLayerLayout->addRow(
+        tr("Opposite angle"), oppositeNormalAngleSpin_);
+    advancedLayout->addWidget(doubleLayerParameters_);
 
     layout->addWidget(advancedParameters_);
     layout->addStretch(1);
@@ -283,15 +304,6 @@ void ColoringPanel::refreshFromState()
     referenceSummaryLabel_->setText(
         tr("Reference: %1").arg(meshName(state_, state_.referenceId())));
 
-    QStringList targets;
-    for (const MeshEntry& mesh : state_.meshes()) {
-        if (mesh.id != state_.referenceId())
-            targets.append(mesh.displayName);
-    }
-    targetSummaryLabel_->setText(
-        tr("Targets: %1").arg(
-            targets.isEmpty() ? tr("None") : targets.join(QStringLiteral(", "))));
-
     const bool ready = state_.phase() == WorkspacePhase::Ready;
     const bool analyzing = state_.phase() == WorkspacePhase::Analyzing;
     referenceCombo_->setEnabled(ready);
@@ -301,8 +313,9 @@ void ColoringPanel::refreshFromState()
     clearButton_->setEnabled(ready);
     advancedParametersToggle_->setEnabled(ready);
     sampleCountSpin_->setEnabled(ready);
-    distanceThresholdSpin_->setEnabled(ready);
-    absoluteNormalDotCheck_->setEnabled(ready);
+    distanceColorMaxSpin_->setEnabled(ready);
+    nearestNeighborCountSpin_->setEnabled(ready);
+    oppositeNormalAngleSpin_->setEnabled(ready);
     applyButton_->setVisible(!analyzing);
     applyButton_->setEnabled(ready);
     cancelButton_->setVisible(analyzing);
@@ -392,8 +405,8 @@ void ColoringPanel::applyCurrentMode()
     }
     else {
         const SurfaceComparisonMetric metric = modeIndex == 1
-            ? SurfaceComparisonMetric::PrecisionAtThreshold
-            : SurfaceComparisonMetric::NormalAgreement;
+            ? SurfaceComparisonMetric::DistanceToReference
+            : SurfaceComparisonMetric::DoubleLayer;
         result = commands_.startAnalysis(metric, comparisonOptions());
         if (result.ok) {
             analysisStatusLabel_->setText(tr("Starting analysis…"));
@@ -430,10 +443,24 @@ void ColoringPanel::changeSelectedMesh(int index)
 void ColoringPanel::updateModeUi(int modeIndex)
 {
     const bool uniform = modeIndex == 0;
-    const bool precision = modeIndex == 1;
+    const bool distance = modeIndex == 1;
+    const bool doubleLayer = modeIndex == 2;
     modeStack_->setCurrentIndex(uniform ? 0 : 1);
-    distanceThresholdRow_->setVisible(precision);
-    absoluteNormalDotCheck_->setVisible(!uniform && !precision);
+    distanceParameters_->setVisible(distance);
+    doubleLayerParameters_->setVisible(doubleLayer);
+    referenceRow_->setVisible(!doubleLayer);
+    referenceCombo_->setEnabled(
+        state_.phase() == WorkspacePhase::Ready && !doubleLayer);
+    referenceSummaryLabel_->setVisible(!doubleLayer);
+
+    QStringList targets;
+    for (const MeshEntry& mesh : state_.meshes()) {
+        if (doubleLayer || mesh.id != state_.referenceId())
+            targets.append(mesh.displayName);
+    }
+    targetSummaryLabel_->setText(
+        tr("Targets: %1").arg(
+            targets.isEmpty() ? tr("None") : targets.join(QStringLiteral(", "))));
     applyButton_->setText(uniform ? tr("Apply Color") : tr("Run Analysis"));
 }
 
@@ -447,7 +474,9 @@ SurfaceComparisonOptions ColoringPanel::comparisonOptions() const
 {
     SurfaceComparisonOptions options;
     options.sampleCount = sampleCountSpin_->value();
-    options.distanceThreshold = float(distanceThresholdSpin_->value());
-    options.useAbsoluteNormalDot = absoluteNormalDotCheck_->isChecked();
+    options.distanceColorMax = distanceColorMaxSpin_->value();
+    options.nearestNeighborCount = nearestNeighborCountSpin_->value();
+    options.oppositeNormalAngleDegrees = oppositeNormalAngleSpin_->value();
+    options.doubleLayerRandomSeed = 0;
     return options;
 }

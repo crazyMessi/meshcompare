@@ -58,6 +58,10 @@ public:
         MeshPoint3D{{0.0, 0.0, 1.0}},
         MeshPoint3D{{0.0, 0.0, 1.0}}};
     QVector<std::array<int, 3>> faces = {{{{0, 1, 2}}}};
+    QVector<QColor> colors = {
+        QColor(11, 22, 33, 44),
+        QColor(55, 66, 77, 88),
+        QColor(99, 111, 122, 133)};
 
     int vertexCount() const override
     {
@@ -67,23 +71,38 @@ public:
     MeshPoint3D vertexPosition(int index) const override
     {
         recorder_->record();
+        if (surfaceAccessBlocked)
+            throw std::runtime_error("surface snapshot access was blocked");
         return positions.at(index);
     }
     MeshPoint3D vertexNormal(int index) const override
     {
         recorder_->record();
+        if (surfaceAccessBlocked)
+            throw std::runtime_error("surface snapshot access was blocked");
         return normals.at(index);
+    }
+    bool hasVertexColors() const override { return true; }
+    QColor vertexColor(int index) const override
+    {
+        recorder_->record();
+        return colors.at(index);
     }
     int faceCount() const override
     {
         recorder_->record();
+        if (surfaceAccessBlocked)
+            throw std::runtime_error("surface snapshot access was blocked");
         return faces.size();
     }
     std::array<int, 3> faceVertexIndices(int index) const override
     {
         recorder_->record();
+        if (surfaceAccessBlocked)
+            throw std::runtime_error("surface snapshot access was blocked");
         return faces.at(index);
     }
+    bool surfaceAccessBlocked = false;
 
 private:
     std::shared_ptr<GeometryAccessRecorder> recorder_;
@@ -118,6 +137,12 @@ public:
     {
         QMutexLocker lock(&mutex_);
         geometries_[id].positions[0][0] = value;
+    }
+
+    void blockSurfaceSnapshotAccess(MeshResourceId id)
+    {
+        QMutexLocker lock(&mutex_);
+        geometries_[id].surfaceAccessBlocked = true;
     }
 
     QVector<MeshPoint3D> positions(MeshResourceId id) const
@@ -206,6 +231,31 @@ AnalysisRequest request(const WorkspaceState& state)
     return value;
 }
 
+AnalysisRequest distanceRequest(const WorkspaceState& state)
+{
+    AnalysisRequest value;
+    value.generation = state.generation();
+    value.referenceId = state.referenceId();
+    value.targetIds = {2, 3};
+    value.metric = SurfaceComparisonMetric::DistanceToReference;
+    value.options.distanceColorMax = 0.04;
+    return value;
+}
+
+AnalysisRequest doubleLayerRequest(const WorkspaceState& state)
+{
+    AnalysisRequest value;
+    value.generation = state.generation();
+    value.referenceId = state.referenceId();
+    value.targetIds = {1, 2, 3};
+    value.metric = SurfaceComparisonMetric::DoubleLayer;
+    value.options.sampleCount = 500000;
+    value.options.nearestNeighborCount = 20;
+    value.options.oppositeNormalAngleDegrees = 170.0;
+    value.options.doubleLayerRandomSeed = 0;
+    return value;
+}
+
 AnalysisBatchResult takeBatch(QSignalSpy& spy)
 {
     if (spy.isEmpty())
@@ -226,6 +276,137 @@ class MeshColorServiceTest : public QObject
     Q_OBJECT
 
 private slots:
+    void distanceAnalysisColorsTargetsAndReferenceByVertex()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        OwningResourceProvider resources;
+        FakeRendererAdapter renderer;
+        commitFakeScene(renderer, state, resources);
+        FakeSurfaceComparer comparer;
+        comparer.enqueueDistanceSuccess({0.0, 0.01, 0.04});
+        comparer.enqueueDistanceSuccess({0.0025, 0.0225, 0.08});
+        MeshColorService service(resources, comparer, state, renderer);
+        QSignalSpy finished(&service, &MeshColorService::analysisFinished);
+
+        QVERIFY(service.startAnalysis(distanceRequest(state)).ok);
+        const AnalysisBatchResult batch = takeBatch(finished);
+
+        QVERIFY2(batch.result.ok, qPrintable(batch.result.error));
+        QCOMPARE(comparer.callCount(), 2);
+        QCOMPARE(renderer.presentationUpdateCount(), 1);
+        QCOMPARE(renderer.lastPresentationBatch().size(), 3);
+        QCOMPARE(state.mesh(1)->presentation.mode, ColorMode::VertexColor);
+        QCOMPARE(
+            state.mesh(1)->presentation.vertexColors,
+            QVector<QColor>({
+                QColor(11, 22, 33, 44),
+                QColor(55, 66, 77, 88),
+                QColor(99, 111, 122, 133)}));
+        QCOMPARE(state.mesh(1)->analysisSummary.kind, AnalysisKind::None);
+        QCOMPARE(state.mesh(2)->presentation.mode, ColorMode::VertexColor);
+        QCOMPARE(
+            state.mesh(2)->presentation.vertexColors,
+            QVector<QColor>({
+                QColor(68, 1, 84, 255),
+                QColor(33, 145, 140, 255),
+                QColor(253, 231, 37, 255)}));
+        QCOMPARE(
+            state.mesh(2)->analysisSummary.kind,
+            AnalysisKind::DistanceToReference);
+        QCOMPARE(
+            state.mesh(2)->analysisSummary.distance.vertexCount,
+            3);
+        QVERIFY(!state.mesh(2)->hasScore);
+    }
+
+    void distanceRawFieldCacheRemapsWithoutRecomparison()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        OwningResourceProvider resources;
+        FakeRendererAdapter renderer;
+        commitFakeScene(renderer, state, resources);
+        FakeSurfaceComparer comparer;
+        comparer.enqueueDistanceSuccess({0.0, 0.01, 0.04});
+        comparer.enqueueDistanceSuccess({0.0, 0.01, 0.04});
+        MeshColorService service(resources, comparer, state, renderer);
+        QSignalSpy finished(&service, &MeshColorService::analysisFinished);
+
+        AnalysisRequest first = distanceRequest(state);
+        QVERIFY(service.startAnalysis(first).ok);
+        QVERIFY(takeBatch(finished).result.ok);
+        QCOMPARE(comparer.callCount(), 2);
+        const QColor firstMiddle =
+            state.mesh(2)->presentation.vertexColors.at(1);
+        resources.blockSurfaceSnapshotAccess(102);
+        resources.blockSurfaceSnapshotAccess(103);
+
+        AnalysisRequest remapped = distanceRequest(state);
+        remapped.options.distanceColorMax = 0.08;
+        QVERIFY(service.startAnalysis(remapped).ok);
+        QVERIFY(takeBatch(finished).result.ok);
+
+        QCOMPARE(comparer.callCount(), 2);
+        QVERIFY(
+            state.mesh(2)->presentation.vertexColors.at(1) != firstMiddle);
+    }
+
+    void doubleLayerAnalyzesEveryMeshAndCachesItsRawField()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        OwningResourceProvider resources;
+        FakeRendererAdapter renderer;
+        commitFakeScene(renderer, state, resources);
+        FakeSurfaceComparer comparer;
+        DoubleLayerStatistics statistics;
+        statistics.sampleCount = 500000;
+        statistics.meanSampleScore = 0.1;
+        statistics.affectedSampleFraction = 0.2;
+        statistics.affectedFaceFraction = 0.3;
+        statistics.affectedVertexFraction = 2.0 / 3.0;
+        for (int index = 0; index < 3; ++index) {
+            comparer.enqueueDoubleLayerSuccess(
+                {0.0, 0.25, 1.0},
+                statistics);
+        }
+        MeshColorService service(resources, comparer, state, renderer);
+        QSignalSpy finished(&service, &MeshColorService::analysisFinished);
+
+        const AnalysisRequest value = doubleLayerRequest(state);
+        QVERIFY(service.startAnalysis(value).ok);
+        QVERIFY(takeBatch(finished).result.ok);
+
+        QCOMPARE(comparer.callCount(), 3);
+        QCOMPARE(renderer.lastPresentationBatch().size(), 3);
+        for (MeshId id : {MeshId(1), MeshId(2), MeshId(3)}) {
+            QCOMPARE(
+                state.mesh(id)->presentation.mode,
+                ColorMode::VertexColor);
+            QCOMPARE(
+                state.mesh(id)->presentation.vertexColors,
+                QVector<QColor>({
+                    QColor(180, 180, 180, 255),
+                    QColor(255, 105, 24, 255),
+                    QColor(255, 0, 48, 255)}));
+            QCOMPARE(
+                state.mesh(id)->analysisSummary.kind,
+                AnalysisKind::DoubleLayer);
+            QCOMPARE(
+                state.mesh(id)
+                    ->analysisSummary.doubleLayer.affectedFaceFraction,
+                0.3);
+        }
+
+        resources.blockSurfaceSnapshotAccess(101);
+        resources.blockSurfaceSnapshotAccess(102);
+        resources.blockSurfaceSnapshotAccess(103);
+        QVERIFY(service.startAnalysis(value).ok);
+        QVERIFY(takeBatch(finished).result.ok);
+        QCOMPARE(comparer.callCount(), 3);
+    }
+
     void oneTargetFailureCommitsNeitherRendererNorState()
     {
         WorkspaceState state;

@@ -45,9 +45,12 @@ public:
         RenderPresentationUpload upload) override
     {
         sharedContext.setRenderingDataPerAllMeshViews(modelId, renderingData);
-        if (upload.faceColorsChanged) {
+        if (upload.faceColorsChanged || upload.vertexColorsChanged) {
             MLRenderingData::RendAtts changedAttributes;
-            changedAttributes[MLRenderingData::ATT_NAMES::ATT_FACECOLOR] = true;
+            changedAttributes[MLRenderingData::ATT_NAMES::ATT_FACECOLOR] =
+                upload.faceColorsChanged;
+            changedAttributes[MLRenderingData::ATT_NAMES::ATT_VERTCOLOR] =
+                upload.vertexColorsChanged;
             sharedContext.meshAttributesUpdated(
                 modelId, false, changedAttributes);
         }
@@ -116,9 +119,10 @@ OperationResult copyGeometry(
     if (model->cm.FN() > 0)
         vcg::tri::UpdateNormal<CMeshO>::PerFaceNormalized(model->cm);
     model->updateDataMask();
-    // The renderer-neutral provider supplies no vertex-color channel. CMeshO
-    // has storage by default, but advertising it would make MeshLab render
-    // uninitialized/default vertex colors instead of its fixed LightGray.
+    // Source vertex colors remain available through the resource provider for
+    // callers that explicitly construct a ColorPresentation. A fresh render
+    // scene still starts in Default (LightGray), so do not advertise the
+    // renderer-private built-in color storage until a presentation opts in.
     model->clearDataMask(MeshModel::MM_VERTCOLOR);
     sharedContext.meshInserted(model->id());
 
@@ -126,17 +130,21 @@ OperationResult copyGeometry(
     return OperationResult::success();
 }
 
-bool isAnalysisMode(ColorMode mode)
-{
-    return mode == ColorMode::PrecisionResult ||
-           mode == ColorMode::NormalAgreementResult;
-}
-
 int liveFaceCount(const MeshModel& model)
 {
     int count = 0;
     for (const CFaceO& face : model.cm.face) {
         if (!face.IsD())
+            ++count;
+    }
+    return count;
+}
+
+int liveVertexCount(const MeshModel& model)
+{
+    int count = 0;
+    for (const CVertexO& vertex : model.cm.vert) {
+        if (!vertex.IsD())
             ++count;
     }
     return count;
@@ -150,34 +158,72 @@ vcg::Color4b meshColor(const QColor& color)
 
 OperationResult validatePresentation(
     const ColorPresentation& presentation,
-    int expectedFaceCount)
+    int expectedFaceCount,
+    int expectedVertexCount)
 {
     switch (presentation.mode) {
     case ColorMode::Default:
         if (presentation.uniformColor.isValid() ||
-            !presentation.faceColors.isEmpty()) {
+            !presentation.faceColors.isEmpty() ||
+            !presentation.vertexColors.isEmpty() ||
+            presentation.referenceDependent) {
             return OperationResult::failure(QStringLiteral(
                 "Default presentation cannot contain color payloads."));
         }
         break;
     case ColorMode::UniformColor:
         if (!presentation.uniformColor.isValid() ||
-            !presentation.faceColors.isEmpty()) {
+            !presentation.faceColors.isEmpty() ||
+            !presentation.vertexColors.isEmpty() ||
+            presentation.referenceDependent) {
             return OperationResult::failure(QStringLiteral(
                 "Uniform presentation requires one valid fixed color."));
         }
         break;
     case ColorMode::PrecisionResult:
-    case ColorMode::NormalAgreementResult:
-        if (presentation.uniformColor.isValid() ||
+    case ColorMode::NormalAgreementResult: {
+        if (presentation.uniformColor.isValid()) {
+            return OperationResult::failure(QStringLiteral(
+                "Analysis presentation cannot contain a fixed color."));
+        }
+        const bool hasFaceColors = !presentation.faceColors.isEmpty();
+        const bool hasVertexColors = !presentation.vertexColors.isEmpty();
+        if (hasFaceColors == hasVertexColors) {
+            return OperationResult::failure(QStringLiteral(
+                "Analysis presentation requires exactly one color domain."));
+        }
+        if (hasFaceColors &&
             presentation.faceColors.size() != expectedFaceCount) {
             return OperationResult::failure(QStringLiteral(
                 "Analysis presentation face colors must match the live face count."));
         }
-        for (const QColor& color : presentation.faceColors) {
+        if (hasVertexColors &&
+            presentation.vertexColors.size() != expectedVertexCount) {
+            return OperationResult::failure(QStringLiteral(
+                "Analysis presentation vertex colors must match the live vertex count."));
+        }
+        const QVector<QColor>& colors = hasFaceColors
+                                            ? presentation.faceColors
+                                            : presentation.vertexColors;
+        for (const QColor& color : colors) {
             if (!color.isValid()) {
                 return OperationResult::failure(QStringLiteral(
-                    "Analysis presentation contains an invalid face color."));
+                "Analysis presentation contains an invalid color."));
+            }
+        }
+        break;
+    }
+    case ColorMode::VertexColor:
+        if (presentation.uniformColor.isValid() ||
+            !presentation.faceColors.isEmpty() ||
+            presentation.vertexColors.size() != expectedVertexCount) {
+            return OperationResult::failure(QStringLiteral(
+                "Vertex presentation colors must match the live vertex count."));
+        }
+        for (const QColor& color : presentation.vertexColors) {
+            if (!color.isValid()) {
+                return OperationResult::failure(QStringLiteral(
+                    "Vertex presentation contains an invalid color."));
             }
         }
         break;
@@ -208,9 +254,10 @@ MLRenderingData desiredRenderingData(
     }
 
     solidAttributes[MLRenderingData::ATT_NAMES::ATT_VERTPOSITION] = true;
-    solidAttributes[MLRenderingData::ATT_NAMES::ATT_VERTCOLOR] = false;
+    solidAttributes[MLRenderingData::ATT_NAMES::ATT_VERTCOLOR] =
+        !presentation.vertexColors.isEmpty();
     solidAttributes[MLRenderingData::ATT_NAMES::ATT_FACECOLOR] =
-        isAnalysisMode(presentation.mode);
+        !presentation.faceColors.isEmpty();
     solidAttributes[MLRenderingData::ATT_NAMES::ATT_VERTTEXTURE] = false;
     solidAttributes[MLRenderingData::ATT_NAMES::ATT_WEDGETEXTURE] = false;
     result.set(MLRenderingData::PR_SOLID, solidAttributes);
@@ -233,8 +280,12 @@ struct PreparedPresentationMutation
     MeshModel* model = nullptr;
     bool hadFaceColorMask = false;
     bool faceColorsChanged = false;
+    bool hadVertexColorMask = false;
+    bool vertexColorsChanged = false;
     std::vector<vcg::Color4b> priorFaceColors;
     std::vector<vcg::Color4b> desiredFaceColors;
+    std::vector<vcg::Color4b> priorVertexColors;
+    std::vector<vcg::Color4b> desiredVertexColors;
     std::shared_ptr<const MLRenderingData> priorRenderingData;
     std::shared_ptr<const MLRenderingData> desiredRenderingData;
 };
@@ -243,65 +294,83 @@ void restoreCpuPresentation(PreparedPresentationMutation& mutation) noexcept
 {
     if (!mutation.hadFaceColorMask) {
         MeshCompareRenderDetail::ensureFaceColorDisabled(*mutation.model);
-        return;
+    }
+    else {
+        // DisableColor() clears CV but std::vector retains its capacity.
+        Q_ASSERT(mutation.model->cm.face.CV.capacity() >=
+                 mutation.model->cm.face.size());
+        mutation.model->updateDataMask(MeshModel::MM_FACECOLOR);
+        Q_ASSERT(mutation.model->cm.face.IsColorEnabled());
+        Q_ASSERT(mutation.model->hasDataMask(MeshModel::MM_FACECOLOR));
+        Q_ASSERT(mutation.model->cm.face.CV.size() ==
+                 mutation.model->cm.face.size());
+        Q_ASSERT(static_cast<std::size_t>(liveFaceCount(*mutation.model)) ==
+                 mutation.priorFaceColors.size());
+        std::size_t colorIndex = 0;
+        for (CFaceO& face : mutation.model->cm.face) {
+            if (face.IsD())
+                continue;
+            face.C() = mutation.priorFaceColors[colorIndex++];
+        }
+        Q_ASSERT(colorIndex == mutation.priorFaceColors.size());
     }
 
-    // DisableColor() clears CV but std::vector retains its capacity.  Geometry
-    // is immutable for the scene lifetime, so re-enabling the prior component
-    // resizes within the already-owned physical-face storage and cannot need a
-    // rollback allocation.
-    Q_ASSERT(mutation.model->cm.face.CV.capacity() >=
-             mutation.model->cm.face.size());
-    mutation.model->updateDataMask(MeshModel::MM_FACECOLOR);
-    Q_ASSERT(mutation.model->cm.face.IsColorEnabled());
-    Q_ASSERT(mutation.model->hasDataMask(MeshModel::MM_FACECOLOR));
-    Q_ASSERT(mutation.model->cm.face.CV.size() ==
-             mutation.model->cm.face.size());
-    Q_ASSERT(static_cast<std::size_t>(liveFaceCount(*mutation.model)) ==
-             mutation.priorFaceColors.size());
-    std::size_t colorIndex = 0;
-    for (CFaceO& face : mutation.model->cm.face) {
-        if (face.IsD())
-            continue;
-        face.C() = mutation.priorFaceColors[colorIndex++];
+    if (!mutation.hadVertexColorMask) {
+        mutation.model->clearDataMask(MeshModel::MM_VERTCOLOR);
     }
-    Q_ASSERT(colorIndex == mutation.priorFaceColors.size());
+    else {
+        mutation.model->updateDataMask(MeshModel::MM_VERTCOLOR);
+        Q_ASSERT(static_cast<std::size_t>(liveVertexCount(*mutation.model)) ==
+                 mutation.priorVertexColors.size());
+        std::size_t colorIndex = 0;
+        for (CVertexO& vertex : mutation.model->cm.vert) {
+            if (vertex.IsD())
+                continue;
+            vertex.C() = mutation.priorVertexColors[colorIndex++];
+        }
+        Q_ASSERT(colorIndex == mutation.priorVertexColors.size());
+    }
 }
 
-class ScopedFaceColorMaskRemoval final
+class ScopedColorMaskRemoval final
 {
 public:
-    explicit ScopedFaceColorMaskRemoval(
+    explicit ScopedColorMaskRemoval(
         PreparedPresentationMutation& mutation)
-        : mutation_(mutation), active_(mutation.hadFaceColorMask)
+        : mutation_(mutation),
+          faceActive_(mutation.hadFaceColorMask),
+          vertexActive_(mutation.hadVertexColorMask)
     {
-        if (!active_)
-            return;
-        Q_ASSERT(mutation_.model->hasDataMask(MeshModel::MM_FACECOLOR));
-        Q_ASSERT(mutation_.model->cm.face.IsColorEnabled());
-        Q_ASSERT(mutation_.model->cm.face.CV.size() ==
-                 mutation_.model->cm.face.size());
-        const std::size_t priorCapacity =
-            mutation_.model->cm.face.CV.capacity();
-        mutation_.model->clearDataMask(MeshModel::MM_FACECOLOR);
-        Q_ASSERT(!mutation_.model->hasDataMask(MeshModel::MM_FACECOLOR));
-        Q_ASSERT(!mutation_.model->cm.face.IsColorEnabled());
-        Q_ASSERT(mutation_.model->cm.face.CV.capacity() == priorCapacity);
+        if (faceActive_) {
+            Q_ASSERT(mutation_.model->hasDataMask(MeshModel::MM_FACECOLOR));
+            Q_ASSERT(mutation_.model->cm.face.IsColorEnabled());
+            Q_ASSERT(mutation_.model->cm.face.CV.size() ==
+                     mutation_.model->cm.face.size());
+            const std::size_t priorCapacity =
+                mutation_.model->cm.face.CV.capacity();
+            mutation_.model->clearDataMask(MeshModel::MM_FACECOLOR);
+            Q_ASSERT(!mutation_.model->hasDataMask(MeshModel::MM_FACECOLOR));
+            Q_ASSERT(!mutation_.model->cm.face.IsColorEnabled());
+            Q_ASSERT(mutation_.model->cm.face.CV.capacity() == priorCapacity);
+        }
+        if (vertexActive_)
+            mutation_.model->clearDataMask(MeshModel::MM_VERTCOLOR);
     }
 
-    ~ScopedFaceColorMaskRemoval()
+    ~ScopedColorMaskRemoval()
     {
-        if (active_)
+        if (faceActive_ || vertexActive_)
             restoreCpuPresentation(mutation_);
     }
 
-    ScopedFaceColorMaskRemoval(const ScopedFaceColorMaskRemoval&) = delete;
-    ScopedFaceColorMaskRemoval& operator=(
-        const ScopedFaceColorMaskRemoval&) = delete;
+    ScopedColorMaskRemoval(const ScopedColorMaskRemoval&) = delete;
+    ScopedColorMaskRemoval& operator=(
+        const ScopedColorMaskRemoval&) = delete;
 
 private:
     PreparedPresentationMutation& mutation_;
-    bool active_ = false;
+    bool faceActive_ = false;
+    bool vertexActive_ = false;
 };
 } // namespace
 
@@ -452,7 +521,9 @@ OperationResult RenderSceneContext::setColorPresentations(
                     QStringLiteral("Presentation target does not exist in the committed scene."));
             }
             const OperationResult validation = validatePresentation(
-                update.presentation, liveFaceCount(*model));
+                update.presentation,
+                liveFaceCount(*model),
+                liveVertexCount(*model));
             if (!validation.ok)
                 return validation;
         }
@@ -475,7 +546,12 @@ OperationResult RenderSceneContext::setColorPresentations(
             mutation.hadFaceColorMask =
                 mutation.model->hasDataMask(MeshModel::MM_FACECOLOR);
             mutation.faceColorsChanged = mutation.hadFaceColorMask ||
-                                         isAnalysisMode(update.presentation.mode);
+                                         !update.presentation.faceColors.isEmpty();
+            mutation.hadVertexColorMask =
+                mutation.model->hasDataMask(MeshModel::MM_VERTCOLOR);
+            mutation.vertexColorsChanged =
+                mutation.hadVertexColorMask ||
+                !update.presentation.vertexColors.isEmpty();
             if (mutation.hadFaceColorMask) {
                 mutation.priorFaceColors.reserve(
                     static_cast<std::size_t>(liveFaceCount(*mutation.model)));
@@ -488,6 +564,18 @@ OperationResult RenderSceneContext::setColorPresentations(
                 static_cast<std::size_t>(update.presentation.faceColors.size()));
             for (const QColor& color : update.presentation.faceColors)
                 mutation.desiredFaceColors.push_back(meshColor(color));
+            if (mutation.hadVertexColorMask) {
+                mutation.priorVertexColors.reserve(
+                    static_cast<std::size_t>(liveVertexCount(*mutation.model)));
+                for (const CVertexO& vertex : mutation.model->cm.vert) {
+                    if (!vertex.IsD())
+                        mutation.priorVertexColors.push_back(vertex.C());
+                }
+            }
+            mutation.desiredVertexColors.reserve(
+                static_cast<std::size_t>(update.presentation.vertexColors.size()));
+            for (const QColor& color : update.presentation.vertexColors)
+                mutation.desiredVertexColors.push_back(meshColor(color));
 
             const auto prior = renderingData_.constFind(update.meshId);
             Q_ASSERT(prior != renderingData_.cend());
@@ -507,9 +595,10 @@ OperationResult RenderSceneContext::setColorPresentations(
                 candidatePresentations.constFind(mutation.meshId);
             Q_ASSERT(presentationIt != candidatePresentations.cend());
             const ColorPresentation& presentation = presentationIt.value();
-            const bool removesFaceColors = !isAnalysisMode(presentation.mode);
-            if (removesFaceColors) {
-                ScopedFaceColorMaskRemoval withoutTransientFaceColors(mutation);
+            const bool restoresDefault =
+                presentation.mode == ColorMode::Default;
+            if (restoresDefault) {
+                ScopedColorMaskRemoval withoutTransientColors(mutation);
                 mutation.desiredRenderingData =
                     std::make_shared<const MLRenderingData>(desiredRenderingData(
                         *mutation.model,
@@ -537,7 +626,7 @@ OperationResult RenderSceneContext::setColorPresentations(
                     candidatePresentations.constFind(mutation.meshId);
                 Q_ASSERT(presentationIt != candidatePresentations.cend());
                 const ColorPresentation& presentation = presentationIt.value();
-                if (isAnalysisMode(presentation.mode)) {
+                if (!presentation.faceColors.isEmpty()) {
                     mutation.model->updateDataMask(MeshModel::MM_FACECOLOR);
                     std::size_t colorIndex = 0;
                     for (CFaceO& face : mutation.model->cm.face) {
@@ -550,11 +639,25 @@ OperationResult RenderSceneContext::setColorPresentations(
                     MeshCompareRenderDetail::ensureFaceColorDisabled(
                         *mutation.model);
                 }
+                if (!presentation.vertexColors.isEmpty()) {
+                    mutation.model->updateDataMask(MeshModel::MM_VERTCOLOR);
+                    std::size_t colorIndex = 0;
+                    for (CVertexO& vertex : mutation.model->cm.vert) {
+                        if (vertex.IsD())
+                            continue;
+                        vertex.C() =
+                            mutation.desiredVertexColors.at(colorIndex++);
+                    }
+                }
+                else {
+                    mutation.model->clearDataMask(MeshModel::MM_VERTCOLOR);
+                }
                 publisher_->publish(
                     *sharedContext_,
                     mutation.modelId,
                     *mutation.desiredRenderingData,
-                    {mutation.faceColorsChanged});
+                    {mutation.faceColorsChanged,
+                     mutation.vertexColorsChanged});
             }
         }
         catch (...) {
@@ -571,7 +674,7 @@ OperationResult RenderSceneContext::setColorPresentations(
                         *sharedContext_,
                         mutation.modelId,
                         *mutation.priorRenderingData,
-                        {true});
+                        {true, true});
                 }
                 catch (...) {
                     // Continue restoring the remaining already-touched meshes.

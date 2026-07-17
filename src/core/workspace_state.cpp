@@ -6,6 +6,61 @@
 #include <exception>
 #include <utility>
 
+namespace
+{
+bool isFiniteNonNegative(double value)
+{
+    return std::isfinite(value) && value >= 0.0;
+}
+
+bool isUnitFraction(double value)
+{
+    return std::isfinite(value) && value >= 0.0 && value <= 1.0;
+}
+
+bool isEmptySummary(const AnalysisSummary& summary)
+{
+    return summary.kind == AnalysisKind::None;
+}
+
+OperationResult validateAnalysisSummary(const AnalysisSummary& summary)
+{
+    switch (summary.kind) {
+    case AnalysisKind::None:
+        return OperationResult::success();
+    case AnalysisKind::DistanceToReference: {
+        const DistanceAnalysisSummary& distance = summary.distance;
+        if (distance.vertexCount < 0 || distance.finiteVertexCount < 0 ||
+            distance.finiteVertexCount > distance.vertexCount ||
+            !isFiniteNonNegative(distance.meanDistance) ||
+            !isFiniteNonNegative(distance.percentile99Distance) ||
+            !isFiniteNonNegative(distance.maxDistance) ||
+            distance.meanDistance > distance.maxDistance ||
+            distance.percentile99Distance > distance.maxDistance) {
+            return OperationResult::failure(
+                QStringLiteral("Distance analysis summary is invalid."));
+        }
+        return OperationResult::success();
+    }
+    case AnalysisKind::DoubleLayer: {
+        const DoubleLayerAnalysisSummary& doubleLayer = summary.doubleLayer;
+        if (doubleLayer.sampleCount <= 0 ||
+            !isUnitFraction(doubleLayer.meanSampleScore) ||
+            !isUnitFraction(doubleLayer.affectedSampleFraction) ||
+            !isUnitFraction(doubleLayer.affectedFaceFraction) ||
+            !isUnitFraction(doubleLayer.affectedVertexFraction)) {
+            return OperationResult::failure(
+                QStringLiteral("Double-layer analysis summary is invalid."));
+        }
+        return OperationResult::success();
+    }
+    default:
+        return OperationResult::failure(
+            QStringLiteral("Analysis summary kind is invalid."));
+    }
+}
+} // namespace
+
 WorkspacePhase WorkspaceState::phase() const
 {
     return phase_;
@@ -38,6 +93,11 @@ MeshId WorkspaceState::selectedMeshId() const
 MeshId WorkspaceState::referenceId() const
 {
     return referenceId_;
+}
+
+SceneLayoutMode WorkspaceState::layoutMode() const
+{
+    return layoutMode_;
 }
 
 void WorkspaceState::beginLoading()
@@ -79,7 +139,10 @@ OperationResult WorkspaceState::validateWorkspace(
     return OperationResult::success();
 }
 
-OperationResult WorkspaceState::commitWorkspace(QVector<MeshEntry> meshes, MeshId referenceId)
+OperationResult WorkspaceState::commitWorkspace(
+    QVector<MeshEntry> meshes,
+    MeshId referenceId,
+    SceneLayoutMode layoutMode)
 {
     const OperationResult validation = validateWorkspace(meshes, referenceId);
     if (!validation.ok)
@@ -94,9 +157,52 @@ OperationResult WorkspaceState::commitWorkspace(QVector<MeshEntry> meshes, MeshI
     meshes_ = std::move(meshes);
     referenceId_ = referenceId;
     selectedMeshId_ = meshes_.front().id;
+    layoutMode_ = layoutMode;
     phase_ = WorkspacePhase::Ready;
     phaseBeforeLoading_ = WorkspacePhase::Ready;
     ++generation_;
+    return OperationResult::success();
+}
+
+OperationResult WorkspaceState::setLayoutMode(SceneLayoutMode layoutMode)
+{
+    if (phase_ != WorkspacePhase::Ready || meshes_.isEmpty()) {
+        return OperationResult::failure(
+            QStringLiteral("View switching requires an idle ready workspace."));
+    }
+    layoutMode_ = layoutMode;
+    return OperationResult::success();
+}
+
+OperationResult WorkspaceState::setMeshVisible(MeshId id, bool visible)
+{
+    if ((phase_ != WorkspacePhase::Ready &&
+         phase_ != WorkspacePhase::Analyzing) ||
+        meshes_.isEmpty()) {
+        return OperationResult::failure(
+            QStringLiteral("Layer visibility requires a ready workspace."));
+    }
+
+    MeshEntry* target = nullptr;
+    int visibleCount = 0;
+    for (MeshEntry& mesh : meshes_) {
+        if (mesh.visible)
+            ++visibleCount;
+        if (mesh.id == id)
+            target = &mesh;
+    }
+    if (target == nullptr) {
+        return OperationResult::failure(
+            QStringLiteral("Visibility target does not exist in this workspace."));
+    }
+    if (target->visible == visible)
+        return OperationResult::success();
+    if (!visible && visibleCount <= 1) {
+        return OperationResult::failure(
+            QStringLiteral("At least one mesh layer must remain visible."));
+    }
+
+    target->visible = visible;
     return OperationResult::success();
 }
 
@@ -119,9 +225,10 @@ OperationResult WorkspaceState::setReference(MeshId id)
     referenceId_ = id;
     for (MeshEntry& mesh : meshes_) {
         mesh.isReference = mesh.id == id;
-        if (mesh.presentation.mode == ColorMode::PrecisionResult ||
-            mesh.presentation.mode == ColorMode::NormalAgreementResult)
+        if (isReferenceDependent(mesh.presentation)) {
             mesh.presentation = {};
+            mesh.analysisSummary = {};
+        }
         mesh.score = 0.0;
         mesh.hasScore = false;
     }
@@ -171,37 +278,76 @@ OperationResult WorkspaceState::validateColorUpdates(
             return OperationResult::failure(
                 QStringLiteral("Color update scores must be finite."));
         }
+        const OperationResult summaryValidation =
+            validateAnalysisSummary(update.analysisSummary);
+        if (!summaryValidation.ok)
+            return summaryValidation;
 
         const ColorPresentation& presentation = update.presentation;
         switch (presentation.mode) {
         case ColorMode::Default:
             if (presentation.uniformColor.isValid() ||
-                !presentation.faceColors.isEmpty() || update.hasScore ||
-                update.score != 0.0) {
+                !presentation.faceColors.isEmpty() ||
+                !presentation.vertexColors.isEmpty() || update.hasScore ||
+                update.score != 0.0 ||
+                presentation.referenceDependent ||
+                !isEmptySummary(update.analysisSummary)) {
                 return OperationResult::failure(
                     QStringLiteral("Default coloring cannot retain color or score data."));
             }
             break;
         case ColorMode::UniformColor:
             if (!presentation.uniformColor.isValid() ||
-                !presentation.faceColors.isEmpty() || update.hasScore ||
-                update.score != 0.0) {
+                !presentation.faceColors.isEmpty() ||
+                !presentation.vertexColors.isEmpty() || update.hasScore ||
+                update.score != 0.0 ||
+                presentation.referenceDependent ||
+                !isEmptySummary(update.analysisSummary)) {
                 return OperationResult::failure(
                     QStringLiteral("Uniform coloring requires a valid color and no analysis score."));
             }
             break;
         case ColorMode::PrecisionResult:
-        case ColorMode::NormalAgreementResult:
+        case ColorMode::NormalAgreementResult: {
+            const bool hasFaceColors = !presentation.faceColors.isEmpty();
+            const bool hasVertexColors = !presentation.vertexColors.isEmpty();
             if (presentation.uniformColor.isValid() || !update.hasScore ||
                 update.score < 0.0 || update.score > 1.0 ||
-                presentation.faceColors.isEmpty()) {
+                hasFaceColors == hasVertexColors ||
+                !isEmptySummary(update.analysisSummary)) {
                 return OperationResult::failure(
-                    QStringLiteral("Analytical coloring requires face colors and a score."));
+                    QStringLiteral(
+                        "Analytical coloring requires exactly one color domain and a score."));
             }
-            for (const QColor& color : presentation.faceColors) {
+            const QVector<QColor>& colors = hasFaceColors
+                                                ? presentation.faceColors
+                                                : presentation.vertexColors;
+            for (const QColor& color : colors) {
                 if (!color.isValid()) {
                     return OperationResult::failure(
-                        QStringLiteral("Analytical face colors must be valid."));
+                        QStringLiteral("Analytical colors must be valid."));
+                }
+            }
+            break;
+        }
+        case ColorMode::VertexColor:
+            if (presentation.uniformColor.isValid() ||
+                !presentation.faceColors.isEmpty() ||
+                presentation.vertexColors.isEmpty() || update.hasScore ||
+                update.score != 0.0 ||
+                (update.analysisSummary.kind ==
+                     AnalysisKind::DistanceToReference &&
+                 !presentation.referenceDependent) ||
+                (update.analysisSummary.kind == AnalysisKind::DoubleLayer &&
+                 presentation.referenceDependent)) {
+                return OperationResult::failure(
+                    QStringLiteral(
+                        "Vertex coloring requires vertex colors and no legacy score."));
+            }
+            for (const QColor& color : presentation.vertexColors) {
+                if (!color.isValid()) {
+                    return OperationResult::failure(
+                        QStringLiteral("Vertex colors must be valid."));
                 }
             }
             break;
@@ -237,6 +383,7 @@ OperationResult WorkspaceState::prepareColorUpdates(
                 entry.presentation = update.presentation;
                 entry.score = update.hasScore ? update.score : 0.0;
                 entry.hasScore = update.hasScore;
+                entry.analysisSummary = update.analysisSummary;
                 break;
             }
         }
