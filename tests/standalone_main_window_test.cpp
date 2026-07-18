@@ -2,6 +2,7 @@
 
 #include <QAbstractButton>
 #include <QApplication>
+#include <QComboBox>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileOpenEvent>
@@ -12,6 +13,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QSharedPointer>
 #include <QSignalSpy>
@@ -661,6 +663,94 @@ private slots:
         QVERIFY(window.findChild<CameraPanel*>(QStringLiteral("cameraPanel")) == nullptr);
         QTest::mouseClick(cameraButton, Qt::LeftButton);
         QCOMPARE(host->geometry(), viewportGeometry);
+    }
+
+    void transientPanelsDismissWhenClickingOutside()
+    {
+        WorkspaceState state;
+        QVERIFY(makeReady(state).ok);
+        WindowColoringCommands coloringCommands(state);
+        WindowCameraCommands cameraCommands;
+        StandaloneMainWindow window(state);
+        window.resize(960, 640);
+        window.bindColoringCommands(coloringCommands);
+        window.bindCameraCommands(cameraCommands);
+        window.show();
+        QApplication::processEvents();
+
+        auto* coloringButton =
+            window.findChild<QPushButton*>(QStringLiteral("coloringButton"));
+        auto* cameraButton =
+            window.findChild<QPushButton*>(QStringLiteral("cameraButton"));
+        auto* host =
+            window.findChild<QWidget*>(QStringLiteral("viewportHost"));
+        auto* coloringPanel =
+            window.findChild<ColoringPanel*>(QStringLiteral("coloringPanel"));
+        auto* cameraPanel =
+            window.findChild<CameraPanel*>(QStringLiteral("cameraPanel"));
+        QVERIFY(coloringButton != nullptr);
+        QVERIFY(cameraButton != nullptr);
+        QVERIFY(host != nullptr);
+        QVERIFY(coloringPanel != nullptr);
+        QVERIFY(cameraPanel != nullptr);
+
+        QTest::mouseClick(coloringButton, Qt::LeftButton);
+        QVERIFY(coloringPanel->isVisible());
+        QTest::mouseClick(host, Qt::LeftButton, Qt::NoModifier, QPoint(20, 20));
+        QApplication::processEvents();
+        QVERIFY(coloringPanel->isHidden());
+
+        QTest::mouseClick(cameraButton, Qt::LeftButton);
+        QVERIFY(cameraPanel->isVisible());
+        QEvent applicationDeactivate(QEvent::ApplicationDeactivate);
+        QApplication::sendEvent(qApp, &applicationDeactivate);
+        QVERIFY(cameraPanel->isHidden());
+    }
+
+    void comboPopupOutsideClickDismissesTheContainingPanel()
+    {
+        WorkspaceState state;
+        QVERIFY(makeReady(state).ok);
+        WindowColoringCommands coloringCommands(state);
+        StandaloneMainWindow window(state);
+        window.resize(960, 640);
+        window.bindColoringCommands(coloringCommands);
+        window.show();
+        QApplication::processEvents();
+
+        auto* coloringButton =
+            window.findChild<QPushButton*>(QStringLiteral("coloringButton"));
+        auto* host =
+            window.findChild<QWidget*>(QStringLiteral("viewportHost"));
+        auto* coloringPanel =
+            window.findChild<ColoringPanel*>(QStringLiteral("coloringPanel"));
+        auto* meshCombo =
+            window.findChild<QComboBox*>(QStringLiteral("uniformMeshCombo"));
+        QVERIFY(coloringButton != nullptr);
+        QVERIFY(host != nullptr);
+        QVERIFY(coloringPanel != nullptr);
+        QVERIFY(meshCombo != nullptr);
+
+        QTest::mouseClick(coloringButton, Qt::LeftButton);
+        QVERIFY(coloringPanel->isVisible());
+        meshCombo->showPopup();
+        QApplication::processEvents();
+        QWidget* popup = QApplication::activePopupWidget();
+        QVERIFY(popup != nullptr);
+
+        const QPoint globalOutside = host->mapToGlobal(QPoint(20, 20));
+        const QPoint popupLocal = popup->mapFromGlobal(globalOutside);
+        QMouseEvent outsidePress(
+            QEvent::MouseButtonPress,
+            popupLocal,
+            globalOutside,
+            Qt::LeftButton,
+            Qt::LeftButton,
+            Qt::NoModifier);
+        QVERIFY(QApplication::sendEvent(popup, &outsidePress));
+        QApplication::processEvents();
+
+        QVERIFY(coloringPanel->isHidden());
     }
 
     void panelFailuresArePublishedForDiagnostics()

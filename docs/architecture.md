@@ -204,7 +204,10 @@ The native macOS application menu contains only platform-required items such as 
 2. A central `ViewportHost` where the Renderer Adapter mounts the adaptive viewport grid.
 3. A lightweight bottom status area for interaction hints, background progress, and non-blocking errors.
 
-The coloring and camera panels are transient and never reserve viewport width. Every frequent task can be started from the command bar and completed in a single panel.
+The coloring and camera panels are transient drop-downs, never reserve viewport
+width, and dismiss automatically when the user clicks elsewhere or deactivates
+the application. Every frequent task can be started from the command bar and
+completed in a single panel.
 
 ## 6. Architecture
 

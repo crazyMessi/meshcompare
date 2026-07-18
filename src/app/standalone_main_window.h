@@ -11,6 +11,7 @@ class ICameraCommands;
 class IColoringCommands;
 class QDragEnterEvent;
 class QDropEvent;
+class QEvent;
 class QFrame;
 class QLabel;
 class QMenu;
@@ -56,6 +57,7 @@ signals:
     void operationFailed(const QString& message);
 
 protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dropEvent(QDropEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;

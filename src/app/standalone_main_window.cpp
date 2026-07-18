@@ -12,9 +12,11 @@
 
 #include <QAbstractButton>
 #include <QAction>
+#include <QApplication>
 #include <QButtonGroup>
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QEvent>
 #include <QFileDialog>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -22,6 +24,7 @@
 #include <QMessageBox>
 #include <QMenu>
 #include <QMimeData>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QSizePolicy>
@@ -75,6 +78,46 @@ bool canChangeLayerVisibility(
            (!mesh.visible || visibleCount > 1);
 }
 
+bool belongsTo(const QObject* object, const QObject* ancestor)
+{
+    for (const QObject* current = object;
+         current != nullptr;
+         current = current->parent()) {
+        if (current == ancestor)
+            return true;
+    }
+    return false;
+}
+
+bool containsGlobalPosition(
+    const QWidget* widget,
+    const QPoint& globalPosition)
+{
+    if (widget == nullptr || !widget->isVisible())
+        return false;
+    return QRect(widget->mapToGlobal(QPoint(0, 0)), widget->size())
+        .contains(globalPosition);
+}
+
+bool belongsToPanelInteraction(
+    const QPoint& globalPosition,
+    const QWidget* panel)
+{
+    if (containsGlobalPosition(panel, globalPosition))
+        return true;
+
+    const QWidget* popup = QApplication::activePopupWidget();
+    if (popup != nullptr &&
+        belongsTo(popup, panel) &&
+        containsGlobalPosition(popup, globalPosition)) {
+        return true;
+    }
+    const QWidget* modal = QApplication::activeModalWidget();
+    return modal != nullptr &&
+           belongsTo(modal, panel) &&
+           containsGlobalPosition(modal, globalPosition);
+}
+
 QFrame* toolbarDivider(QWidget* parent)
 {
     auto* divider = new QFrame(parent);
@@ -90,6 +133,7 @@ StandaloneMainWindow::StandaloneMainWindow(WorkspaceState& state, QWidget* paren
     setWindowTitle(QStringLiteral("Mesh Compare"));
     setAcceptDrops(true);
     setStyleSheet(meshCompareApplicationStyleSheet());
+    qApp->installEventFilter(this);
 
     auto* root = new QWidget(this);
     root->setObjectName(QStringLiteral("workspaceRoot"));
@@ -302,6 +346,33 @@ void StandaloneMainWindow::presentPanelFailure(const QString& message)
     emit operationFailed(message);
 }
 
+bool StandaloneMainWindow::eventFilter(QObject* watched, QEvent* event)
+{
+    if (event->type() == QEvent::MouseButtonPress) {
+        const auto* mouseEvent = static_cast<QMouseEvent*>(event);
+        const QPoint globalPosition = mouseEvent->globalPos();
+        if (coloringPanel_ != nullptr &&
+            coloringPanel_->isVisible() &&
+            !belongsToPanelInteraction(globalPosition, coloringPanel_) &&
+            !containsGlobalPosition(coloringButton_, globalPosition)) {
+            coloringPanel_->hide();
+        }
+        if (cameraPanel_ != nullptr &&
+            cameraPanel_->isVisible() &&
+            !belongsToPanelInteraction(globalPosition, cameraPanel_) &&
+            !containsGlobalPosition(cameraButton_, globalPosition)) {
+            cameraPanel_->hide();
+        }
+    }
+    else if (event->type() == QEvent::ApplicationDeactivate) {
+        if (coloringPanel_ != nullptr)
+            coloringPanel_->hide();
+        if (cameraPanel_ != nullptr)
+            cameraPanel_->hide();
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
 void StandaloneMainWindow::dragEnterEvent(QDragEnterEvent* event)
 {
     if (localFilePaths(*event->mimeData(), nullptr))
@@ -445,9 +516,13 @@ QWidget* StandaloneMainWindow::buildCommandBar(QWidget* parent)
     brandLabel->setObjectName(QStringLiteral("brandLabel"));
     importMeshesButton_ = new QPushButton(tr("Open"), commandBar);
     importMeshesButton_->setObjectName("importMeshesButton");
-    coloringButton_ = new QPushButton(tr("Coloring"), commandBar);
+    coloringButton_ = new QPushButton(
+        tr("Coloring") + QStringLiteral("  ▾"),
+        commandBar);
     coloringButton_->setObjectName("coloringButton");
-    cameraButton_ = new QPushButton(tr("Camera"), commandBar);
+    cameraButton_ = new QPushButton(
+        tr("Camera") + QStringLiteral("  ▾"),
+        commandBar);
     cameraButton_->setObjectName("cameraButton");
     auto* viewLabel = new QLabel(tr("View:"), commandBar);
     viewLabel->setObjectName("viewModeLabel");
