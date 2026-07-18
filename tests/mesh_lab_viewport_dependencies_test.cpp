@@ -938,6 +938,47 @@ private slots:
         QVERIFY(callbacks.lastCameraPose().viewStateXml != before.viewStateXml);
     }
 
+    void smoothWheelZoomUsesPixelDeltaWhenAngleDeltaIsEmpty()
+    {
+        TestRenderScene scene;
+        FakeViewportCallbacks callbacks;
+        ViewportDependencies deps{
+            scene.document(),
+            scene.sharedContext(),
+            scene.settings(),
+            callbacks,
+            4,
+            1,
+            1,
+            1,
+            QStringLiteral("GT"),
+            true,
+            QString()};
+        MeshLabViewport viewport(nullptr, deps);
+        viewport.resize(320, 240);
+        const CameraPose before = viewport.captureCamera();
+        QWheelEvent smoothWheel(
+            QPointF(10, 10),
+            QPointF(10, 10),
+            QPoint(0, 15),
+            QPoint(),
+            Qt::NoButton,
+            Qt::NoModifier,
+            Qt::ScrollUpdate,
+            false);
+
+        QApplication::sendEvent(&viewport, &smoothWheel);
+
+        QCOMPARE(callbacks.cameraChangeCount(), 1);
+        QCOMPARE(callbacks.lastCameraViewportId(), 4);
+        const double scaleBefore =
+            viewSettingsAttribute(before, QStringLiteral("TrackScale")).toDouble();
+        const double scaleAfter = viewSettingsAttribute(
+            callbacks.lastCameraPose(),
+            QStringLiteral("TrackScale")).toDouble();
+        QVERIFY(scaleAfter < scaleBefore);
+    }
+
     void mouseDragNotifiesInjectedCameraCallback()
     {
         TestRenderScene scene;

@@ -1287,7 +1287,14 @@ void MeshLabViewport::wheelEvent(QWheelEvent* event)
 {
     setFocus();
     event->accept();
-    float wheelDelta = event->angleDelta().y() / 120.0f;
+    const int angleDelta = event->angleDelta().y();
+    const int pixelDelta = event->pixelDelta().y();
+    float wheelDelta =
+        angleDelta != 0
+            ? angleDelta / 120.0f
+            : pixelDelta / 120.0f;
+    if (wheelDelta == 0.0f)
+        return;
     if (renderSettings_.wheelDirection)
         wheelDelta *= -1.0f;
     trackball_.MouseWheel(wheelDelta);
