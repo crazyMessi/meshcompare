@@ -26,6 +26,7 @@ public:
     virtual void clearScene() = 0;
     virtual void setSelectedMesh(MeshId meshId) = 0;
     virtual void setReferenceMesh(MeshId meshId) = 0;
+    virtual OperationResult setMeshVisible(MeshId meshId, bool visible) = 0;
     virtual OperationResult setColorPresentations(
         const QVector<MeshColorPresentationUpdate>& updates) = 0;
     virtual OperationResult setAnalysisOverlays(

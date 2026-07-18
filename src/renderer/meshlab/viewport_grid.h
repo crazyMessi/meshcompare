@@ -37,6 +37,7 @@ public:
     void showCommitted();
     void setSelectedMesh(MeshId meshId);
     void setReferenceMesh(MeshId meshId);
+    OperationResult setMeshVisible(MeshId meshId, bool visible);
     OperationResult setAnalysisOverlays(
         const QVector<MeshAnalysisOverlayUpdate>& updates);
     CameraPose captureCamera() const;
@@ -56,6 +57,7 @@ private:
     void rendererError(int viewportId, const QString& message) override;
     void clear();
     void fillHost();
+    void refreshOverlayLabels();
 
     IViewportFactory& viewportFactory_;
     IViewportCallbacks& eventSink_;
@@ -66,6 +68,8 @@ private:
     QVector<MeshId> sceneMeshIds_;
     QHash<MeshId, QString> meshLabels_;
     QHash<MeshId, QString> analysisLabels_;
+    QHash<MeshId, int> meshModelIds_;
+    QHash<MeshId, bool> meshVisibility_;
     bool overlayMode_ = false;
     bool propagatingCamera_ = false;
 };

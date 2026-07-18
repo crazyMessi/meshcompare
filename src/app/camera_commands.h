@@ -15,6 +15,7 @@ struct CameraPanelSnapshot
 {
     OperationResult result;
     QString workspaceUuid;
+    QString suggestedWorkspaceUid;
     QVector<CameraPoseSummary> poses;
 };
 
@@ -24,6 +25,7 @@ public:
     virtual ~ICameraCommands() = default;
 
     virtual CameraPanelSnapshot cameraPanelSnapshot() const = 0;
+    virtual OperationResult setCameraPoseUid(const QString& uid) = 0;
     virtual OperationResult saveCurrentCameraPose(
         QString* savedViewId = nullptr) = 0;
     virtual OperationResult applyCameraPose(const QString& viewId) = 0;

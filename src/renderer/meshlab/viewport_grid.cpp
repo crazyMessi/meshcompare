@@ -211,7 +211,8 @@ OperationResult ViewportGrid::create(
     for (const SceneMesh& mesh : scene.meshes) {
         sceneMeshIds_.append(mesh.id);
         meshLabels_.insert(mesh.id, mesh.label);
-        analysisLabels_.insert(mesh.id, QString());
+        analysisLabels_.insert(mesh.id, mesh.analysisLabel);
+        meshVisibility_.insert(mesh.id, true);
     }
 
     const int viewportCount = overlayMode_ ? 1 : scene.meshes.size();
@@ -225,6 +226,7 @@ OperationResult ViewportGrid::create(
                 QStringLiteral("%1 was not prepared for rendering.").arg(sceneMesh.label));
         }
         modelIds.append(modelId);
+        meshModelIds_.insert(sceneMesh.id, modelId);
     }
 
     host_ = host;
@@ -277,7 +279,7 @@ OperationResult ViewportGrid::create(
             viewportCount,
             viewportLabel,
             selected,
-            QString(),
+            sceneMesh.analysisLabel,
             reference,
             additionalMeshModelIds};
         std::unique_ptr<IViewport> viewport;
@@ -325,6 +327,8 @@ OperationResult ViewportGrid::create(
     }
 
     setSelectedMesh(selectedMeshId);
+    if (overlayMode_)
+        refreshOverlayLabels();
     if (viewportCount > 1)
         equalizeSplitterTree(rootSplitter);
 
@@ -360,6 +364,24 @@ void ViewportGrid::setReferenceMesh(MeshId meshId)
         viewports_[index]->setReference(viewportMeshIds_[index] == meshId);
 }
 
+OperationResult ViewportGrid::setMeshVisible(MeshId meshId, bool visible)
+{
+    if (!overlayMode_ || viewports_.empty()) {
+        return OperationResult::failure(
+            QStringLiteral("Layer visibility requires an Overlay viewport."));
+    }
+    const int modelId = meshModelIds_.value(meshId, -1);
+    if (modelId < 0) {
+        return OperationResult::failure(
+            QStringLiteral("Visibility target does not exist in the committed scene."));
+    }
+
+    meshVisibility_[meshId] = visible;
+    viewports_.front()->setMeshVisible(modelId, visible);
+    refreshOverlayLabels();
+    return OperationResult::success();
+}
+
 OperationResult ViewportGrid::setAnalysisOverlays(
     const QVector<MeshAnalysisOverlayUpdate>& updates)
 {
@@ -390,15 +412,7 @@ OperationResult ViewportGrid::setAnalysisOverlays(
         analysisLabels_[update.meshId] = update.label;
 
     if (overlayMode_) {
-        QStringList summary;
-        for (MeshId meshId : sceneMeshIds_) {
-            const QString label = analysisLabels_.value(meshId);
-            if (!label.isEmpty()) {
-                summary.append(
-                    QStringLiteral("%1: %2").arg(meshLabels_.value(meshId), label));
-            }
-        }
-        viewports_.front()->setScoreLabel(summary.join(QStringLiteral(" · ")));
+        refreshOverlayLabels();
         return OperationResult::success();
     }
 
@@ -411,6 +425,30 @@ OperationResult ViewportGrid::setAnalysisOverlays(
         }
     }
     return OperationResult::success();
+}
+
+void ViewportGrid::refreshOverlayLabels()
+{
+    if (!overlayMode_ || viewports_.empty())
+        return;
+
+    int visibleCount = 0;
+    QStringList summary;
+    for (MeshId meshId : sceneMeshIds_) {
+        if (!meshVisibility_.value(meshId, true))
+            continue;
+        ++visibleCount;
+        const QString label = analysisLabels_.value(meshId);
+        if (!label.isEmpty()) {
+            summary.append(
+                QStringLiteral("%1: %2").arg(meshLabels_.value(meshId), label));
+        }
+    }
+    viewports_.front()->setLabel(
+        QStringLiteral("Overlay · %1/%2 visible")
+            .arg(visibleCount)
+            .arg(sceneMeshIds_.size()));
+    viewports_.front()->setScoreLabel(summary.join(QStringLiteral(" · ")));
 }
 
 CameraPose ViewportGrid::captureCamera() const
@@ -539,6 +577,8 @@ void ViewportGrid::clear()
     sceneMeshIds_.clear();
     meshLabels_.clear();
     analysisLabels_.clear();
+    meshModelIds_.clear();
+    meshVisibility_.clear();
     overlayMode_ = false;
     delete container_.data();
     container_.clear();

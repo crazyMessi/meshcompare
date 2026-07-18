@@ -105,9 +105,9 @@ OperationResult parseLibraryRoot(const QJsonObject& root, ParsedLibrary* destina
 	for (auto poseIt = parsed.poses.constBegin(); poseIt != parsed.poses.constEnd(); ++poseIt) {
 		const QString normalizedUuid = CameraPoseStore::normalizeUuid(poseIt.key());
 		if (normalizedUuid.isEmpty())
-			return failure(QStringLiteral("The camera-pose library contains an invalid UUID key."));
+			return failure(QStringLiteral("The camera-pose library contains an invalid UID key."));
 		if (parsed.collections.contains(normalizedUuid))
-			return failure(QStringLiteral("The camera-pose library contains duplicate UUID keys."));
+			return failure(QStringLiteral("The camera-pose library contains duplicate UID keys."));
 
 		QJsonArray values;
 		if (poseIt.value().isArray()) {
@@ -117,7 +117,7 @@ OperationResult parseLibraryRoot(const QJsonObject& root, ParsedLibrary* destina
 			values.append(poseIt.value());
 		}
 		else {
-			return failure(QStringLiteral("The camera-pose library contains an invalid UUID entry."));
+			return failure(QStringLiteral("The camera-pose library contains an invalid UID entry."));
 		}
 
 		ParsedCollection collection;
@@ -427,7 +427,8 @@ QString incrementDecimal(QString digits)
 
 OperationResult invalidUuidResult()
 {
-	return failure(QStringLiteral("UUID must contain exactly 32 hexadecimal characters."));
+	return failure(QStringLiteral(
+		"UID must be a non-empty identifier of at most 255 characters."));
 }
 
 }
@@ -594,7 +595,7 @@ OperationResult CameraPoseStore::load(
 		return readResult;
 	const auto collectionIt = library.collections.constFind(normalizedUuid);
 	if (collectionIt == library.collections.constEnd())
-		return failure(QStringLiteral("No saved camera poses exist for this UUID."));
+		return failure(QStringLiteral("No saved camera poses exist for this UID."));
 	for (const ParsedView& candidate : collectionIt.value().views) {
 		if (candidate.viewId == viewId) {
 			*pose = candidate.pose;
@@ -618,7 +619,7 @@ OperationResult CameraPoseStore::remove(const QString& uuid, const QString& view
 		return readResult;
 	const auto collectionIt = library.collections.constFind(normalizedUuid);
 	if (collectionIt == library.collections.constEnd())
-		return failure(QStringLiteral("No saved camera poses exist for this UUID."));
+		return failure(QStringLiteral("No saved camera poses exist for this UID."));
 
 	int removeIndex = -1;
 	for (int index = 0; index < collectionIt.value().views.size(); ++index) {

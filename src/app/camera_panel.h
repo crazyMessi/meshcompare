@@ -5,6 +5,7 @@
 
 class ICameraCommands;
 class QLabel;
+class QLineEdit;
 class QListWidget;
 class QPushButton;
 class QWidget;
@@ -28,6 +29,7 @@ signals:
 
 private:
     QString selectedViewId() const;
+    OperationResult commitUidInput(bool refreshAfterCommit);
     void applySelectedPose();
     void deleteSelectedPose();
     void updateActionState();
@@ -36,6 +38,7 @@ private:
     WorkspaceState& state_;
     ICameraCommands& commands_;
     QLabel* uuidLabel_ = nullptr;
+    QLineEdit* uidInput_ = nullptr;
     QListWidget* poseList_ = nullptr;
     QPushButton* saveButton_ = nullptr;
     QPushButton* applyButton_ = nullptr;

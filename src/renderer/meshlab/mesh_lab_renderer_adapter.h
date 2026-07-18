@@ -28,6 +28,7 @@ public:
     void clearScene() override;
     void setSelectedMesh(MeshId meshId) override;
     void setReferenceMesh(MeshId meshId) override;
+    OperationResult setMeshVisible(MeshId meshId, bool visible) override;
     OperationResult setColorPresentations(
         const QVector<MeshColorPresentationUpdate>& updates) override;
     OperationResult setAnalysisOverlays(

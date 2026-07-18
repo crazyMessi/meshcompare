@@ -49,6 +49,8 @@ public:
     ~WorkspaceController() override;
 
     WorkspaceImportOutcome importMeshes(const QStringList& paths);
+    OperationResult setLayoutMode(SceneLayoutMode layoutMode);
+    OperationResult setMeshVisible(MeshId meshId, bool visible);
     OperationResult selectMesh(MeshId id) override;
     OperationResult setReference(MeshId id) override;
     OperationResult startAnalysis(
@@ -60,6 +62,7 @@ public:
         const QColor& color) override;
     OperationResult clearColoring() override;
     CameraPanelSnapshot cameraPanelSnapshot() const override;
+    OperationResult setCameraPoseUid(const QString& uid) override;
     OperationResult saveCurrentCameraPose(
         QString* savedViewId = nullptr) override;
     OperationResult applyCameraPose(const QString& viewId) override;
@@ -106,6 +109,8 @@ private:
     std::unique_ptr<MeshLabMeshRepository> repository_;
     std::unique_ptr<MeshColorService> colorService_;
     QString workspaceUuid_;
+    QString suggestedWorkspaceUid_;
+    bool workspaceUidManuallyAssigned_ = false;
     bool replacingWorkspace_ = false;
     bool handlingCallback_ = false;
     mutable bool cameraCommandInProgress_ = false;

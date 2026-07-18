@@ -11,6 +11,7 @@ class ICameraCommands;
 class IColoringCommands;
 class QDragEnterEvent;
 class QDropEvent;
+class QFrame;
 class QLabel;
 class QMenu;
 class QPushButton;
@@ -50,6 +51,8 @@ public slots:
 
 signals:
     void importRequested(const QStringList& paths);
+    void layoutModeRequested(SceneLayoutMode layoutMode);
+    void meshVisibilityRequested(MeshId meshId, bool visible);
     void operationFailed(const QString& message);
 
 protected:
@@ -59,11 +62,17 @@ protected:
 
 private:
     QWidget* buildCommandBar(QWidget* parent);
+    QFrame* buildNoticeBanner(QWidget* parent);
+    QFrame* buildStatusBar(QWidget* parent);
+    void rebuildLayersMenu();
     bool confirmWorkspaceReplacement();
     void toggleColoringPanel();
     void positionColoringPanel();
     void toggleCameraPanel();
     void positionCameraPanel();
+    void requestMeshVisibilityChange(MeshId meshId, bool visible);
+    void showPassiveStatusMessage(const QString& message);
+    void updateWorkspaceStatus();
     void presentPanelFailure(const QString& message);
 
     WorkspaceState& state_;
@@ -71,9 +80,19 @@ private:
     QPushButton* importMeshesButton_ = nullptr;
     QPushButton* coloringButton_ = nullptr;
     QPushButton* cameraButton_ = nullptr;
+    QPushButton* overlayViewButton_ = nullptr;
+    QPushButton* gridViewButton_ = nullptr;
+    QToolButton* layersButton_ = nullptr;
+    QMenu* layersMenu_ = nullptr;
     QToolButton* diagnosticsButton_ = nullptr;
+    QFrame* viewportFrame_ = nullptr;
     QWidget* viewportHost_ = nullptr;
+    QWidget* noticeArea_ = nullptr;
+    QFrame* noticeBanner_ = nullptr;
+    QLabel* noticeLabel_ = nullptr;
+    QFrame* statusBar_ = nullptr;
     QLabel* statusLabel_ = nullptr;
+    QLabel* workspaceStatusLabel_ = nullptr;
     QLabel* meshCountLabel_ = nullptr;
     ColoringPanel* coloringPanel_ = nullptr;
     CameraPanel* cameraPanel_ = nullptr;

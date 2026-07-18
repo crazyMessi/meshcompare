@@ -168,6 +168,28 @@ int main(int argc, char** argv)
             &window,
             importAndPresent);
         QObject::connect(
+            &window,
+            &StandaloneMainWindow::layoutModeRequested,
+            &window,
+            [&controller, &window](SceneLayoutMode layoutMode) {
+                const OperationResult result =
+                    controller.setLayoutMode(layoutMode);
+                if (!result.ok)
+                    window.showStatusMessage(result.error);
+            });
+        QObject::connect(
+            &window,
+            &StandaloneMainWindow::meshVisibilityRequested,
+            &window,
+            [&controller, &window](MeshId meshId, bool visible) {
+                const OperationResult result =
+                    controller.setMeshVisible(meshId, visible);
+                if (!result.ok) {
+                    window.showStatusMessage(result.error);
+                    window.refreshWorkspace();
+                }
+            });
+        QObject::connect(
             &controller,
             &WorkspaceController::statusMessage,
             &window,

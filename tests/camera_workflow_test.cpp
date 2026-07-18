@@ -20,7 +20,7 @@ const QString UuidA = QStringLiteral("00112233445566778899aabbccddeeff");
 const QString UuidB = QStringLiteral("ffeeddccbbaa99887766554433221100");
 const QString UuidC = QStringLiteral("0123456789abcdef0123456789abcdef");
 const QString NoUuidNotice =
-    QStringLiteral("No UUID was found in this workspace.");
+    QStringLiteral("No UID was found in this workspace.");
 
 CameraPose pose(const QString& value)
 {
@@ -89,7 +89,7 @@ private slots:
     void uuidResolverPrioritizesReferenceThenImportOrderAndNormalizesCandidates()
     {
         const QVector<MeshEntry> meshes = {
-            entry(1, QStringLiteral("first.obj"), {QStringLiteral("not-a-uuid"),
+            entry(1, QStringLiteral("first.obj"), {QString(),
                                                    UuidA}),
             entry(2, QStringLiteral("reference.obj"),
                   {QStringLiteral("{FFEEDDCC-BBAA-9988-7766-554433221100}"),
@@ -101,12 +101,18 @@ private slots:
 
         QVector<MeshEntry> referenceWithoutUuid = meshes;
         referenceWithoutUuid[1].uuidCandidates =
-            QStringList{QStringLiteral("invalid")};
+            QStringList{QString()};
         QCOMPARE(resolveWorkspaceUuid(referenceWithoutUuid, 2), UuidA);
 
         for (MeshEntry& mesh : referenceWithoutUuid)
-            mesh.uuidCandidates = QStringList{QStringLiteral("invalid")};
+            mesh.uuidCandidates = QStringList{QString()};
         QVERIFY(resolveWorkspaceUuid(referenceWithoutUuid, 2).isEmpty());
+
+        referenceWithoutUuid[0].uuidCandidates =
+            QStringList{QStringLiteral("Run-42")};
+        QCOMPARE(
+            resolveWorkspaceUuid(referenceWithoutUuid, 2),
+            QStringLiteral("run-42"));
     }
 
     void importRestoresLatestPoseAfterRendererAndStateCommits()
@@ -209,6 +215,43 @@ private slots:
         QVERIFY(snapshot.poses.isEmpty());
         QCOMPARE(store.listCount(), 0);
         QVERIFY(!controller.saveCurrentCameraPose().ok);
+    }
+
+    void missingUidSuggestsMlpFilenameAndAcceptsManualUidForSaving()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(staged(
+            {entry(1, QStringLiteral("reference_gt.obj")),
+             entry(2, QStringLiteral("candidate.obj"))}));
+        FakeRendererAdapter renderer;
+        renderer.setCamera(pose(QStringLiteral("manual-camera")));
+        FakeSurfaceComparer comparer;
+        FakeCameraPoseStore store;
+        WorkspaceController controller(state, importer, renderer, comparer, store);
+
+        const WorkspaceImportOutcome outcome = controller.importMeshes(
+            {QStringLiteral("/tmp/Comparison_Run-42.mlp")});
+
+        QVERIFY2(outcome.result.ok, qPrintable(outcome.result.error));
+        const CameraPanelSnapshot before = controller.cameraPanelSnapshot();
+        QVERIFY(before.workspaceUuid.isEmpty());
+        QCOMPARE(
+            before.suggestedWorkspaceUid,
+            QStringLiteral("Comparison_Run-42"));
+
+        const OperationResult selected =
+            controller.setCameraPoseUid(QStringLiteral("  Manual-2048  "));
+        QVERIFY2(selected.ok, qPrintable(selected.error));
+        const OperationResult saved = controller.saveCurrentCameraPose();
+
+        QVERIFY2(saved.ok, qPrintable(saved.error));
+        QCOMPARE(
+            controller.cameraPanelSnapshot().workspaceUuid,
+            QStringLiteral("manual-2048"));
+        QCOMPARE(store.lastSaveUuid(), QStringLiteral("manual-2048"));
+        QCOMPARE(
+            store.lastSavedPose().viewStateXml,
+            QStringLiteral("manual-camera"));
     }
 
     void storeListFailureIsANonFatalImportNotice()

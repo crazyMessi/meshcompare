@@ -4,6 +4,7 @@
 
 #include <QApplication>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QPalette>
 #include <QPushButton>
@@ -50,6 +51,16 @@ public:
         return snapshot;
     }
 
+    OperationResult setCameraPoseUid(const QString& uid) override
+    {
+        ++setUidCalls;
+        setUids.append(uid);
+        if (!setUidResult.ok)
+            return setUidResult;
+        snapshot.workspaceUuid = uid.trimmed().toCaseFolded();
+        return setUidResult;
+    }
+
     OperationResult saveCurrentCameraPose(QString* savedViewId) override
     {
         ++saveCalls;
@@ -80,6 +91,7 @@ public:
 
     CameraPanelSnapshot snapshot;
     OperationResult saveResult = OperationResult::success();
+    OperationResult setUidResult = OperationResult::success();
     OperationResult applyResult = OperationResult::success();
     OperationResult deleteResult = OperationResult::success();
     std::function<void()> saveAction;
@@ -87,12 +99,15 @@ public:
     std::function<void()> deleteAction;
     mutable int snapshotCalls = 0;
     int saveCalls = 0;
+    int setUidCalls = 0;
+    QStringList setUids;
     QStringList applyViewIds;
     QStringList deleteViewIds;
 };
 
 struct Controls {
     QLabel* uuid = nullptr;
+    QLineEdit* uidInput = nullptr;
     QListWidget* poses = nullptr;
     QPushButton* save = nullptr;
     QPushButton* apply = nullptr;
@@ -104,6 +119,8 @@ Controls controls(CameraPanel& panel)
     Controls result;
     result.uuid =
         panel.findChild<QLabel*>(QStringLiteral("cameraUuidLabel"));
+    result.uidInput =
+        panel.findChild<QLineEdit*>(QStringLiteral("cameraUidInput"));
     result.poses =
         panel.findChild<QListWidget*>(QStringLiteral("cameraPoseList"));
     result.save = panel.findChild<QPushButton*>(
@@ -152,8 +169,11 @@ private slots:
         QVERIFY(ui.uuid != nullptr);
         QCOMPARE(
             ui.uuid->text(),
-            QStringLiteral(
-                "Workspace UUID: 123e4567-e89b-12d3-a456-426614174000"));
+            QStringLiteral("Workspace UID"));
+        QVERIFY(ui.uidInput != nullptr);
+        QCOMPARE(
+            ui.uidInput->text(),
+            QStringLiteral("123e4567-e89b-12d3-a456-426614174000"));
         QVERIFY(ui.poses != nullptr);
         QCOMPARE(ui.poses->count(), 2);
         QVERIFY(ui.poses->item(0)->text().contains(QStringLiteral("view_001")));
@@ -198,11 +218,13 @@ private slots:
         QCOMPARE(commands.applyViewIds, QStringList({QStringLiteral("view_002")}));
     }
 
-    void noUuidExplainsWhyActionsAreUnavailableAndSkipsPoseRows()
+    void missingUidPreloadsProjectNameAndCanSaveImmediately()
     {
         WorkspaceState state;
         makeReady(state);
         RecordingCameraCommands commands;
+        commands.snapshot.suggestedWorkspaceUid =
+            QStringLiteral("comparison_run-42");
         commands.snapshot.poses = {
             summary(QStringLiteral("wrong-scope"), QStringLiteral("ignored"))};
 
@@ -211,8 +233,35 @@ private slots:
 
         QCOMPARE(
             ui.uuid->text(),
-            QStringLiteral("No UUID was found in this workspace."));
+            QStringLiteral("No UID was detected. Confirm or edit it."));
+        QCOMPARE(ui.uidInput->text(), QStringLiteral("comparison_run-42"));
         QCOMPARE(ui.poses->count(), 0);
+        QVERIFY(ui.save->isEnabled());
+        QVERIFY(!ui.apply->isEnabled());
+        QVERIFY(!ui.remove->isEnabled());
+
+        QTest::mouseClick(ui.save, Qt::LeftButton);
+
+        QCOMPARE(commands.setUids, QStringList({QStringLiteral("comparison_run-42")}));
+        QCOMPARE(commands.saveCalls, 1);
+        QCOMPARE(
+            commands.snapshot.workspaceUuid,
+            QStringLiteral("comparison_run-42"));
+    }
+
+    void emptyUidInputKeepsCameraActionsUnavailable()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+
+        CameraPanel panel(state, commands);
+        const Controls ui = controls(panel);
+
+        QCOMPARE(
+            ui.uuid->text(),
+            QStringLiteral("Enter a workspace UID."));
+        QVERIFY(ui.uidInput->text().isEmpty());
         QVERIFY(!ui.save->isEnabled());
         QVERIFY(!ui.apply->isEnabled());
         QVERIFY(!ui.remove->isEnabled());

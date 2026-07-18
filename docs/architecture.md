@@ -1,7 +1,7 @@
 # Standalone Mesh Comparison Application Design
 
 Date: 2026-07-14
-Last revised: 2026-07-16
+Last revised: 2026-07-17
 Status: Interactive design approved; adaptive viewport-layout revision approved
 
 ## 1. Background and Evidence
@@ -22,9 +22,10 @@ The final product direction is not a reskinned MeshLab. It is a new standalone a
 The first release serves four core workflows:
 
 1. Import 2–8 meshes in one batch and automatically create synchronized comparison viewports.
-2. Apply Precision or Normal Agreement analytical coloring to every non-Reference mesh.
+2. Apply Distance-to-Reference or Double Layer analytical coloring.
 3. Assign a uniform color to the currently selected mesh.
-4. Save, list, apply, and automatically restore camera poses by mesh UUID.
+4. Save, list, apply, and automatically restore camera poses by workspace UID,
+   with canonical mesh UUIDs remaining the preferred automatic source.
 
 The product must preserve MeshLab's rotation, zoom, and pan behavior, as well as its existing default lighting, gradient background, and rendering character.
 
@@ -82,7 +83,9 @@ Reference resolution follows these rules:
 3. If there are multiple matches or no match, show a non-blocking notice.
 4. The user can always change the Reference in the coloring panel.
 
-Changing the Reference clears existing analysis scores and analytical colors, but it does not clear meshes that are currently using a uniform color. The user can then run a new analysis.
+Changing the Reference clears Distance-to-Reference colors because their raw
+field depends on the chosen reference. It preserves Double Layer colors, which
+depend only on each mesh, as well as uniform colors.
 
 ### 4.4 Comparison Viewports
 
@@ -107,52 +110,71 @@ construct a fresh topology.
 
 Each viewport displays exactly one mesh. All viewports share a camera by default. Rotating, zooming, or panning in any viewport updates every other viewport. Clicking a viewport changes only the selected mesh; it does not unlink the cameras.
 
-The upper-left corner of each viewport shows a compact name. The Reference has an explicit badge. After analysis, each non-Reference viewport shows its metric and score. The selected viewport uses a subtle accent border.
+The upper-left corner of each viewport shows a compact name. The Reference has an explicit badge. After analysis, affected viewports show a compact metric summary. The selected viewport uses a subtle accent border.
+
+The command bar exposes explicit Grid and Overlay controls. Grid uses the
+adaptive multi-viewport layout; Overlay draws every mesh in one viewport. A
+Layers menu is enabled in Overlay and controls each mesh's visibility while
+preventing the last visible mesh from being hidden. Visibility choices survive
+temporary switches to Grid. These controls do not reserve persistent viewport
+width.
 
 ### 4.5 Coloring
 
 The coloring panel is a temporary panel opened from the top command bar. It contains three modes:
 
 - Uniform Color.
-- Precision.
-- Normal Agreement.
+- Distance.
+- Double Layer.
 
 Each mesh has exactly one current presentation state:
 
 - `Default`.
 - `UniformColor`.
-- `PrecisionResult`.
-- `NormalAgreementResult`.
+- `VertexColor`.
 
 Uniform color applies only to the currently selected mesh. It overrides the default material through rendering options and does not modify vertices, faces, or geometry.
 
-Analysis uses the current Reference and processes every non-Reference mesh by default. The existing algorithm and defaults are preserved:
+Distance uses the current Reference and processes every non-Reference mesh. It
+computes the exact unsigned distance from each target vertex to the closest
+Reference triangle. The presentation maps
+`sqrt(clamp(distance / maximumDistance, 0, 1))` through Matplotlib's 256-entry
+Viridis table. `maximumDistance` defaults to `0.04`. The Reference presents its
+source vertex colors when available and otherwise uses RGBA `(180, 180, 180,
+255)`.
 
-- Source and Reference each use 500,000 area-uniform samples by default.
-- Precision uses a default distance threshold of `0.004`.
-- Normal Agreement uses the absolute normal dot product by default.
-- Face-aggregated results use a red–yellow–green map.
-- Every live face receives an analysis color. Faces without random samples are
-  evaluated deterministically at their centroid; zero-area faces receive a
-  defined zero score.
-- A source containing only zero-area faces returns a zero global score and
-  colors every live face with the zero-score color. The Reference must still
-  contain a positive-area face.
+Double Layer is Reference-independent and processes every mesh, including the
+current Reference. Each mesh uses 500,000 deterministic area-uniform samples by
+default. For every sample, the 20 nearest neighbors are inspected; neighbors
+whose normal dot product is below `cos(170°)` contribute to the sample score.
+Sample scores are projected to faces and then vertices by maximum. Positive
+scores use the square-root-strength orange map from the reference workflow;
+unaffected vertices use RGBA `(180, 180, 180, 255)`. The default random seed is
+`0`.
 
-Sample count, Precision threshold, and normal-direction behavior live in a collapsed “Advanced Parameters” section of the coloring panel.
+Distance maximum and Double Layer sample count, neighbor count, and opposite
+normal angle live in a collapsed, mode-specific “Advanced Parameters” section.
+Raw analysis fields are kept separate from presentation colors so a Distance
+maximum change can remap cached distances without recomputing geometry.
 
 Analysis runs in a bounded, cancellable background work queue. Results for all targets are staged and committed together only after every target succeeds. Cancellation or failure never leaves a partially updated result. During analysis, each target viewport reports progress. “Clear Coloring” returns every mesh to MeshLab's default presentation.
 
 ### 4.6 Camera Poses
 
-The camera panel lists the saved poses associated with the current Reference UUID and supports:
+The camera panel lists the saved poses associated with the current workspace UID and supports:
 
 - Saving the complete current camera state.
 - Applying a selected saved pose.
 - Deleting a selected saved pose.
 - Automatically applying the latest pose after mesh import.
 
-UUID candidates from the Reference take priority. If the Reference has no UUID, the application checks candidates from the remaining meshes in import order. If no valid UUID exists, comparison remains available, but saving a pose is disabled with an explanation.
+Canonical UUID candidates from the Reference take priority. If the Reference
+has no UUID, the application checks candidates from the remaining meshes in
+import order, then recognizes normalized mesh-name UIDs such as
+`<uid>_gt_norm`. An imported MeshLab project name is offered as an editable
+suggestion. The user may confirm or replace that suggestion with a non-empty
+workspace UID before saving. Existing canonical UUIDs remain normalized exactly
+as before, and legacy pose collections remain compatible.
 
 Saving a pose persists it immediately; there is no unsaved camera list. If automatic restore fails, the default camera remains active and the application shows a non-blocking notice.
 
@@ -176,7 +198,9 @@ The native macOS application menu contains only platform-required items such as 
 
 `StandaloneMainWindow` has three areas:
 
-1. A top command bar with the application name, import, coloring, camera actions, linked-camera status, mesh count, and diagnostics menu.
+1. A top command bar with the application name, import, coloring, camera,
+   Grid/Overlay, Overlay layer visibility, linked-camera status, mesh count,
+   and diagnostics actions.
 2. A central `ViewportHost` where the Renderer Adapter mounts the adaptive viewport grid.
 3. A lightweight bottom status area for interaction hints, background progress, and non-blocking errors.
 
@@ -209,7 +233,7 @@ Owns the single-workspace state machine and command orchestration: import, repla
 
 Stores application-level state:
 
-- `MeshEntry`: `MeshId`, source path, display name, UUID candidates, and Reference flag.
+- `MeshEntry`: `MeshId`, source path, display name, UID candidates, and Reference flag.
 - The currently selected mesh.
 - Each mesh's coloring mode, analysis score, and task status.
 - The current Reference.
@@ -237,7 +261,7 @@ Owns schema 2 JSON reading, atomic writing, legacy migration, listing, saving, l
 
 ### 6.4 Renderer Adapter Boundary
 
-The application layer depends only on `IRendererAdapter`. The interface uses product-level types: `MeshResourceId`, `SceneDescriptor`, `ColorPresentation`, `FaceColorBuffer`, `CameraPose`, and `DiagnosticFlag`.
+The application layer depends only on `IRendererAdapter`. The interface uses product-level types: `MeshResourceId`, `SceneDescriptor`, `ColorPresentation`, per-face or per-vertex color buffers, `CameraPose`, and `DiagnosticFlag`.
 
 Its responsibilities are:
 
@@ -245,7 +269,7 @@ Its responsibilities are:
 - Preparing, committing, and clearing a workspace scene.
 - Building the mesh-to-viewport layout.
 - Setting the selected viewport and linked-camera behavior.
-- Applying uniform colors or analytical face colors.
+- Applying uniform colors or analytical per-face/per-vertex colors.
 - Capturing, restoring, and resetting the camera.
 - Toggling orthographic mode, wireframe, and normal diagnostics.
 - Reporting resource progress, active-viewport changes, camera changes, and renderer errors.
@@ -300,7 +324,7 @@ The old workspace remains usable until commit. If preparing new GPU resources ex
 
 ### 7.2 Analytical Coloring
 
-`Analyze command → immutable source/reference snapshots → background sampling → staged scores and face colors → validation → repository result commit → renderer color-buffer refresh`
+`Analyze command → immutable geometry snapshots → cached or background raw field → staged per-vertex colors and typed summary → validation → workspace and renderer commit`
 
 Each background task carries a workspace generation ID. After workspace replacement or cancellation, an old task can never commit results into the new workspace.
 
@@ -314,7 +338,7 @@ Save flow:
 
 Automatic restore flow:
 
-`resolve UUID → load latest pose → renderer.restoreCamera → linked viewports update`
+`resolve or confirm workspace UID → load latest pose → renderer.restoreCamera → linked viewports update`
 
 ## 8. Error Handling
 
@@ -339,8 +363,8 @@ this revision. Verification is limited to successfully building the application.
 - Automatic and manual Reference selection.
 - Transactional workspace import and generation IDs.
 - Coloring presentation states and clear behavior.
-- Precision, Normal Agreement, and color mapping.
-- Camera library schema, atomic writes, legacy migration, and UUID resolution.
+- Exact vertex-to-triangle distance, Viridis mapping, Double Layer scoring, and color mapping.
+- Camera library schema, atomic writes, legacy migration, and workspace UID resolution.
 - Error normalization and state-machine transitions.
 
 ### 9.2 Adapter Contract Tests
@@ -354,7 +378,7 @@ The same contract suite must also run against `MeshLabRendererAdapter`.
 - Creating, rearranging, and destroying 2–8 viewports.
 - Uploading shared OpenGL resources once and referencing them correctly from every viewport.
 - Camera synchronization, capture, and restore.
-- Switching among default, uniform-color, and analytical face-color presentations.
+- Switching among default, uniform-color, and analytical vertex-color presentations.
 - Repeated workspace replacement and application shutdown without crashes, use-after-free, or stale contexts.
 
 ### 9.4 UI and Render Regression Tests
@@ -372,9 +396,10 @@ The implementation is complete only when all of the following are true:
 1. The new application target does not link the old `MainWindow`, MDI, `MultiViewer_Container`, Filter Dock, or Layer Dialog.
 2. A batch of 2–8 meshes imports directly into synchronized comparison viewports.
 3. Automatic `gt` Reference selection and manual Reference changes both work.
-4. Precision and Normal Agreement process every non-Reference mesh in one operation.
+4. Distance processes every non-Reference mesh, while Double Layer processes every mesh in one operation.
 5. The selected mesh can use a uniform color, and coloring can be cleared.
-6. UUID poses can be saved, listed, applied, deleted, and automatically restored, and the legacy library can be migrated.
+6. Workspace-UID poses can be saved, listed, applied, deleted, and automatically
+   restored; canonical UUID and legacy-library compatibility are preserved.
 7. Viewport interaction, default lighting, and background match the current customized MeshLab application.
 8. The Renderer Adapter boundary leaks no legacy viewport or OpenGL implementation types.
 9. Repeated import, analysis cancellation, and application exit pass lifecycle integration tests.
@@ -387,8 +412,9 @@ The implementation is complete only when all of the following are true:
 - Use a single top command bar; do not use a persistent sidebar.
 - Enter comparison immediately after batch import.
 - Automatically select `gt` as the Reference.
-- Analyze every non-Reference mesh by default.
-- Preserve automatic UUID camera restore.
+- Analyze every eligible mesh by mode: non-Reference meshes for Distance and all meshes for Double Layer.
+- Preserve automatic canonical-UUID camera restore while allowing an editable
+  workspace UID when no UUID is available.
 - Do not export colored mesh results.
 - Always confirm before replacing a non-empty workspace.
 - Keep only a minimal set of rendering diagnostics.

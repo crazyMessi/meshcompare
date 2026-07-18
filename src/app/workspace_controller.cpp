@@ -4,6 +4,7 @@
 #include <utility>
 
 #include <QDateTime>
+#include <QFileInfo>
 #include <QScopedValueRollback>
 
 #include "../core/reference_resolver.h"
@@ -15,23 +16,30 @@
 
 namespace
 {
+QString analysisScoreLabel(const MeshEntry& mesh);
+
 SceneDescriptor makeSceneDescriptor(
     quint64 generation,
     const QVector<MeshEntry>& entries,
     MeshId referenceId,
-    SceneLayoutMode layoutMode)
+    SceneLayoutMode layoutMode,
+    const CameraPose& initialCamera = {})
 {
     SceneDescriptor scene;
     scene.generation = generation;
     scene.referenceId = referenceId;
     scene.layoutMode = layoutMode;
+    scene.initialCamera = initialCamera;
     scene.meshes.reserve(entries.size());
     for (const MeshEntry& entry : entries) {
         scene.meshes.append(
             {entry.id,
              entry.resourceId,
              entry.displayName,
-             entry.id == referenceId});
+             entry.id == referenceId,
+             entry.presentation,
+             analysisScoreLabel(entry),
+             entry.visible});
     }
     return scene;
 }
@@ -110,6 +118,17 @@ QString firstUuidCandidate(const MeshEntry& mesh)
         const QString normalized = CameraPoseStore::normalizeUuid(candidate);
         if (!normalized.isEmpty())
             return normalized;
+    }
+    return {};
+}
+
+QString suggestedWorkspaceUid(const QStringList& paths)
+{
+    for (const QString& path : paths) {
+        const QFileInfo info(path);
+        if (info.suffix().compare(QStringLiteral("mlp"), Qt::CaseInsensitive) != 0)
+            continue;
+        return info.completeBaseName().trimmed();
     }
     return {};
 }
@@ -245,7 +264,10 @@ WorkspaceImportOutcome WorkspaceController::importMeshes(const QStringList& path
     colorService_.reset();
     repository_ = std::move(staged.repository);
     const OperationResult committed =
-        state_.commitWorkspace(std::move(staged.entries), reference.referenceId);
+        state_.commitWorkspace(
+            std::move(staged.entries),
+            reference.referenceId,
+            staged.layoutMode);
     Q_ASSERT_X(
         committed.ok,
         "WorkspaceController::importMeshes",
@@ -258,6 +280,8 @@ WorkspaceImportOutcome WorkspaceController::importMeshes(const QStringList& path
 
     renderer_.setReferenceMesh(state_.referenceId());
     renderer_.setSelectedMesh(state_.selectedMeshId());
+    suggestedWorkspaceUid_ = suggestedWorkspaceUid(paths);
+    workspaceUidManuallyAssigned_ = false;
     workspaceUuid_ =
         resolveWorkspaceUuid(state_.meshes(), state_.referenceId());
     const QString cameraNotice = restoreLatestCameraPose();
@@ -266,6 +290,118 @@ WorkspaceImportOutcome WorkspaceController::importMeshes(const QStringList& path
     return {OperationResult::success(),
             {},
             appendNotice(reference.notice, cameraNotice)};
+}
+
+OperationResult WorkspaceController::setLayoutMode(SceneLayoutMode layoutMode)
+{
+    if (handlingCallback_) {
+        return OperationResult::failure(
+            QStringLiteral("View switching is unavailable during a renderer callback."));
+    }
+    if (replacingWorkspace_) {
+        return OperationResult::failure(
+            QStringLiteral("View switching is unavailable during workspace replacement."));
+    }
+    if (cameraCommandInProgress_) {
+        return OperationResult::failure(
+            QStringLiteral("View switching is unavailable during a camera-pose command."));
+    }
+    if (state_.phase() != WorkspacePhase::Ready || repository_ == nullptr) {
+        return OperationResult::failure(
+            QStringLiteral("View switching requires an idle ready workspace."));
+    }
+    if (state_.layoutMode() == layoutMode)
+        return OperationResult::success();
+
+    QScopedValueRollback<bool> replacementGuard(replacingWorkspace_, true);
+    const SceneDescriptor scene = makeSceneDescriptor(
+        state_.generation(),
+        state_.meshes(),
+        state_.referenceId(),
+        layoutMode,
+        renderer_.captureCamera());
+    const OperationResult prepared =
+        renderer_.prepareScene(scene, *repository_);
+    if (!prepared.ok) {
+        renderer_.discardPreparedScene();
+        return prepared;
+    }
+
+    disconnectRendererEvents();
+    renderer_.commitPreparedScene();
+    connectRendererEvents();
+    const OperationResult changed = state_.setLayoutMode(layoutMode);
+    Q_ASSERT_X(
+        changed.ok,
+        "WorkspaceController::setLayoutMode",
+        "a synchronously prevalidated layout change must succeed");
+    if (!changed.ok) {
+        state_.enterFatalError();
+        return OperationResult::failure(
+            QStringLiteral("The prepared view layout could not be committed."));
+    }
+
+    renderer_.setReferenceMesh(state_.referenceId());
+    renderer_.setSelectedMesh(state_.selectedMeshId());
+    publishWorkspaceChanged();
+    return OperationResult::success();
+}
+
+OperationResult WorkspaceController::setMeshVisible(MeshId meshId, bool visible)
+{
+    if (handlingCallback_) {
+        return OperationResult::failure(
+            QStringLiteral("Layer visibility is unavailable during a renderer callback."));
+    }
+    if (replacingWorkspace_) {
+        return OperationResult::failure(
+            QStringLiteral("Layer visibility is unavailable during workspace replacement."));
+    }
+    if (cameraCommandInProgress_) {
+        return OperationResult::failure(
+            QStringLiteral("Layer visibility is unavailable during a camera-pose command."));
+    }
+    if ((state_.phase() != WorkspacePhase::Ready &&
+         state_.phase() != WorkspacePhase::Analyzing) ||
+        state_.layoutMode() != SceneLayoutMode::Overlay) {
+        return OperationResult::failure(
+            QStringLiteral("Layer visibility is available in Overlay view."));
+    }
+
+    const MeshEntry* target = state_.mesh(meshId);
+    if (target == nullptr) {
+        return OperationResult::failure(
+            QStringLiteral("Visibility target does not exist in this workspace."));
+    }
+    if (target->visible == visible)
+        return OperationResult::success();
+    if (!visible) {
+        int visibleCount = 0;
+        for (const MeshEntry& mesh : state_.meshes())
+            visibleCount += mesh.visible ? 1 : 0;
+        if (visibleCount <= 1) {
+            return OperationResult::failure(
+                QStringLiteral("At least one mesh layer must remain visible."));
+        }
+    }
+
+    const OperationResult rendered =
+        renderer_.setMeshVisible(meshId, visible);
+    if (!rendered.ok)
+        return rendered;
+
+    const OperationResult changed = state_.setMeshVisible(meshId, visible);
+    Q_ASSERT_X(
+        changed.ok,
+        "WorkspaceController::setMeshVisible",
+        "a synchronously prevalidated visibility change must succeed");
+    if (!changed.ok) {
+        state_.enterFatalError();
+        return OperationResult::failure(
+            QStringLiteral("The rendered layer visibility could not be committed."));
+    }
+    publishWorkspaceChanged();
+    return OperationResult::success();
 }
 
 OperationResult WorkspaceController::selectMesh(MeshId id)
@@ -337,8 +473,10 @@ OperationResult WorkspaceController::setReference(MeshId id)
         return changed;
 
     renderer_.setReferenceMesh(id);
-    workspaceUuid_ =
-        resolveWorkspaceUuid(state_.meshes(), state_.referenceId());
+    if (!workspaceUidManuallyAssigned_) {
+        workspaceUuid_ =
+            resolveWorkspaceUuid(state_.meshes(), state_.referenceId());
+    }
     publishOverlayUpdates(committedAnalysisOverlays());
     publishWorkspaceChanged();
     return OperationResult::success();
@@ -463,6 +601,7 @@ CameraPanelSnapshot WorkspaceController::cameraPanelSnapshot() const
 {
     CameraPanelSnapshot snapshot;
     snapshot.workspaceUuid = workspaceUuid_;
+    snapshot.suggestedWorkspaceUid = suggestedWorkspaceUid_;
     if (workspaceUuid_.isEmpty())
         return snapshot;
     if (cameraCommandInProgress_) {
@@ -484,6 +623,39 @@ CameraPanelSnapshot WorkspaceController::cameraPanelSnapshot() const
     for (const SavedCameraPose& saved : poses)
         snapshot.poses.append({saved.viewId, saved.savedAtUtc});
     return snapshot;
+}
+
+OperationResult WorkspaceController::setCameraPoseUid(const QString& uid)
+{
+    if (handlingCallback_) {
+        return OperationResult::failure(QStringLiteral(
+            "Camera UID changes are unavailable during an application callback."));
+    }
+    if (replacingWorkspace_) {
+        return OperationResult::failure(QStringLiteral(
+            "Camera UID changes are unavailable during workspace replacement."));
+    }
+    if (cameraCommandInProgress_) {
+        return OperationResult::failure(
+            QStringLiteral("A camera-pose command is already in progress."));
+    }
+    if (state_.phase() != WorkspacePhase::Ready || repository_ == nullptr) {
+        return OperationResult::failure(QStringLiteral(
+            "Camera UID changes require an idle ready workspace."));
+    }
+
+    const QString normalized = CameraPoseStore::normalizeUuid(uid);
+    if (normalized.isEmpty()) {
+        return OperationResult::failure(QStringLiteral(
+            "UID must be a non-empty identifier of at most 255 characters."));
+    }
+    if (normalized == workspaceUuid_)
+        return OperationResult::success();
+
+    workspaceUuid_ = normalized;
+    workspaceUidManuallyAssigned_ = true;
+    publishWorkspaceChanged();
+    return OperationResult::success();
 }
 
 OperationResult WorkspaceController::saveCurrentCameraPose(QString* savedViewId)
@@ -554,7 +726,7 @@ OperationResult WorkspaceController::deleteCameraPose(const QString& viewId)
 QString WorkspaceController::restoreLatestCameraPose()
 {
     if (workspaceUuid_.isEmpty())
-        return QStringLiteral("No UUID was found in this workspace.");
+        return QStringLiteral("No UID was found in this workspace.");
 
     QScopedValueRollback<bool> commandGuard(cameraCommandInProgress_, true);
     const auto publishAutoRestoreFailure = [this](
@@ -606,7 +778,7 @@ OperationResult WorkspaceController::validateCameraMutation() const
     }
     if (workspaceUuid_.isEmpty()) {
         return OperationResult::failure(
-            QStringLiteral("No UUID was found in this workspace."));
+            QStringLiteral("No UID was found in this workspace."));
     }
     return OperationResult::success();
 }

@@ -63,10 +63,20 @@ public:
         if (!viewport_.isNull())
             viewport_->setSelected(selected);
     }
+    void setLabel(QString label) override
+    {
+        if (!viewport_.isNull())
+            viewport_->setLabel(std::move(label));
+    }
     void setReference(bool reference) override
     {
         if (!viewport_.isNull())
             viewport_->setReference(reference);
+    }
+    void setMeshVisible(int meshModelId, bool visible) override
+    {
+        if (!viewport_.isNull())
+            viewport_->setMeshVisible(meshModelId, visible);
     }
     void setScoreLabel(QString label) override
     {
@@ -158,6 +168,15 @@ public:
     {
         if (grid_)
             grid_->setReferenceMesh(meshId);
+    }
+
+    OperationResult setMeshVisible(MeshId meshId, bool visible)
+    {
+        if (!grid_) {
+            return OperationResult::failure(
+                QStringLiteral("No committed viewport is available for layer visibility."));
+        }
+        return grid_->setMeshVisible(meshId, visible);
     }
 
     OperationResult setColorPresentations(
@@ -329,6 +348,40 @@ OperationResult MeshLabRendererAdapter::prepareScene(
                 flag,
                 diagnosticEnabled_[static_cast<std::size_t>(flag)]);
         }
+        QVector<MeshColorPresentationUpdate> presentations;
+        for (const SceneMesh& mesh : scene.meshes) {
+            if (mesh.presentation.mode != ColorMode::Default)
+                presentations.append({mesh.id, mesh.presentation});
+        }
+        if (!presentations.isEmpty()) {
+            result = candidate->setColorPresentations(presentations);
+            if (!result.ok)
+                return result;
+        }
+        QVector<MeshAnalysisOverlayUpdate> overlays;
+        for (const SceneMesh& mesh : scene.meshes) {
+            if (!mesh.analysisLabel.isEmpty())
+                overlays.append({mesh.id, mesh.analysisLabel});
+        }
+        if (!overlays.isEmpty()) {
+            result = candidate->setAnalysisOverlays(overlays);
+            if (!result.ok)
+                return result;
+        }
+        if (scene.layoutMode == SceneLayoutMode::Overlay) {
+            for (const SceneMesh& mesh : scene.meshes) {
+                if (mesh.visible)
+                    continue;
+                result = candidate->setMeshVisible(mesh.id, false);
+                if (!result.ok)
+                    return result;
+            }
+        }
+        if (!scene.initialCamera.viewStateXml.isEmpty()) {
+            result = candidate->restoreCamera(scene.initialCamera);
+            if (!result.ok)
+                return result;
+        }
         prepared_ = std::move(candidate);
         return OperationResult::success();
     }
@@ -374,6 +427,17 @@ void MeshLabRendererAdapter::setReferenceMesh(MeshId meshId)
     referenceMeshId_ = meshId;
     if (committed_)
         committed_->setReferenceMesh(meshId);
+}
+
+OperationResult MeshLabRendererAdapter::setMeshVisible(
+    MeshId meshId,
+    bool visible)
+{
+    if (!committed_) {
+        return OperationResult::failure(
+            QStringLiteral("No committed scene is available for layer visibility."));
+    }
+    return committed_->setMeshVisible(meshId, visible);
 }
 
 OperationResult MeshLabRendererAdapter::setColorPresentations(

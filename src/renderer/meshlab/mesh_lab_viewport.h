@@ -4,6 +4,7 @@
 
 #include <QGLWidget>
 #include <QPair>
+#include <QSet>
 #include <QSize>
 #include <QVector>
 
@@ -29,6 +30,7 @@ public:
     OperationResult restoreCamera(const CameraPose& pose);
     QString viewToText() const;
     void resetCamera();
+    void setLabel(QString label);
     void notifyCameraChangedForTest();
     void trackballStep(const QString& direction);
     OperationResult initializeForScenePreparation();
@@ -36,6 +38,7 @@ public:
     void setSelected(bool selected);
     bool isReference() const { return reference_; }
     void setReference(bool reference);
+    void setMeshVisible(int meshModelId, bool visible);
     void setScoreLabel(QString label);
     void setDiagnostic(DiagnosticFlag flag, bool enabled);
     RendererDiagnostics rendererDiagnostics() const;
@@ -83,6 +86,7 @@ private:
     IViewportCallbacks& callbacks_;
     int viewportId_;
     QVector<int> meshModelIds_;
+    QSet<int> hiddenMeshModelIds_;
     int viewportIndex_;
     int viewportCount_;
     QString label_;

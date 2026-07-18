@@ -68,6 +68,8 @@ add_library(meshcompare-ui STATIC
 	app/diagnostics_menu.h
 	app/standalone_main_window.cpp
 	app/standalone_main_window.h
+	app/app_theme.cpp
+	app/app_theme.h
 	app/workspace_controller.cpp
 	app/workspace_controller.h
 	services/diagnostics_log.cpp

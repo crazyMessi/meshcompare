@@ -5,6 +5,7 @@
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileOpenEvent>
+#include <QFrame>
 #include <QLabel>
 #include <QMdiArea>
 #include <QMenuBar>
@@ -95,6 +96,11 @@ public:
             {QStringLiteral("view_001"),
              QStringLiteral("2026-07-15T01:00:00.000Z")}};
         return snapshot;
+    }
+
+    OperationResult setCameraPoseUid(const QString&) override
+    {
+        return OperationResult::success();
     }
 
     OperationResult saveCurrentCameraPose(QString*) override
@@ -203,11 +209,142 @@ private slots:
 
         auto* coloringButton = window.findChild<QPushButton*>("coloringButton");
         auto* cameraButton = window.findChild<QPushButton*>("cameraButton");
+        auto* overlayButton =
+            window.findChild<QPushButton*>("overlayViewButton");
+        auto* gridButton =
+            window.findChild<QPushButton*>("gridViewButton");
+        auto* layersButton =
+            window.findChild<QToolButton*>("layersButton");
 
         QVERIFY(coloringButton);
         QVERIFY(cameraButton);
+        QVERIFY(overlayButton);
+        QVERIFY(gridButton);
+        QVERIFY(layersButton);
         QVERIFY(!coloringButton->isEnabled());
         QVERIFY(!cameraButton->isEnabled());
+        QVERIFY(!overlayButton->isEnabled());
+        QVERIFY(!gridButton->isEnabled());
+        QVERIFY(!layersButton->isEnabled());
+    }
+
+    void exposesVisibleOverlayAndGridViewControls()
+    {
+        WorkspaceState state;
+        state.beginLoading();
+        QVERIFY(state
+                    .commitWorkspace(
+                        {entry(1), entry(2)},
+                        1,
+                        SceneLayoutMode::Overlay)
+                    .ok);
+        StandaloneMainWindow window(state);
+        auto* overlayButton =
+            window.findChild<QPushButton*>("overlayViewButton");
+        auto* gridButton =
+            window.findChild<QPushButton*>("gridViewButton");
+        int requestCount = 0;
+        SceneLayoutMode requestedMode = SceneLayoutMode::Overlay;
+        connect(
+            &window,
+            &StandaloneMainWindow::layoutModeRequested,
+            [&](SceneLayoutMode mode) {
+                ++requestCount;
+                requestedMode = mode;
+                QVERIFY(state.setLayoutMode(mode).ok);
+            });
+
+        QVERIFY(overlayButton->isEnabled());
+        QVERIFY(gridButton->isEnabled());
+        QVERIFY(overlayButton->isChecked());
+        QVERIFY(!gridButton->isChecked());
+
+        gridButton->click();
+
+        QCOMPARE(requestCount, 1);
+        QCOMPARE(requestedMode, SceneLayoutMode::ComparisonGrid);
+        QVERIFY(!overlayButton->isChecked());
+        QVERIFY(gridButton->isChecked());
+
+        QVERIFY(state.beginAnalysis().ok);
+        window.refreshWorkspace();
+        QVERIFY(!overlayButton->isEnabled());
+        QVERIFY(!gridButton->isEnabled());
+    }
+
+    void overlayLayersMenuControlsIndividualVisibility()
+    {
+        WorkspaceState state;
+        state.beginLoading();
+        QVERIFY(state
+                    .commitWorkspace(
+                        {entry(1), entry(2)},
+                        1,
+                        SceneLayoutMode::Overlay)
+                    .ok);
+        StandaloneMainWindow window(state);
+        auto* layersButton =
+            window.findChild<QToolButton*>("layersButton");
+        auto* layersMenu =
+            window.findChild<QMenu*>("layersMenu");
+        QVERIFY(layersButton != nullptr);
+        QVERIFY(layersMenu != nullptr);
+        QCOMPARE(layersButton->text(), QStringLiteral("Layers 2/2"));
+        QVERIFY(layersButton->isEnabled());
+        layersMenu->popup(QPoint(20, 20));
+        QApplication::processEvents();
+        QCOMPARE(layersMenu->actions().size(), 2);
+        layersMenu->hide();
+        connect(
+            &window,
+            &StandaloneMainWindow::meshVisibilityRequested,
+            [&](MeshId meshId, bool visible) {
+                QVERIFY(state.setMeshVisible(meshId, visible).ok);
+                window.refreshWorkspace();
+            });
+        QAction* second = window.findChild<QAction*>(
+            QStringLiteral("meshVisibilityAction_2"));
+        QVERIFY(second != nullptr);
+
+        second->setChecked(false);
+        QApplication::processEvents();
+
+        QVERIFY(!state.mesh(2)->visible);
+        QCOMPARE(layersButton->text(), QStringLiteral("Layers 1/2"));
+        layersMenu->popup(QPoint(20, 20));
+        QApplication::processEvents();
+        layersMenu->hide();
+        QAction* first = window.findChild<QAction*>(
+            QStringLiteral("meshVisibilityAction_1"));
+        QVERIFY(first != nullptr);
+        QVERIFY(!first->isEnabled());
+
+        QVERIFY(state.setLayoutMode(SceneLayoutMode::ComparisonGrid).ok);
+        window.refreshWorkspace();
+        QVERIFY(!layersButton->isEnabled());
+        QCOMPARE(layersButton->text(), QStringLiteral("Layers"));
+    }
+
+    void layersControlDoesNotReserveViewportWidth()
+    {
+        WorkspaceState state;
+        state.beginLoading();
+        QVERIFY(state
+                    .commitWorkspace(
+                        {entry(1), entry(2)},
+                        1,
+                        SceneLayoutMode::Overlay)
+                    .ok);
+        StandaloneMainWindow window(state);
+        window.resize(980, 620);
+        window.show();
+        QApplication::processEvents();
+
+        auto* viewportFrame =
+            window.findChild<QFrame*>(QStringLiteral("viewportFrame"));
+        QVERIFY(viewportFrame != nullptr);
+        QVERIFY(window.findChild<QFrame*>(QStringLiteral("layersPanel")) == nullptr);
+        QCOMPARE(viewportFrame->width(), window.centralWidget()->width());
     }
 
     void diagnosticsMenuIsAttachedOnlyToTheOverflowButton()
@@ -354,6 +491,51 @@ private slots:
              QStringLiteral("No gt mesh found; using the first import.")});
         QCOMPARE(status->text(),
                  QStringLiteral("No gt mesh found; using the first import."));
+    }
+
+    void statusNoticeCanBeDismissedAndReturnsForANewMessage()
+    {
+        WorkspaceState state;
+        QVERIFY(makeReady(state).ok);
+        StandaloneMainWindow window(state);
+        auto* noticeArea =
+            window.findChild<QWidget*>(QStringLiteral("noticeArea"));
+        auto* noticeLabel =
+            window.findChild<QLabel*>(QStringLiteral("noticeLabel"));
+        auto* dismiss =
+            window.findChild<QToolButton*>(
+                QStringLiteral("dismissNoticeButton"));
+        auto* status =
+            window.findChild<QLabel*>(QStringLiteral("statusLabel"));
+        QVERIFY(noticeArea != nullptr);
+        QVERIFY(noticeLabel != nullptr);
+        QVERIFY(dismiss != nullptr);
+        QVERIFY(status != nullptr);
+        QVERIFY(noticeArea->isHidden());
+
+        window.presentImportOutcome(
+            {OperationResult::success(),
+             {},
+             QStringLiteral("Import warning")});
+
+        QVERIFY(!noticeArea->isHidden());
+        QCOMPARE(noticeLabel->text(), QStringLiteral("Import warning"));
+        dismiss->click();
+        QVERIFY(noticeArea->isHidden());
+
+        window.presentImportOutcome(
+            {OperationResult::failure(QStringLiteral("Analysis failed")),
+             {},
+             {}});
+
+        QVERIFY(!noticeArea->isHidden());
+        QCOMPARE(noticeLabel->text(), QStringLiteral("Analysis failed"));
+
+        window.presentImportOutcome(
+            {OperationResult::success(), {}, {}});
+
+        QVERIFY(noticeArea->isHidden());
+        QCOMPARE(status->text(), QStringLiteral("Imported 2 meshes."));
     }
 
     void successfulOutcomeRefreshesMeshCountAndWorkspaceActions()

@@ -7,9 +7,11 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLayout>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QPalette>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QVBoxLayout>
 #include <QVariant>
 
@@ -43,6 +45,11 @@ CameraPanel::CameraPanel(
     uuidLabel_->setWordWrap(true);
     root->addWidget(uuidLabel_);
 
+    uidInput_ = new QLineEdit(this);
+    uidInput_->setObjectName(QStringLiteral("cameraUidInput"));
+    uidInput_->setPlaceholderText(tr("Enter workspace UID"));
+    root->addWidget(uidInput_);
+
     saveButton_ = new QPushButton(tr("Save Current Pose"), this);
     saveButton_->setObjectName(QStringLiteral("saveCameraPoseButton"));
     root->addWidget(saveButton_);
@@ -68,7 +75,21 @@ CameraPanel::CameraPanel(
         &QListWidget::itemSelectionChanged,
         this,
         &CameraPanel::updateActionState);
+    connect(
+        uidInput_,
+        &QLineEdit::textChanged,
+        this,
+        &CameraPanel::updateActionState);
+    connect(uidInput_, &QLineEdit::editingFinished, this, [this] {
+        const OperationResult result = commitUidInput(true);
+        reportFailure(result);
+    });
     connect(saveButton_, &QPushButton::clicked, this, [this] {
+        const OperationResult selectedUid = commitUidInput(false);
+        if (!selectedUid.ok) {
+            reportFailure(selectedUid);
+            return;
+        }
         const OperationResult result = commands_.saveCurrentCameraPose();
         if (!result.ok) {
             reportFailure(result);
@@ -96,23 +117,35 @@ void CameraPanel::refreshFromState()
     workspaceUuid_ = snapshot.workspaceUuid;
     snapshotAvailable_ = snapshot.result.ok;
     poseList_->clear();
+    {
+        const QSignalBlocker inputBlocker(uidInput_);
+        uidInput_->setText(
+            workspaceUuid_.isEmpty()
+                ? snapshot.suggestedWorkspaceUid
+                : workspaceUuid_);
+    }
 
     if (!snapshotAvailable_) {
         uuidLabel_->setText(tr("Camera poses are unavailable."));
+        uidInput_->setEnabled(false);
         poseList_->setEnabled(false);
         updateActionState();
         reportFailure(snapshot.result);
         return;
     }
 
+    uidInput_->setEnabled(state_.phase() == WorkspacePhase::Ready);
     if (workspaceUuid_.isEmpty()) {
-        uuidLabel_->setText(tr("No UUID was found in this workspace."));
+        uuidLabel_->setText(
+            snapshot.suggestedWorkspaceUid.isEmpty()
+                ? tr("Enter a workspace UID.")
+                : tr("No UID was detected. Confirm or edit it."));
         poseList_->setEnabled(false);
         updateActionState();
         return;
     }
 
-    uuidLabel_->setText(tr("Workspace UUID: %1").arg(workspaceUuid_));
+    uuidLabel_->setText(tr("Workspace UID"));
     poseList_->setEnabled(true);
     for (const CameraPoseSummary& pose : snapshot.poses) {
         const QString label = pose.savedAtUtc.isEmpty()
@@ -122,6 +155,24 @@ void CameraPanel::refreshFromState()
         item->setData(Qt::UserRole, pose.viewId);
     }
     updateActionState();
+}
+
+OperationResult CameraPanel::commitUidInput(bool refreshAfterCommit)
+{
+    const QString enteredUid = uidInput_->text().trimmed();
+    if (enteredUid.isEmpty()) {
+        return OperationResult::failure(
+            tr("Enter a workspace UID before using camera poses."));
+    }
+    if (!workspaceUuid_.isEmpty() &&
+        enteredUid.compare(workspaceUuid_, Qt::CaseInsensitive) == 0) {
+        return OperationResult::success();
+    }
+
+    const OperationResult result = commands_.setCameraPoseUid(enteredUid);
+    if (result.ok && refreshAfterCommit)
+        refreshFromState();
+    return result;
 }
 
 QString CameraPanel::selectedViewId() const
@@ -163,11 +214,15 @@ void CameraPanel::deleteSelectedPose()
 void CameraPanel::updateActionState()
 {
     const bool ready = state_.phase() == WorkspacePhase::Ready;
-    const bool hasUuid = snapshotAvailable_ && !workspaceUuid_.isEmpty();
+    const QString enteredUid = uidInput_->text().trimmed();
+    const bool hasUidInput = snapshotAvailable_ && !enteredUid.isEmpty();
+    const bool inputMatchesSnapshot =
+        !workspaceUuid_.isEmpty() &&
+        enteredUid.compare(workspaceUuid_, Qt::CaseInsensitive) == 0;
     const bool hasSelection = !selectedViewId().isEmpty();
-    saveButton_->setEnabled(ready && hasUuid);
-    applyButton_->setEnabled(ready && hasUuid && hasSelection);
-    deleteButton_->setEnabled(ready && hasUuid && hasSelection);
+    saveButton_->setEnabled(ready && hasUidInput);
+    applyButton_->setEnabled(ready && inputMatchesSnapshot && hasSelection);
+    deleteButton_->setEnabled(ready && inputMatchesSnapshot && hasSelection);
 }
 
 void CameraPanel::reportFailure(const OperationResult& result)

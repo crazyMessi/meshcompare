@@ -20,8 +20,10 @@ public:
     virtual CameraPose captureCamera() const = 0;
     virtual OperationResult restoreCamera(const CameraPose& pose) = 0;
     virtual void resetCamera() = 0;
+    virtual void setLabel(QString label) = 0;
     virtual void setSelected(bool selected) = 0;
     virtual void setReference(bool reference) = 0;
+    virtual void setMeshVisible(int meshModelId, bool visible) = 0;
     virtual void setScoreLabel(QString label) = 0;
     virtual void setDiagnostic(DiagnosticFlag flag, bool enabled) = 0;
     virtual void requestRepaint() = 0;

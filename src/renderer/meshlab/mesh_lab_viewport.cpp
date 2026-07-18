@@ -727,6 +727,8 @@ void MeshLabViewport::drawAssignedMesh()
 
     registerAssignedMesh();
     for (int meshModelId : meshModelIds_) {
+        if (hiddenMeshModelIds_.contains(meshModelId))
+            continue;
         MeshModel* mesh = document_.getMesh(meshModelId);
         if (mesh == nullptr)
             continue;
@@ -753,6 +755,23 @@ void MeshLabViewport::drawAssignedMesh()
         if (normalsDiagnostic_)
             drawNormals(*mesh);
     }
+}
+
+void MeshLabViewport::setLabel(QString label)
+{
+    label_ = std::move(label);
+    update();
+}
+
+void MeshLabViewport::setMeshVisible(int meshModelId, bool visible)
+{
+    if (!meshModelIds_.contains(meshModelId))
+        return;
+    if (visible)
+        hiddenMeshModelIds_.remove(meshModelId);
+    else
+        hiddenMeshModelIds_.insert(meshModelId);
+    update();
 }
 
 void MeshLabViewport::drawNormals(const MeshModel& mesh)

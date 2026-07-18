@@ -115,6 +115,14 @@ ColorPresentation uniformPresentation(const QColor& color)
     presentation.uniformColor = color;
     return presentation;
 }
+
+ColorPresentation vertexPresentation(const QColor& color)
+{
+    ColorPresentation presentation;
+    presentation.mode = ColorMode::VertexColor;
+    presentation.vertexColors = {color, color, color};
+    return presentation;
+}
 } // namespace
 
 static_assert(
@@ -281,6 +289,127 @@ private slots:
         QCOMPARE(
             renderer.lastPreparedScene().layoutMode,
             SceneLayoutMode::Overlay);
+        QCOMPARE(state.layoutMode(), SceneLayoutMode::Overlay);
+    }
+
+    void switchesLayoutWithoutLosingCameraOrColorPresentation()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(staged(
+            {entry(1), entry(2)}, SceneLayoutMode::Overlay));
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        WorkspaceController controller(
+            state, importer, renderer, comparer, cameraStore_);
+        QVERIFY(controller.importMeshes({QStringLiteral("comparison.mlp")})
+                    .result.ok);
+        const QColor color(QStringLiteral("#3d7eff"));
+        QVERIFY(controller.setUniformColor(2, color).ok);
+        renderer.setCamera({QStringLiteral("<camera-state/>")});
+        const int previousPrepareCount = renderer.prepareCount();
+        QSignalSpy changedSpy(
+            &controller, &WorkspaceController::workspaceChanged);
+
+        const OperationResult result =
+            controller.setLayoutMode(SceneLayoutMode::ComparisonGrid);
+
+        QVERIFY2(result.ok, qPrintable(result.error));
+        QCOMPARE(renderer.prepareCount(), previousPrepareCount + 1);
+        QCOMPARE(
+            renderer.lastPreparedScene().layoutMode,
+            SceneLayoutMode::ComparisonGrid);
+        QCOMPARE(
+            renderer.lastPreparedScene().initialCamera.viewStateXml,
+            QStringLiteral("<camera-state/>"));
+        QCOMPARE(
+            renderer.lastPreparedScene().meshes.at(1).presentation.mode,
+            ColorMode::UniformColor);
+        QCOMPARE(
+            renderer.lastPreparedScene().meshes.at(1).presentation.uniformColor,
+            color);
+        QCOMPARE(state.layoutMode(), SceneLayoutMode::ComparisonGrid);
+        QCOMPARE(renderer.camera().viewStateXml, QStringLiteral("<camera-state/>"));
+        QCOMPARE(changedSpy.size(), 1);
+    }
+
+    void failedLayoutPreparationKeepsTheCurrentLayout()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(staged(
+            {entry(1), entry(2)}, SceneLayoutMode::Overlay));
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        WorkspaceController controller(
+            state, importer, renderer, comparer, cameraStore_);
+        QVERIFY(controller.importMeshes({QStringLiteral("comparison.mlp")})
+                    .result.ok);
+        renderer.failNextPrepare(QStringLiteral("layout preparation failed"));
+        QSignalSpy changedSpy(
+            &controller, &WorkspaceController::workspaceChanged);
+
+        const OperationResult result =
+            controller.setLayoutMode(SceneLayoutMode::ComparisonGrid);
+
+        QVERIFY(!result.ok);
+        QCOMPARE(result.error, QStringLiteral("layout preparation failed"));
+        QCOMPARE(state.layoutMode(), SceneLayoutMode::Overlay);
+        QCOMPARE(renderer.committedGeneration(), state.generation());
+        QCOMPARE(changedSpy.size(), 0);
+    }
+
+    void overlayVisibilityUpdatesRendererAndPersistsAcrossLayoutChanges()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(staged(
+            {entry(1), entry(2), entry(3)}, SceneLayoutMode::Overlay));
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        WorkspaceController controller(
+            state, importer, renderer, comparer, cameraStore_);
+        QVERIFY(controller.importMeshes({QStringLiteral("comparison.mlp")})
+                    .result.ok);
+
+        QVERIFY(controller.setMeshVisible(2, false).ok);
+
+        QVERIFY(!state.mesh(2)->visible);
+        QVERIFY(!renderer.meshVisible(2));
+        QCOMPARE(renderer.visibilityUpdateCount(), 1);
+        QVERIFY(controller
+                    .setLayoutMode(SceneLayoutMode::ComparisonGrid)
+                    .ok);
+        QVERIFY(!renderer.lastPreparedScene().meshes.at(1).visible);
+        QVERIFY(controller.setLayoutMode(SceneLayoutMode::Overlay).ok);
+        QVERIFY(!renderer.meshVisible(2));
+        QVERIFY(!state.mesh(2)->visible);
+    }
+
+    void visibilityFailureAndLastVisibleGuardPreserveState()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(staged(
+            {entry(1), entry(2)}, SceneLayoutMode::Overlay));
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        WorkspaceController controller(
+            state, importer, renderer, comparer, cameraStore_);
+        QVERIFY(controller.importMeshes({QStringLiteral("comparison.mlp")})
+                    .result.ok);
+        renderer.failNextVisibilityUpdate(
+            QStringLiteral("visibility update failed"));
+
+        const OperationResult failed =
+            controller.setMeshVisible(2, false);
+
+        QVERIFY(!failed.ok);
+        QVERIFY(state.mesh(2)->visible);
+        QVERIFY(renderer.meshVisible(2));
+        QVERIFY(controller.setMeshVisible(2, false).ok);
+        const int attempts = renderer.visibilityAttemptCount();
+        const OperationResult lastVisible =
+            controller.setMeshVisible(1, false);
+        QVERIFY(!lastVisible.ok);
+        QVERIFY(state.mesh(1)->visible);
+        QCOMPARE(renderer.visibilityAttemptCount(), attempts);
     }
 
     void rendererSelectionEventUpdatesValidatedMeshIdInStateAndRenderer()
@@ -336,7 +465,7 @@ private slots:
         QCOMPARE(outcome.notice,
                  QStringLiteral(
                      "No gt mesh found; using the first import.\n"
-                     "No UUID was found in this workspace."));
+                     "No UID was found in this workspace."));
         QVERIFY(outcome.fileErrors.isEmpty());
     }
 
@@ -786,6 +915,119 @@ private slots:
         QCOMPARE(workspaceChanged.size(), 1);
     }
 
+    void referenceChangeClearsDistanceAndPreservesDoubleLayerPresentation()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(staged({entry(1), entry(2), entry(3)}));
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        WorkspaceController controller(
+            state, importer, renderer, comparer, cameraStore_);
+        QVERIFY(controller.importMeshes(
+                              {QStringLiteral("a.obj"),
+                               QStringLiteral("b.obj"),
+                               QStringLiteral("c.obj")})
+                    .result.ok);
+
+        AnalysisSummary distanceSummary;
+        distanceSummary.kind = AnalysisKind::DistanceToReference;
+        distanceSummary.distance.vertexCount = 3;
+        distanceSummary.distance.finiteVertexCount = 3;
+        distanceSummary.distance.percentile99Distance = 0.004;
+        distanceSummary.distance.maxDistance = 0.004;
+        AnalysisSummary doubleLayerSummary;
+        doubleLayerSummary.kind = AnalysisKind::DoubleLayer;
+        doubleLayerSummary.doubleLayer.sampleCount = 500000;
+        doubleLayerSummary.doubleLayer.affectedFaceFraction = 0.032;
+        ColorPresentation distance =
+            vertexPresentation(QColor(QStringLiteral("#21918c")));
+        distance.referenceDependent = true;
+        const ColorPresentation doubleLayer =
+            vertexPresentation(QColor(QStringLiteral("#ff9030")));
+        const OperationResult installed = installPresentations(
+            state,
+            renderer,
+            {{2, distance, 0.0, false, distanceSummary},
+             {3, doubleLayer, 0.0, false, doubleLayerSummary}});
+        QVERIFY2(installed.ok, qPrintable(installed.error));
+        const int presentationAttempts = renderer.presentationAttemptCount();
+
+        const OperationResult changed = controller.setReference(2);
+
+        QVERIFY2(changed.ok, qPrintable(changed.error));
+        QCOMPARE(renderer.presentationAttemptCount(), presentationAttempts + 1);
+        QCOMPARE(renderer.lastPresentationBatch().size(), 1);
+        QCOMPARE(renderer.lastPresentationBatch().front().meshId, MeshId(2));
+        QCOMPARE(
+            renderer.lastPresentationBatch().front().presentation.mode,
+            ColorMode::Default);
+        QCOMPARE(state.mesh(2)->presentation.mode, ColorMode::Default);
+        QCOMPARE(
+            state.mesh(2)->analysisSummary.kind,
+            AnalysisKind::None);
+        QCOMPARE(
+            state.mesh(3)->presentation.mode,
+            ColorMode::VertexColor);
+        QCOMPARE(
+            state.mesh(3)->analysisSummary.kind,
+            AnalysisKind::DoubleLayer);
+        QCOMPARE(renderer.presentation(3).mode, ColorMode::VertexColor);
+    }
+
+    void analyticalSummariesProduceMetricSpecificViewportLabels()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(staged({entry(1), entry(2), entry(3)}));
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        WorkspaceController controller(
+            state, importer, renderer, comparer, cameraStore_);
+        QVERIFY(controller.importMeshes(
+                              {QStringLiteral("a.obj"),
+                               QStringLiteral("b.obj"),
+                               QStringLiteral("c.obj")})
+                    .result.ok);
+
+        AnalysisSummary distanceSummary;
+        distanceSummary.kind = AnalysisKind::DistanceToReference;
+        distanceSummary.distance.vertexCount = 3;
+        distanceSummary.distance.finiteVertexCount = 3;
+        distanceSummary.distance.percentile99Distance = 0.004;
+        distanceSummary.distance.maxDistance = 0.004;
+        AnalysisSummary doubleLayerSummary;
+        doubleLayerSummary.kind = AnalysisKind::DoubleLayer;
+        doubleLayerSummary.doubleLayer.sampleCount = 500000;
+        doubleLayerSummary.doubleLayer.affectedFaceFraction = 0.032;
+        ColorPresentation distance =
+            vertexPresentation(QColor(QStringLiteral("#21918c")));
+        distance.referenceDependent = true;
+        const OperationResult installed = installPresentations(
+            state,
+            renderer,
+            {{2,
+              distance,
+              0.0,
+              false,
+              distanceSummary},
+             {3,
+              vertexPresentation(QColor(QStringLiteral("#ff9030"))),
+              0.0,
+              false,
+              doubleLayerSummary}});
+        QVERIFY2(installed.ok, qPrintable(installed.error));
+
+        const OperationResult switched =
+            controller.setLayoutMode(SceneLayoutMode::Overlay);
+
+        QVERIFY2(switched.ok, qPrintable(switched.error));
+        QCOMPARE(
+            renderer.lastPreparedScene().meshes.at(1).analysisLabel,
+            QStringLiteral("D p99 0.004"));
+        QCOMPARE(
+            renderer.lastPreparedScene().meshes.at(2).analysisLabel,
+            QStringLiteral("DL 3.2%"));
+    }
+
     void referenceRendererFailureLeavesStateMarkerPresentationsAndOverlaysUnchanged()
     {
         WorkspaceState state;
@@ -954,6 +1196,68 @@ private slots:
         QCOMPARE(finished.size(), 1);
         QCOMPARE(state.phase(), WorkspacePhase::Ready);
         QCOMPARE(renderer.analysisOverlay(2), QString());
+    }
+
+    void doubleLayerAnalysisTargetsEveryMeshIncludingTheReference()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(
+            staged({entry(1), entry(2), entry(3)}));
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        comparer.enqueueSuccess(0.0);
+        comparer.pauseNextComparison();
+        WorkspaceController controller(
+            state, importer, renderer, comparer, cameraStore_);
+        QVERIFY(controller.importMeshes(
+                              {QStringLiteral("a.obj"),
+                               QStringLiteral("b.obj"),
+                               QStringLiteral("c.obj")})
+                    .result.ok);
+        SurfaceComparisonOptions options;
+        options.sampleCount = 10;
+
+        const OperationResult started = controller.startAnalysis(
+            SurfaceComparisonMetric::DoubleLayer, options);
+
+        QVERIFY2(started.ok, qPrintable(started.error));
+        const QVector<MeshAnalysisOverlayUpdate> targets =
+            renderer.lastOverlayBatch();
+        QCOMPARE(targets.size(), 3);
+        QCOMPARE(targets.at(0).meshId, MeshId(1));
+        QCOMPARE(targets.at(1).meshId, MeshId(2));
+        QCOMPARE(targets.at(2).meshId, MeshId(3));
+        controller.cancelAnalysis();
+    }
+
+    void distanceAnalysisTargetsOnlyNonReferenceMeshes()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(
+            staged({entry(1), entry(2), entry(3)}));
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        comparer.enqueueSuccess(0.0);
+        comparer.pauseNextComparison();
+        WorkspaceController controller(
+            state, importer, renderer, comparer, cameraStore_);
+        QVERIFY(controller.importMeshes(
+                              {QStringLiteral("a.obj"),
+                               QStringLiteral("b.obj"),
+                               QStringLiteral("c.obj")})
+                    .result.ok);
+        SurfaceComparisonOptions options;
+
+        const OperationResult started = controller.startAnalysis(
+            SurfaceComparisonMetric::DistanceToReference, options);
+
+        QVERIFY2(started.ok, qPrintable(started.error));
+        const QVector<MeshAnalysisOverlayUpdate> targets =
+            renderer.lastOverlayBatch();
+        QCOMPARE(targets.size(), 2);
+        QCOMPARE(targets.at(0).meshId, MeshId(2));
+        QCOMPARE(targets.at(1).meshId, MeshId(3));
+        controller.cancelAnalysis();
     }
 
     void analysisSuccessPublishesPrecisionScoreBadge()

@@ -57,10 +57,14 @@ public:
         m_preparedGeneration = 0;
         m_presentations.clear();
         m_analysisOverlays.clear();
+        m_meshVisibility.clear();
         for (const SceneMesh& mesh : m_lastPreparedScene.meshes) {
-            m_presentations.insert(mesh.id, ColorPresentation{});
-            m_analysisOverlays.insert(mesh.id, QString());
+            m_presentations.insert(mesh.id, mesh.presentation);
+            m_analysisOverlays.insert(mesh.id, mesh.analysisLabel);
+            m_meshVisibility.insert(mesh.id, mesh.visible);
         }
+        if (!m_lastPreparedScene.initialCamera.viewStateXml.isEmpty())
+            m_camera = m_lastPreparedScene.initialCamera;
     }
     void discardPreparedScene() override
     {
@@ -85,6 +89,7 @@ public:
         m_committedProvider = nullptr;
         m_presentations.clear();
         m_analysisOverlays.clear();
+        m_meshVisibility.clear();
     }
     void setSelectedMesh(MeshId id) override
     {
@@ -99,6 +104,22 @@ public:
         appendTrace(QStringLiteral("reference-update"));
         if (m_referenceObserver)
             m_referenceObserver();
+    }
+    OperationResult setMeshVisible(MeshId id, bool visible) override
+    {
+        ++m_visibilityAttemptCount;
+        if (!m_meshVisibility.contains(id)) {
+            return OperationResult::failure(
+                QStringLiteral("Fake renderer rejected the visibility update."));
+        }
+        if (!m_nextVisibilityError.isEmpty()) {
+            const QString error = m_nextVisibilityError;
+            m_nextVisibilityError.clear();
+            return OperationResult::failure(error);
+        }
+        m_meshVisibility[id] = visible;
+        ++m_visibilityUpdateCount;
+        return OperationResult::success();
     }
     OperationResult setColorPresentations(
         const QVector<MeshColorPresentationUpdate>& updates) override
@@ -202,6 +223,12 @@ public:
     {
         return m_analysisOverlays.value(id);
     }
+    bool meshVisible(MeshId id) const
+    {
+        return m_meshVisibility.value(id, true);
+    }
+    int visibilityAttemptCount() const { return m_visibilityAttemptCount; }
+    int visibilityUpdateCount() const { return m_visibilityUpdateCount; }
     int overlayAttemptCount() const { return m_overlayAttemptCount; }
     int overlayUpdateCount() const { return m_overlayUpdateCount; }
     int restoreCount() const { return m_restoreCount; }
@@ -220,6 +247,10 @@ public:
         m_nextPresentationError = error;
     }
     void failNextOverlayBatch(const QString& error) { m_nextOverlayError = error; }
+    void failNextVisibilityUpdate(const QString& error)
+    {
+        m_nextVisibilityError = error;
+    }
     void failNextRestore(const QString& error) { m_nextRestoreError = error; }
     void setCamera(const CameraPose& pose) { m_camera = pose; }
     void setTrace(QStringList* trace) { m_trace = trace; }
@@ -299,6 +330,7 @@ private:
     QString m_nextPrepareError;
     QString m_nextPresentationError;
     QString m_nextOverlayError;
+    QString m_nextVisibilityError;
     QString m_nextRestoreError;
     QStringList* m_trace = nullptr;
     std::function<void()> m_prepareObserver;
@@ -314,6 +346,7 @@ private:
     SceneDescriptor m_lastPreparedScene;
     QHash<MeshId, ColorPresentation> m_presentations;
     QHash<MeshId, QString> m_analysisOverlays;
+    QHash<MeshId, bool> m_meshVisibility;
     QVector<MeshColorPresentationUpdate> m_lastPresentationBatch;
     QVector<MeshAnalysisOverlayUpdate> m_lastOverlayBatch;
     CameraPose m_lastRestoreAttempt;
@@ -331,6 +364,8 @@ private:
     int m_presentationUpdateCount = 0;
     int m_overlayAttemptCount = 0;
     int m_overlayUpdateCount = 0;
+    int m_visibilityAttemptCount = 0;
+    int m_visibilityUpdateCount = 0;
     int m_restoreCount = 0;
     bool m_resourceAvailableDuringClear = false;
 };

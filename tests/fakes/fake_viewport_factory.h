@@ -4,6 +4,7 @@
 #include <vector>
 
 #include <QObject>
+#include <QHash>
 #include <QPointer>
 #include <QSet>
 #include <QStringList>
@@ -46,8 +47,13 @@ public:
         return OperationResult::success();
     }
     void resetCamera() override { camera_ = {}; }
+    void setLabel(QString label) override { label_ = std::move(label); }
     void setSelected(bool selected) override { selected_ = selected; }
     void setReference(bool reference) override { reference_ = reference; }
+    void setMeshVisible(int meshModelId, bool visible) override
+    {
+        meshVisibility_[meshModelId] = visible;
+    }
     void setScoreLabel(QString label) override { scoreLabel_ = std::move(label); }
     void setDiagnostic(DiagnosticFlag flag, bool enabled) override
     {
@@ -67,6 +73,19 @@ public:
     bool selected() const { return selected_; }
     bool reference() const { return reference_; }
     const QString& scoreLabel() const { return scoreLabel_; }
+    const QString& label() const { return label_; }
+    bool meshVisible(int meshModelId) const
+    {
+        return meshVisibility_.value(meshModelId, true);
+    }
+    int hiddenMeshCount() const
+    {
+        int count = 0;
+        for (bool visible : meshVisibility_)
+            count += visible ? 0 : 1;
+        return count;
+    }
+    const CameraPose& camera() const { return camera_; }
     int repaintCount() const { return repaintCount_; }
     bool diagnosticEnabled(DiagnosticFlag flag) const
     {
@@ -81,6 +100,8 @@ private:
     QString initializationError_;
     int& initializationCount_;
     CameraPose camera_;
+    QString label_;
+    QHash<int, bool> meshVisibility_;
     bool selected_ = false;
     bool reference_ = false;
     QString scoreLabel_;

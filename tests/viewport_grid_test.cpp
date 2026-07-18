@@ -6,6 +6,7 @@
 #include <vector>
 
 #include <QPointer>
+#include <QHash>
 #include <QWidget>
 
 #include <common/ml_document/mesh_document.h>
@@ -151,8 +152,13 @@ public:
         return OperationResult::success();
     }
     void resetCamera() override { restoredPose_ = {}; }
+    void setLabel(QString label) override { label_ = std::move(label); }
     void setSelected(bool selected) override { selected_ = selected; }
     void setReference(bool reference) override { reference_ = reference; }
+    void setMeshVisible(int meshModelId, bool visible) override
+    {
+        meshVisibility_[meshModelId] = visible;
+    }
     void setScoreLabel(QString label) override { scoreLabel_ = std::move(label); }
     void setDiagnostic(DiagnosticFlag flag, bool enabled) override
     {
@@ -180,6 +186,11 @@ public:
     int restoreCount() const { return restoreCount_; }
     bool selected() const { return selected_; }
     bool reference() const { return reference_; }
+    const QString& label() const { return label_; }
+    bool meshVisible(int meshModelId) const
+    {
+        return meshVisibility_.value(meshModelId, true);
+    }
     const QString& scoreLabel() const { return scoreLabel_; }
     int repaintCount() const { return repaintCount_; }
     bool diagnosticEnabled(DiagnosticFlag flag) const
@@ -213,6 +224,8 @@ private:
     int restoreCount_ = 0;
     bool selected_ = false;
     bool reference_ = false;
+    QString label_;
+    QHash<int, bool> meshVisibility_;
     QString scoreLabel_;
     int repaintCount_ = 0;
     bool orthographic_ = false;
@@ -340,6 +353,62 @@ private slots:
             factory.boundModelIds(0),
             (QVector<int>{101, 102, 103}));
         QCOMPARE(grid.meshIdForViewport(1), MeshId(0));
+        QCOMPARE(
+            factory.viewport(0).label(),
+            QStringLiteral("Overlay · 3/3 visible"));
+    }
+
+    void overlayVisibilityControlsAssignedMeshesAndScoreSummary()
+    {
+        QWidget host;
+        TestRenderScene renderScene;
+        GridFakeViewportFactory factory;
+        RecordingCallbacks callbacks;
+        ViewportGrid grid(factory, callbacks);
+        SceneDescriptor descriptor = scene(3);
+        descriptor.layoutMode = SceneLayoutMode::Overlay;
+        QVERIFY(grid.create(
+                    &host,
+                    descriptor,
+                    renderScene.dependencies(),
+                    descriptor.referenceId)
+                    .ok);
+        QVERIFY(grid
+                    .setAnalysisOverlays(
+                        {{101, QStringLiteral("P 0.900")},
+                         {102, QStringLiteral("P 0.800")}})
+                    .ok);
+
+        QVERIFY(grid.setMeshVisible(102, false).ok);
+
+        QVERIFY(factory.viewport(0).meshVisible(101));
+        QVERIFY(!factory.viewport(0).meshVisible(102));
+        QVERIFY(factory.viewport(0).meshVisible(103));
+        QCOMPARE(
+            factory.viewport(0).label(),
+            QStringLiteral("Overlay · 2/3 visible"));
+        QCOMPARE(
+            factory.viewport(0).scoreLabel(),
+            QStringLiteral("mesh-101: P 0.900"));
+        QVERIFY(!grid.setMeshVisible(999, false).ok);
+    }
+
+    void gridRejectsOverlayVisibilityUpdates()
+    {
+        QWidget host;
+        TestRenderScene renderScene;
+        GridFakeViewportFactory factory;
+        RecordingCallbacks callbacks;
+        ViewportGrid grid(factory, callbacks);
+        const SceneDescriptor descriptor = scene(3);
+        QVERIFY(grid.create(
+                    &host,
+                    descriptor,
+                    renderScene.dependencies(),
+                    descriptor.referenceId)
+                    .ok);
+
+        QVERIFY(!grid.setMeshVisible(102, false).ok);
     }
 
     void cameraChangePropagatesWithoutFeedbackLoop()

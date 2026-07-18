@@ -1,5 +1,6 @@
 #include "services/camera_pose_store.h"
 #include "services/camera_pose_store_file_ops.h"
+#include "core/camera_pose_uuid.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -156,6 +157,7 @@ class CameraPoseStoreTest : public QObject
 private slots:
 	void normalizeUuid_data();
 	void normalizeUuid();
+	void extractsVariableLengthUidFromNormalizedMeshName();
 	void missingLibraryIsAnEmptySuccess();
 	void invalidUuidAndEmptyStoragePathFailWithoutMutatingOutputs();
 	void saveCreatesNestedSchema2Library();
@@ -194,12 +196,24 @@ void CameraPoseStoreTest::normalizeUuid_data()
 		<< QStringLiteral("  {AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}  ") << UuidA;
 	QTest::newRow("hyphens-anywhere")
 		<< QStringLiteral("aaaa-aaaaaa-aaaaaaaaaa-aaaaaaaaaaaa") << UuidA;
+	QTest::newRow("short-numeric-uid")
+		<< QStringLiteral("  2048  ") << QStringLiteral("2048");
+	QTest::newRow("opaque-project-uid")
+		<< QStringLiteral("  Comparison_Run-42  ")
+		<< QStringLiteral("comparison_run-42");
 	QTest::newRow("unpaired-brace")
 		<< QStringLiteral("{aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") << QString();
 	QTest::newRow("wrong-length")
-		<< QStringLiteral("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") << QString();
+		<< QStringLiteral("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+		<< QStringLiteral("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 	QTest::newRow("non-hex")
-		<< QStringLiteral("gaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") << QString();
+		<< QStringLiteral("gaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+		<< QStringLiteral("gaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+	QTest::newRow("empty") << QStringLiteral(" \t\n ") << QString();
+	QTest::newRow("embedded-control")
+		<< QStringLiteral("run\n42") << QString();
+	QTest::newRow("too-long")
+		<< QString(256, QLatin1Char('a')) << QString();
 }
 
 void CameraPoseStoreTest::normalizeUuid()
@@ -207,6 +221,16 @@ void CameraPoseStoreTest::normalizeUuid()
 	QFETCH(QString, input);
 	QFETCH(QString, expected);
 	QCOMPARE(CameraPoseStore::normalizeUuid(input), expected);
+}
+
+void CameraPoseStoreTest::extractsVariableLengthUidFromNormalizedMeshName()
+{
+	QCOMPARE(
+		meshcompare::extractCameraPoseUuidCandidates({
+			QStringLiteral("/tmp/Comparison_Run-42_gt_norm.ply"),
+			QStringLiteral("Comparison_Run-42_hy_norm.ply"),
+			QStringLiteral("Comparison_Run-42_s2_norm.ply")}),
+		QStringList({QStringLiteral("comparison_run-42")}));
 }
 
 void CameraPoseStoreTest::missingLibraryIsAnEmptySuccess()
@@ -228,16 +252,16 @@ void CameraPoseStoreTest::invalidUuidAndEmptyStoragePathFailWithoutMutatingOutpu
 	QVERIFY(dir.isValid());
 	CameraPoseStore store(dir.filePath(QStringLiteral("poses.json")), QString());
 	QString viewId = QStringLiteral("unchanged");
-	QVERIFY(!store.save(QStringLiteral("invalid"), pose(QStringLiteral("<camera/>")), &viewId).ok);
+	QVERIFY(!store.save(QString(), pose(QStringLiteral("<camera/>")), &viewId).ok);
 	QCOMPARE(viewId, QStringLiteral("unchanged"));
 
 	OperationResult listResult = OperationResult::success();
-	QVERIFY(store.list(QStringLiteral("invalid"), &listResult).isEmpty());
+	QVERIFY(store.list(QString(), &listResult).isEmpty());
 	QVERIFY(!listResult.ok);
 
 	CameraPose destination{QStringLiteral("unchanged")};
 	QVERIFY(!store.load(UuidA, QStringLiteral("view_001"), nullptr).ok);
-	QVERIFY(!store.load(QStringLiteral("invalid"), QStringLiteral("view_001"), &destination).ok);
+	QVERIFY(!store.load(QString(), QStringLiteral("view_001"), &destination).ok);
 	QCOMPARE(destination.viewStateXml, QStringLiteral("unchanged"));
 
 	CameraPoseStore emptyPathStore{QString(), QString()};
@@ -334,7 +358,7 @@ void CameraPoseStoreTest::malformedLibraryFailsEveryOperationWithoutChangingByte
 	QTest::newRow("non-object-poses") << QJsonDocument(root).toJson();
 
 	QJsonObject poses;
-	poses.insert(QStringLiteral("not-a-uuid"), QJsonArray());
+	poses.insert(QString(), QJsonArray());
 	QTest::newRow("invalid-uuid-key") << schema2Bytes(poses);
 	poses = QJsonObject();
 	poses.insert(UuidA, QJsonArray());
@@ -553,7 +577,7 @@ void CameraPoseStoreTest::operationOutputsAreAlwaysOverwrittenOnlyAsDocumented()
 	QVERIFY(result.ok);
 	QVERIFY(result.error.isEmpty());
 	result = OperationResult::success();
-	QVERIFY(store.list(QStringLiteral("invalid"), &result).isEmpty());
+	QVERIFY(store.list(QString(), &result).isEmpty());
 	QVERIFY(!result.ok);
 	QVERIFY(!result.error.isEmpty());
 
@@ -575,7 +599,7 @@ void CameraPoseStoreTest::operationOutputsAreAlwaysOverwrittenOnlyAsDocumented()
 	QVERIFY(!store.save(UuidA, pose(QString()), &savedViewId).ok);
 	QCOMPARE(savedViewId, QStringLiteral("unchanged-again"));
 	QCOMPARE(readBytes(current), savedBytes);
-	QVERIFY(!store.save(QStringLiteral("invalid"), pose(QStringLiteral("<x/>")), &savedViewId).ok);
+	QVERIFY(!store.save(QString(), pose(QStringLiteral("<x/>")), &savedViewId).ok);
 	QCOMPARE(savedViewId, QStringLiteral("unchanged-again"));
 	QCOMPARE(readBytes(current), savedBytes);
 }
@@ -748,7 +772,7 @@ void CameraPoseStoreTest::missingAndInvalidRemoveRequestsAreByteIdenticalNoOps()
 	QVERIFY(writeBytes(current, original));
 	CameraPoseStore store(current, QString());
 
-	QVERIFY(!store.remove(QStringLiteral("invalid"), QStringLiteral("view_001")).ok);
+	QVERIFY(!store.remove(QString(), QStringLiteral("view_001")).ok);
 	QCOMPARE(readBytes(current), original);
 	QVERIFY(!store.remove(
 		QStringLiteral("cccccccccccccccccccccccccccccccc"),

@@ -4,22 +4,29 @@
 #include "camera_panel.h"
 #include "coloring_commands.h"
 #include "coloring_panel.h"
+#include "app_theme.h"
 #include "workspace_controller.h"
 #include "../core/workspace_state.h"
 
 #include <algorithm>
 
 #include <QAbstractButton>
+#include <QAction>
+#include <QButtonGroup>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileDialog>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
+#include <QMenu>
 #include <QMimeData>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QSizePolicy>
+#include <QStyle>
+#include <QTimer>
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -46,6 +53,35 @@ bool localFilePaths(const QMimeData& mimeData, QStringList* paths)
     }
     return true;
 }
+
+int visibleMeshCount(const WorkspaceState& state)
+{
+    int count = 0;
+    for (const MeshEntry& mesh : state.meshes())
+        count += mesh.visible ? 1 : 0;
+    return count;
+}
+
+bool canChangeLayerVisibility(
+    const WorkspaceState& state,
+    const MeshEntry& mesh,
+    int visibleCount)
+{
+    const bool actionsEnabled =
+        state.phase() == WorkspacePhase::Ready ||
+        state.phase() == WorkspacePhase::Analyzing;
+    return actionsEnabled &&
+           state.layoutMode() == SceneLayoutMode::Overlay &&
+           (!mesh.visible || visibleCount > 1);
+}
+
+QFrame* toolbarDivider(QWidget* parent)
+{
+    auto* divider = new QFrame(parent);
+    divider->setObjectName(QStringLiteral("toolbarDivider"));
+    divider->setFixedSize(1, 24);
+    return divider;
+}
 } // namespace
 
 StandaloneMainWindow::StandaloneMainWindow(WorkspaceState& state, QWidget* parent)
@@ -53,25 +89,44 @@ StandaloneMainWindow::StandaloneMainWindow(WorkspaceState& state, QWidget* paren
 {
     setWindowTitle(QStringLiteral("Mesh Compare"));
     setAcceptDrops(true);
+    setStyleSheet(meshCompareApplicationStyleSheet());
 
     auto* root = new QWidget(this);
+    root->setObjectName(QStringLiteral("workspaceRoot"));
     auto* layout = new QVBoxLayout(root);
-    layout->setContentsMargins(8, 8, 8, 6);
-    layout->setSpacing(6);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
 
     commandBar_ = buildCommandBar(root);
     commandBar_->setObjectName("commandBar");
-    viewportHost_ = new QWidget(root);
+
+    viewportFrame_ = new QFrame(root);
+    viewportFrame_->setObjectName(QStringLiteral("viewportFrame"));
+    auto* viewportLayout = new QVBoxLayout(viewportFrame_);
+    viewportLayout->setContentsMargins(0, 0, 0, 0);
+    viewportLayout->setSpacing(0);
+
+    noticeArea_ = new QWidget(viewportFrame_);
+    noticeArea_->setObjectName(QStringLiteral("noticeArea"));
+    auto* noticeAreaLayout = new QHBoxLayout(noticeArea_);
+    noticeAreaLayout->setContentsMargins(20, 12, 20, 8);
+    noticeAreaLayout->setSpacing(0);
+    noticeBanner_ = buildNoticeBanner(noticeArea_);
+    noticeAreaLayout->addWidget(noticeBanner_);
+    noticeAreaLayout->addStretch(1);
+    noticeArea_->hide();
+
+    viewportHost_ = new QWidget(viewportFrame_);
     viewportHost_->setObjectName("viewportHost");
     viewportHost_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    statusLabel_ = new QLabel(
-        tr("Open a 2–8 layer MeshLab project or import 2–8 meshes to begin."),
-        root);
-    statusLabel_->setObjectName("statusLabel");
+    viewportLayout->addWidget(noticeArea_);
+    viewportLayout->addWidget(viewportHost_, 1);
+
+    statusBar_ = buildStatusBar(root);
 
     layout->addWidget(commandBar_);
-    layout->addWidget(viewportHost_, 1);
-    layout->addWidget(statusLabel_);
+    layout->addWidget(viewportFrame_, 1);
+    layout->addWidget(statusBar_);
     setCentralWidget(root);
     refreshWorkspace();
 }
@@ -117,16 +172,39 @@ void StandaloneMainWindow::presentImportOutcome(const WorkspaceImportOutcome& ou
     if (!outcome.notice.isEmpty())
         showStatusMessage(outcome.notice);
     else
-        showStatusMessage(tr("Imported %1 meshes.").arg(state_.meshes().size()));
+        showPassiveStatusMessage(
+            tr("Imported %1 meshes.").arg(state_.meshes().size()));
 }
 
 void StandaloneMainWindow::refreshWorkspace()
 {
     const bool actionsEnabled = state_.phase() == WorkspacePhase::Ready ||
                                 state_.phase() == WorkspacePhase::Analyzing;
+    const bool viewSwitchingEnabled =
+        state_.phase() == WorkspacePhase::Ready;
     coloringButton_->setEnabled(actionsEnabled);
     cameraButton_->setEnabled(actionsEnabled);
+    overlayViewButton_->setEnabled(viewSwitchingEnabled);
+    gridViewButton_->setEnabled(viewSwitchingEnabled);
+    overlayViewButton_->setChecked(
+        state_.layoutMode() == SceneLayoutMode::Overlay);
+    gridViewButton_->setChecked(
+        state_.layoutMode() == SceneLayoutMode::ComparisonGrid);
+    const int visibleCount = visibleMeshCount(state_);
+    const bool overlay = state_.layoutMode() == SceneLayoutMode::Overlay;
+    layersButton_->setEnabled(actionsEnabled && overlay);
+    layersButton_->setText(
+        overlay
+            ? tr("Layers %1/%2")
+                  .arg(visibleCount)
+                  .arg(state_.meshes().size())
+            : tr("Layers"));
+    layersButton_->setToolTip(
+        overlay
+            ? tr("Choose which mesh layers are visible in Overlay")
+            : tr("Layer visibility is available in Overlay view"));
     meshCountLabel_->setText(tr("%1 meshes").arg(state_.meshes().size()));
+    updateWorkspaceStatus();
     if (coloringPanel_ != nullptr)
         coloringPanel_->refreshFromState();
     if (cameraPanel_ != nullptr && !cameraPanel_->isHidden())
@@ -207,6 +285,15 @@ void StandaloneMainWindow::presentAnalysisFinished(
 void StandaloneMainWindow::showStatusMessage(const QString& message)
 {
     statusLabel_->setText(message);
+    noticeLabel_->setText(message);
+    noticeBanner_->setVisible(!message.isEmpty());
+    noticeArea_->setVisible(!message.isEmpty());
+}
+
+void StandaloneMainWindow::showPassiveStatusMessage(const QString& message)
+{
+    statusLabel_->setText(message);
+    noticeArea_->hide();
 }
 
 void StandaloneMainWindow::presentPanelFailure(const QString& message)
@@ -244,32 +331,178 @@ void StandaloneMainWindow::resizeEvent(QResizeEvent* event)
         positionCameraPanel();
 }
 
+QFrame* StandaloneMainWindow::buildNoticeBanner(QWidget* parent)
+{
+    auto* banner = new QFrame(parent);
+    banner->setObjectName(QStringLiteral("noticeBanner"));
+    auto* layout = new QHBoxLayout(banner);
+    layout->setContentsMargins(12, 8, 8, 8);
+    layout->setSpacing(8);
+
+    auto* icon = new QLabel(QStringLiteral("△"), banner);
+    icon->setObjectName(QStringLiteral("noticeIcon"));
+    icon->setAlignment(Qt::AlignCenter);
+    noticeLabel_ = new QLabel(banner);
+    noticeLabel_->setObjectName(QStringLiteral("noticeLabel"));
+    noticeLabel_->setWordWrap(true);
+    auto* dismissButton = new QToolButton(banner);
+    dismissButton->setObjectName(QStringLiteral("dismissNoticeButton"));
+    dismissButton->setText(QStringLiteral("×"));
+    dismissButton->setToolTip(tr("Dismiss"));
+
+    layout->addWidget(icon);
+    layout->addWidget(noticeLabel_, 1);
+    layout->addWidget(dismissButton);
+    connect(
+        dismissButton,
+        &QToolButton::clicked,
+        parent,
+        &QWidget::hide);
+    banner->hide();
+    return banner;
+}
+
+QFrame* StandaloneMainWindow::buildStatusBar(QWidget* parent)
+{
+    auto* bar = new QFrame(parent);
+    bar->setObjectName(QStringLiteral("statusBar"));
+    bar->setFixedHeight(31);
+    auto* layout = new QHBoxLayout(bar);
+    layout->setContentsMargins(14, 0, 14, 0);
+    layout->setSpacing(12);
+
+    statusLabel_ = new QLabel(
+        tr("Open a 2–8 layer MeshLab project or import 2–8 meshes to begin."),
+        bar);
+    statusLabel_->setObjectName(QStringLiteral("statusLabel"));
+    statusLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    workspaceStatusLabel_ = new QLabel(bar);
+    workspaceStatusLabel_->setObjectName(
+        QStringLiteral("workspaceStatusLabel"));
+    workspaceStatusLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
+    layout->addWidget(statusLabel_, 1);
+    layout->addWidget(workspaceStatusLabel_);
+    return bar;
+}
+
+void StandaloneMainWindow::requestMeshVisibilityChange(
+    MeshId meshId,
+    bool visible)
+{
+    QTimer::singleShot(
+        0,
+        this,
+        [this, meshId, visible] {
+            emit meshVisibilityRequested(meshId, visible);
+        });
+}
+
+void StandaloneMainWindow::updateWorkspaceStatus()
+{
+    if (workspaceStatusLabel_ == nullptr)
+        return;
+
+    QString text;
+    QString phase;
+    switch (state_.phase()) {
+    case WorkspacePhase::Empty:
+        text = tr("●  EMPTY");
+        phase = QStringLiteral("inactive");
+        break;
+    case WorkspacePhase::Loading:
+        text = tr("●  LOADING");
+        phase = QStringLiteral("busy");
+        break;
+    case WorkspacePhase::Ready:
+        text = tr("●  READY");
+        phase = QStringLiteral("ready");
+        break;
+    case WorkspacePhase::Analyzing:
+        text = tr("●  ANALYZING");
+        phase = QStringLiteral("busy");
+        break;
+    case WorkspacePhase::FatalError:
+        text = tr("●  RENDERER ERROR");
+        phase = QStringLiteral("inactive");
+        break;
+    }
+    workspaceStatusLabel_->setText(text);
+    workspaceStatusLabel_->setProperty("phase", phase);
+    workspaceStatusLabel_->style()->unpolish(workspaceStatusLabel_);
+    workspaceStatusLabel_->style()->polish(workspaceStatusLabel_);
+}
+
 QWidget* StandaloneMainWindow::buildCommandBar(QWidget* parent)
 {
     auto* commandBar = new QWidget(parent);
+    commandBar->setFixedHeight(56);
     auto* layout = new QHBoxLayout(commandBar);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(6);
+    layout->setContentsMargins(14, 8, 14, 8);
+    layout->setSpacing(8);
 
+    auto* brandLabel = new QLabel(tr("Mesh Compare"), commandBar);
+    brandLabel->setObjectName(QStringLiteral("brandLabel"));
     importMeshesButton_ = new QPushButton(tr("Open"), commandBar);
     importMeshesButton_->setObjectName("importMeshesButton");
     coloringButton_ = new QPushButton(tr("Coloring"), commandBar);
     coloringButton_->setObjectName("coloringButton");
     cameraButton_ = new QPushButton(tr("Camera"), commandBar);
     cameraButton_->setObjectName("cameraButton");
+    auto* viewLabel = new QLabel(tr("View:"), commandBar);
+    viewLabel->setObjectName("viewModeLabel");
+    overlayViewButton_ = new QPushButton(tr("Overlay"), commandBar);
+    overlayViewButton_->setObjectName("overlayViewButton");
+    overlayViewButton_->setCheckable(true);
+    overlayViewButton_->setToolTip(
+        tr("Show all mesh layers in one viewport"));
+    gridViewButton_ = new QPushButton(tr("Grid"), commandBar);
+    gridViewButton_->setObjectName("gridViewButton");
+    gridViewButton_->setCheckable(true);
+    gridViewButton_->setToolTip(
+        tr("Show each mesh layer in its own viewport"));
+    auto* viewModeGroup = new QButtonGroup(commandBar);
+    viewModeGroup->setExclusive(true);
+    viewModeGroup->addButton(overlayViewButton_);
+    viewModeGroup->addButton(gridViewButton_);
+    layersButton_ = new QToolButton(commandBar);
+    layersButton_->setObjectName(QStringLiteral("layersButton"));
+    layersButton_->setText(tr("Layers"));
+    layersButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    layersMenu_ = new QMenu(layersButton_);
+    layersMenu_->setObjectName(QStringLiteral("layersMenu"));
+    layersButton_->setMenu(layersMenu_);
+    layersButton_->setPopupMode(QToolButton::InstantPopup);
     coloringButton_->setEnabled(false);
     cameraButton_->setEnabled(false);
+    overlayViewButton_->setEnabled(false);
+    gridViewButton_->setEnabled(false);
+    layersButton_->setEnabled(false);
 
-    auto* linkedCameraLabel = new QLabel(tr("Linked cameras: On"), commandBar);
+    auto* linkedCameraLabel = new QLabel(
+        QStringLiteral(
+            "<span style=\"color:#54C891\">●</span>&nbsp;&nbsp;%1")
+            .arg(tr("Linked cameras")),
+        commandBar);
+    linkedCameraLabel->setObjectName(QStringLiteral("linkedCameraLabel"));
+    linkedCameraLabel->setTextFormat(Qt::RichText);
     meshCountLabel_ = new QLabel(tr("%1 meshes").arg(state_.meshes().size()), commandBar);
     meshCountLabel_->setObjectName("meshCountLabel");
     diagnosticsButton_ = new QToolButton(commandBar);
     diagnosticsButton_->setObjectName(QStringLiteral("diagnosticsButton"));
     diagnosticsButton_->setText(QStringLiteral("…"));
 
+    layout->addWidget(brandLabel);
+    layout->addWidget(toolbarDivider(commandBar));
     layout->addWidget(importMeshesButton_);
     layout->addWidget(coloringButton_);
     layout->addWidget(cameraButton_);
+    layout->addWidget(toolbarDivider(commandBar));
+    layout->addWidget(viewLabel);
+    layout->addWidget(overlayViewButton_);
+    layout->addWidget(gridViewButton_);
+    layout->addWidget(toolbarDivider(commandBar));
+    layout->addWidget(layersButton_);
     layout->addStretch(1);
     layout->addWidget(linkedCameraLabel);
     layout->addWidget(meshCountLabel_);
@@ -293,7 +526,51 @@ QWidget* StandaloneMainWindow::buildCommandBar(QWidget* parent)
         &QPushButton::clicked,
         this,
         &StandaloneMainWindow::toggleCameraPanel);
+    connect(overlayViewButton_, &QPushButton::clicked, this, [this] {
+        if (state_.layoutMode() != SceneLayoutMode::Overlay)
+            emit layoutModeRequested(SceneLayoutMode::Overlay);
+        refreshWorkspace();
+    });
+    connect(gridViewButton_, &QPushButton::clicked, this, [this] {
+        if (state_.layoutMode() != SceneLayoutMode::ComparisonGrid)
+            emit layoutModeRequested(SceneLayoutMode::ComparisonGrid);
+        refreshWorkspace();
+    });
+    connect(
+        layersMenu_,
+        &QMenu::aboutToShow,
+        this,
+        &StandaloneMainWindow::rebuildLayersMenu);
     return commandBar;
+}
+
+void StandaloneMainWindow::rebuildLayersMenu()
+{
+    layersMenu_->clear();
+    const int visibleCount = visibleMeshCount(state_);
+
+    if (state_.meshes().isEmpty()) {
+        QAction* empty = layersMenu_->addAction(tr("No mesh layers"));
+        empty->setEnabled(false);
+        return;
+    }
+
+    for (const MeshEntry& mesh : state_.meshes()) {
+        QAction* action = layersMenu_->addAction(mesh.displayName);
+        action->setObjectName(
+            QStringLiteral("meshVisibilityAction_%1").arg(mesh.id));
+        action->setCheckable(true);
+        action->setChecked(mesh.visible);
+        action->setEnabled(
+            canChangeLayerVisibility(state_, mesh, visibleCount));
+        connect(
+            action,
+            &QAction::toggled,
+            this,
+            [this, meshId = mesh.id](bool visible) {
+                requestMeshVisibilityChange(meshId, visible);
+            });
+    }
 }
 
 void StandaloneMainWindow::toggleColoringPanel()

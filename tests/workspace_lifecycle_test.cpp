@@ -239,6 +239,12 @@ public:
 
     void setSelectedMesh(MeshId meshId) override { selectedMeshId_ = meshId; }
     void setReferenceMesh(MeshId meshId) override { referenceMeshId_ = meshId; }
+    OperationResult setMeshVisible(MeshId, bool) override
+    {
+        return committedProvider_ == nullptr
+            ? OperationResult::failure(QStringLiteral("No committed lifecycle scene."))
+            : OperationResult::success();
+    }
 
     OperationResult setColorPresentations(
         const QVector<MeshColorPresentationUpdate>&) override

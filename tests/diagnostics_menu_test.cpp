@@ -32,6 +32,10 @@ public:
     void clearScene() override {}
     void setSelectedMesh(MeshId) override {}
     void setReferenceMesh(MeshId) override {}
+    OperationResult setMeshVisible(MeshId, bool) override
+    {
+        return OperationResult::success();
+    }
     OperationResult setColorPresentations(
         const QVector<MeshColorPresentationUpdate>&) override
     {
