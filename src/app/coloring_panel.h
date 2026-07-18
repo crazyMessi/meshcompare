@@ -65,6 +65,7 @@ private:
     QWidget* distanceParameters_ = nullptr;
     QWidget* doubleLayerParameters_ = nullptr;
     QSpinBox* sampleCountSpin_ = nullptr;
+    QComboBox* distanceMappingCombo_ = nullptr;
     QDoubleSpinBox* distanceColorMaxSpin_ = nullptr;
     QSpinBox* nearestNeighborCountSpin_ = nullptr;
     QDoubleSpinBox* oppositeNormalAngleSpin_ = nullptr;

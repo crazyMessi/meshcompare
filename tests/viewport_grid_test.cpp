@@ -40,6 +40,18 @@ SceneDescriptor scene(int meshCount)
     return descriptor;
 }
 
+ColorPresentation distancePresentation(
+    double maximum,
+    DistanceColorMapping mapping)
+{
+    ColorPresentation presentation;
+    presentation.mode = ColorMode::VertexColor;
+    presentation.colorLegend.kind = ColorLegendKind::Distance;
+    presentation.colorLegend.distanceMapping = mapping;
+    presentation.colorLegend.maximum = maximum;
+    return presentation;
+}
+
 class TestRenderScene
 {
 public:
@@ -160,6 +172,10 @@ public:
         meshVisibility_[meshModelId] = visible;
     }
     void setScoreLabel(QString label) override { scoreLabel_ = std::move(label); }
+    void setColorLegend(ColorLegendSpec legend) override
+    {
+        colorLegend_ = std::move(legend);
+    }
     void setDiagnostic(DiagnosticFlag flag, bool enabled) override
     {
         switch (flag) {
@@ -192,6 +208,7 @@ public:
         return meshVisibility_.value(meshModelId, true);
     }
     const QString& scoreLabel() const { return scoreLabel_; }
+    const ColorLegendSpec& colorLegend() const { return colorLegend_; }
     int repaintCount() const { return repaintCount_; }
     bool diagnosticEnabled(DiagnosticFlag flag) const
     {
@@ -227,6 +244,7 @@ private:
     QString label_;
     QHash<int, bool> meshVisibility_;
     QString scoreLabel_;
+    ColorLegendSpec colorLegend_;
     int repaintCount_ = 0;
     bool orthographic_ = false;
     bool wireframe_ = false;
@@ -338,6 +356,7 @@ private slots:
         ViewportGrid grid(factory, callbacks);
         SceneDescriptor descriptor = scene(3);
         descriptor.layoutMode = SceneLayoutMode::Overlay;
+        descriptor.meshes[1].visible = false;
 
         const OperationResult result = grid.create(
             &host,
@@ -353,9 +372,10 @@ private slots:
             factory.boundModelIds(0),
             (QVector<int>{101, 102, 103}));
         QCOMPARE(grid.meshIdForViewport(1), MeshId(0));
+        QVERIFY(!factory.viewport(0).meshVisible(102));
         QCOMPARE(
             factory.viewport(0).label(),
-            QStringLiteral("Overlay · 3/3 visible"));
+            QStringLiteral("Overlay · 2/3 visible"));
     }
 
     void overlayVisibilityControlsAssignedMeshesAndScoreSummary()
@@ -391,6 +411,74 @@ private slots:
             factory.viewport(0).scoreLabel(),
             QStringLiteral("mesh-101: P 0.900"));
         QVERIFY(!grid.setMeshVisible(999, false).ok);
+    }
+
+    void colorLegendsFollowGridPresentationsAndOverlayVisibility()
+    {
+        QWidget gridHost;
+        TestRenderScene gridScene;
+        GridFakeViewportFactory gridFactory;
+        RecordingCallbacks gridCallbacks;
+        ViewportGrid grid(gridFactory, gridCallbacks);
+        SceneDescriptor gridDescriptor = scene(3);
+        gridDescriptor.meshes[1].presentation =
+            distancePresentation(0.04, DistanceColorMapping::SquareRoot);
+        QVERIFY(grid.create(
+                    &gridHost,
+                    gridDescriptor,
+                    gridScene.dependencies(),
+                    gridDescriptor.referenceId)
+                    .ok);
+
+        QCOMPARE(
+            gridFactory.viewport(0).colorLegend().kind,
+            ColorLegendKind::None);
+        QCOMPARE(
+            gridFactory.viewport(1).colorLegend(),
+            gridDescriptor.meshes[1].presentation.colorLegend);
+        grid.setColorLegends(
+            {{gridDescriptor.meshes[1].id,
+              distancePresentation(
+                  0.08,
+                  DistanceColorMapping::Linear)}});
+        QCOMPARE(
+            gridFactory.viewport(1).colorLegend().distanceMapping,
+            DistanceColorMapping::Linear);
+        QCOMPARE(gridFactory.viewport(1).colorLegend().maximum, 0.08);
+
+        QWidget overlayHost;
+        TestRenderScene overlayScene;
+        GridFakeViewportFactory overlayFactory;
+        RecordingCallbacks overlayCallbacks;
+        ViewportGrid overlayGrid(overlayFactory, overlayCallbacks);
+        SceneDescriptor overlayDescriptor = scene(3);
+        overlayDescriptor.layoutMode = SceneLayoutMode::Overlay;
+        overlayDescriptor.meshes[1].presentation =
+            distancePresentation(0.04, DistanceColorMapping::SquareRoot);
+        overlayDescriptor.meshes[2].presentation =
+            distancePresentation(0.08, DistanceColorMapping::Linear);
+        QVERIFY(overlayGrid.create(
+                    &overlayHost,
+                    overlayDescriptor,
+                    overlayScene.dependencies(),
+                    overlayDescriptor.referenceId)
+                    .ok);
+
+        QCOMPARE(
+            overlayFactory.viewport(0).colorLegend().kind,
+            ColorLegendKind::None);
+        QVERIFY(overlayGrid
+                    .setMeshVisible(overlayDescriptor.meshes[2].id, false)
+                    .ok);
+        QCOMPARE(
+            overlayFactory.viewport(0).colorLegend(),
+            overlayDescriptor.meshes[1].presentation.colorLegend);
+        QVERIFY(overlayGrid
+                    .setMeshVisible(overlayDescriptor.meshes[1].id, false)
+                    .ok);
+        QCOMPARE(
+            overlayFactory.viewport(0).colorLegend().kind,
+            ColorLegendKind::None);
     }
 
     void gridRejectsOverlayVisibilityUpdates()

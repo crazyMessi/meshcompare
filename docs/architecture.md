@@ -137,11 +137,12 @@ Uniform color applies only to the currently selected mesh. It overrides the defa
 
 Distance uses the current Reference and processes every non-Reference mesh. It
 computes the exact unsigned distance from each target vertex to the closest
-Reference triangle. The presentation maps
-`sqrt(clamp(distance / maximumDistance, 0, 1))` through Matplotlib's 256-entry
-Viridis table. `maximumDistance` defaults to `0.04`. The Reference presents its
-source vertex colors when available and otherwise uses RGBA `(180, 180, 180,
-255)`.
+Reference triangle. The presentation maps the clamped
+`distance / maximumDistance` value through Matplotlib's 256-entry Viridis table
+using either a Square root curve or a Linear curve. Square root remains the
+default to preserve the established visual emphasis on small deviations;
+`maximumDistance` defaults to `0.04`. The Reference presents its source vertex
+colors when available and otherwise uses RGBA `(180, 180, 180, 255)`.
 
 Double Layer is Reference-independent and processes every mesh, including the
 current Reference. Each mesh uses 500,000 deterministic area-uniform samples by
@@ -152,10 +153,18 @@ scores use the square-root-strength orange map from the reference workflow;
 unaffected vertices use RGBA `(180, 180, 180, 255)`. The default random seed is
 `0`.
 
-Distance maximum and Double Layer sample count, neighbor count, and opposite
-normal angle live in a collapsed, mode-specific “Advanced Parameters” section.
-Raw analysis fields are kept separate from presentation colors so a Distance
-maximum change can remap cached distances without recomputing geometry.
+Distance mapping and maximum, plus Double Layer sample count, neighbor count,
+and opposite normal angle, live in a collapsed, mode-specific “Advanced
+Parameters” section. Raw analysis fields are kept separate from presentation
+colors so a Distance mapping or maximum change can remap cached distances
+without recomputing geometry.
+
+Every committed Distance target draws a matching color legend in the viewport
+overlay. The legend samples the same mapping and Viridis implementation as the
+vertex colors, labels the range from zero to the configured maximum, and is
+committed or cleared atomically with the presentation. Grid shows it per target
+viewport; Overlay shows one legend when the visible analytical layers share a
+scale.
 
 Analysis runs in a bounded, cancellable background work queue. Results for all targets are staged and committed together only after every target succeeds. Cancellation or failure never leaves a partially updated result. During analysis, each target viewport reports progress. “Clear Coloring” returns every mesh to MeshLab's default presentation.
 

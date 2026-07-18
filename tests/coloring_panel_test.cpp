@@ -5,6 +5,7 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QFormLayout>
 #include <QLabel>
 #include <QPalette>
 #include <QPushButton>
@@ -155,6 +156,8 @@ private slots:
         auto* samples = panel.findChild<QSpinBox*>(QStringLiteral("sampleCountSpin"));
         auto* distanceColorMax =
             panel.findChild<QDoubleSpinBox*>(QStringLiteral("distanceColorMaxSpin"));
+        auto* distanceMapping =
+            panel.findChild<QComboBox*>(QStringLiteral("distanceMappingCombo"));
         auto* nearestNeighborCount =
             panel.findChild<QSpinBox*>(QStringLiteral("nearestNeighborCountSpin"));
         auto* oppositeNormalAngle =
@@ -175,6 +178,24 @@ private slots:
         QCOMPARE(distanceColorMax->minimum(), 0.0);
         QCOMPARE(distanceColorMax->maximum(), 1000000.0);
         QCOMPARE(distanceColorMax->value(), 0.04);
+        QVERIFY(distanceMapping != nullptr);
+        QCOMPARE(distanceMapping->count(), 2);
+        QCOMPARE(distanceMapping->itemText(0), QStringLiteral("Square root"));
+        QCOMPARE(
+            distanceMapping->itemData(0).toInt(),
+            static_cast<int>(DistanceColorMapping::SquareRoot));
+        QCOMPARE(distanceMapping->itemText(1), QStringLiteral("Linear"));
+        QCOMPARE(
+            distanceMapping->itemData(1).toInt(),
+            static_cast<int>(DistanceColorMapping::Linear));
+        QCOMPARE(distanceMapping->currentIndex(), 0);
+        auto* distanceForm =
+            qobject_cast<QFormLayout*>(distanceMapping->parentWidget()->layout());
+        QVERIFY(distanceForm != nullptr);
+        auto* mappingLabel =
+            qobject_cast<QLabel*>(distanceForm->labelForField(distanceMapping));
+        QVERIFY(mappingLabel != nullptr);
+        QCOMPARE(mappingLabel->text(), QStringLiteral("Mapping"));
         QVERIFY(nearestNeighborCount != nullptr);
         QCOMPARE(nearestNeighborCount->minimum(), 1);
         QCOMPARE(nearestNeighborCount->maximum(), 1000);
@@ -301,6 +322,41 @@ private slots:
         QCOMPARE(commands.analysisMetrics.front(),
                  SurfaceComparisonMetric::DistanceToReference);
         QCOMPARE(commands.analysisOptions.front().distanceColorMax, 0.04);
+        QCOMPARE(
+            commands.analysisOptions.front().distanceColorMapping,
+            DistanceColorMapping::SquareRoot);
+    }
+
+    void distanceRoutesTheSelectedMappingOption()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingColoringCommands commands(state);
+        ColoringPanel panel(state, commands);
+        auto* tabs = panel.findChild<QTabBar*>(QStringLiteral("coloringModeTabs"));
+        auto* mapping =
+            panel.findChild<QComboBox*>(QStringLiteral("distanceMappingCombo"));
+        auto* apply =
+            panel.findChild<QPushButton*>(QStringLiteral("applyColoringButton"));
+        QVERIFY(tabs != nullptr);
+        QVERIFY(mapping != nullptr);
+        QVERIFY(apply != nullptr);
+        tabs->setCurrentIndex(1);
+        const int linearIndex = mapping->findData(
+            static_cast<int>(DistanceColorMapping::Linear));
+        QVERIFY(linearIndex >= 0);
+        mapping->setCurrentIndex(linearIndex);
+        QCOMPARE(commands.analysisMetrics.size(), 0);
+
+        QTest::mouseClick(apply, Qt::LeftButton);
+
+        QCOMPARE(commands.analysisMetrics.size(), 1);
+        QCOMPARE(commands.analysisMetrics.front(),
+                 SurfaceComparisonMetric::DistanceToReference);
+        QCOMPARE(commands.analysisOptions.size(), 1);
+        QCOMPARE(
+            commands.analysisOptions.front().distanceColorMapping,
+            DistanceColorMapping::Linear);
     }
 
     void doubleLayerRoutesTheExactDefaultOptions()
@@ -394,16 +450,20 @@ private slots:
             panel.findChild<QPushButton*>(QStringLiteral("clearColoringButton"));
         auto* reference =
             panel.findChild<QComboBox*>(QStringLiteral("referenceCombo"));
+        auto* distanceMapping =
+            panel.findChild<QComboBox*>(QStringLiteral("distanceMappingCombo"));
 
         QVERIFY(apply != nullptr);
         QVERIFY(cancel != nullptr);
         QVERIFY(clear != nullptr);
         QVERIFY(reference != nullptr);
+        QVERIFY(distanceMapping != nullptr);
         QVERIFY(apply->isHidden());
         QVERIFY(!cancel->isHidden());
         QVERIFY(cancel->isEnabled());
         QVERIFY(!clear->isEnabled());
         QVERIFY(!reference->isEnabled());
+        QVERIFY(!distanceMapping->isEnabled());
     }
 
     void cancelToleratesSynchronousCompletionBeforeTheCommandReturns()

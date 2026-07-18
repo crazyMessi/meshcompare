@@ -1,5 +1,7 @@
 #include "workspace_state.h"
 
+#include "analysis_color_map.h"
+
 #include <QSet>
 
 #include <cmath>
@@ -21,6 +23,35 @@ bool isUnitFraction(double value)
 bool isEmptySummary(const AnalysisSummary& summary)
 {
     return summary.kind == AnalysisKind::None;
+}
+
+bool isEmptyLegend(const ColorLegendSpec& legend)
+{
+    return legend.kind == ColorLegendKind::None;
+}
+
+OperationResult validateColorLegend(
+    const ColorLegendSpec& legend,
+    const AnalysisSummary& summary)
+{
+    switch (legend.kind) {
+    case ColorLegendKind::None:
+        return OperationResult::success();
+    case ColorLegendKind::Distance:
+        if (summary.kind != AnalysisKind::DistanceToReference ||
+            !isValidDistanceColorMapping(legend.distanceMapping) ||
+            !isFiniteNonNegative(legend.minimum) ||
+            !isFiniteNonNegative(legend.maximum) ||
+            legend.minimum != 0.0 ||
+            legend.minimum > legend.maximum) {
+            return OperationResult::failure(
+                QStringLiteral("Distance color legend is invalid."));
+        }
+        return OperationResult::success();
+    default:
+        return OperationResult::failure(
+            QStringLiteral("Color legend kind is invalid."));
+    }
 }
 
 OperationResult validateAnalysisSummary(const AnalysisSummary& summary)
@@ -282,6 +313,12 @@ OperationResult WorkspaceState::validateColorUpdates(
             validateAnalysisSummary(update.analysisSummary);
         if (!summaryValidation.ok)
             return summaryValidation;
+        const OperationResult legendValidation =
+            validateColorLegend(
+                update.presentation.colorLegend,
+                update.analysisSummary);
+        if (!legendValidation.ok)
+            return legendValidation;
 
         const ColorPresentation& presentation = update.presentation;
         switch (presentation.mode) {
@@ -291,6 +328,7 @@ OperationResult WorkspaceState::validateColorUpdates(
                 !presentation.vertexColors.isEmpty() || update.hasScore ||
                 update.score != 0.0 ||
                 presentation.referenceDependent ||
+                !isEmptyLegend(presentation.colorLegend) ||
                 !isEmptySummary(update.analysisSummary)) {
                 return OperationResult::failure(
                     QStringLiteral("Default coloring cannot retain color or score data."));
@@ -302,6 +340,7 @@ OperationResult WorkspaceState::validateColorUpdates(
                 !presentation.vertexColors.isEmpty() || update.hasScore ||
                 update.score != 0.0 ||
                 presentation.referenceDependent ||
+                !isEmptyLegend(presentation.colorLegend) ||
                 !isEmptySummary(update.analysisSummary)) {
                 return OperationResult::failure(
                     QStringLiteral("Uniform coloring requires a valid color and no analysis score."));
@@ -314,6 +353,7 @@ OperationResult WorkspaceState::validateColorUpdates(
             if (presentation.uniformColor.isValid() || !update.hasScore ||
                 update.score < 0.0 || update.score > 1.0 ||
                 hasFaceColors == hasVertexColors ||
+                !isEmptyLegend(presentation.colorLegend) ||
                 !isEmptySummary(update.analysisSummary)) {
                 return OperationResult::failure(
                     QStringLiteral(

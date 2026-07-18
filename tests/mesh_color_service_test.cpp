@@ -317,6 +317,15 @@ private slots:
         QCOMPARE(
             state.mesh(2)->analysisSummary.distance.vertexCount,
             3);
+        QCOMPARE(
+            state.mesh(2)->presentation.colorLegend.kind,
+            ColorLegendKind::Distance);
+        QCOMPARE(
+            state.mesh(2)->presentation.colorLegend.maximum,
+            0.04);
+        QCOMPARE(
+            state.mesh(2)->presentation.colorLegend.distanceMapping,
+            DistanceColorMapping::SquareRoot);
         QVERIFY(!state.mesh(2)->hasScore);
     }
 
@@ -343,13 +352,22 @@ private slots:
         resources.blockSurfaceSnapshotAccess(103);
 
         AnalysisRequest remapped = distanceRequest(state);
-        remapped.options.distanceColorMax = 0.08;
+        remapped.options.distanceColorMapping =
+            DistanceColorMapping::Linear;
         QVERIFY(service.startAnalysis(remapped).ok);
         QVERIFY(takeBatch(finished).result.ok);
 
         QCOMPARE(comparer.callCount(), 2);
-        QVERIFY(
-            state.mesh(2)->presentation.vertexColors.at(1) != firstMiddle);
+        QCOMPARE(firstMiddle, QColor(33, 145, 140, 255));
+        QCOMPARE(
+            state.mesh(2)->presentation.vertexColors.at(1),
+            QColor(59, 82, 139, 255));
+        QCOMPARE(
+            state.mesh(2)->presentation.colorLegend.distanceMapping,
+            DistanceColorMapping::Linear);
+        QCOMPARE(
+            state.mesh(2)->presentation.colorLegend.maximum,
+            0.04);
     }
 
     void doubleLayerAnalyzesEveryMeshAndCachesItsRawField()

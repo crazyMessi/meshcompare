@@ -176,6 +176,24 @@ private slots:
                 QColor(68, 1, 84, 255)}));
     }
 
+    void distanceVertexColorsSupportLinearMapping()
+    {
+        const QVector<QColor> colors = distanceToVertexColors(
+            {0.0, 0.01, 0.02, 0.04, 1.0},
+            0.04,
+            DistanceColorMapping::Linear);
+
+        QCOMPARE(
+            colors,
+            QVector<QColor>({
+                QColor(68, 1, 84, 255),
+                QColor(59, 82, 139, 255),
+                QColor(33, 145, 140, 255),
+                QColor(253, 231, 37, 255),
+                QColor(253, 231, 37, 255),
+            }));
+    }
+
     void doubleLayerIsDeterministicAndDetectsOnlyOppositeNearbyNormals()
     {
         SurfaceComparisonOptions options;
@@ -251,6 +269,9 @@ private slots:
         const SurfaceComparisonOptions defaults;
         QCOMPARE(defaults.sampleCount, 500000);
         QCOMPARE(defaults.distanceColorMax, 0.04);
+        QCOMPARE(
+            defaults.distanceColorMapping,
+            DistanceColorMapping::SquareRoot);
         QCOMPARE(defaults.nearestNeighborCount, 20);
         QCOMPARE(defaults.oppositeNormalAngleDegrees, 170.0);
         QCOMPARE(defaults.doubleLayerRandomSeed, std::uint32_t(0));
@@ -260,6 +281,13 @@ private slots:
         invalid.sampleCount = 0;
         QVERIFY(!validateSurfaceComparisonOptions(
                      SurfaceComparisonMetric::DoubleLayer,
+                     invalid)
+                     .ok);
+        invalid = defaults;
+        invalid.distanceColorMapping =
+            static_cast<DistanceColorMapping>(99);
+        QVERIFY(!validateSurfaceComparisonOptions(
+                     SurfaceComparisonMetric::DistanceToReference,
                      invalid)
                      .ok);
         invalid = defaults;

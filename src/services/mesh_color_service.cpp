@@ -323,7 +323,8 @@ private:
                 }
                 result.vertexColors = distanceToVertexColors(
                     outcome.comparison.vertexDistances,
-                    request_.options.distanceColorMax);
+                    request_.options.distanceColorMax,
+                    request_.options.distanceColorMapping);
                 result.analysisSummary =
                     distanceSummary(outcome.comparison.distanceStatistics);
             }
@@ -831,6 +832,15 @@ void MeshColorService::completeAnalysis(AnalysisBatchResult result)
                 presentation.mode = ColorMode::VertexColor;
                 presentation.vertexColors = meshResult.vertexColors;
                 presentation.referenceDependent = distanceMetric;
+                if (distanceMetric) {
+                    presentation.colorLegend.kind =
+                        ColorLegendKind::Distance;
+                    presentation.colorLegend.distanceMapping =
+                        result.options.distanceColorMapping;
+                    presentation.colorLegend.minimum = 0.0;
+                    presentation.colorLegend.maximum =
+                        result.options.distanceColorMax;
+                }
                 stateUpdates.append(
                     {meshResult.meshId,
                      presentation,

@@ -474,6 +474,12 @@ private slots:
         vertexPresentation.vertexColors = {
             QColor(Qt::red), QColor(Qt::green), QColor(Qt::blue)};
         vertexPresentation.referenceDependent = true;
+        vertexPresentation.colorLegend.kind =
+            ColorLegendKind::Distance;
+        vertexPresentation.colorLegend.distanceMapping =
+            DistanceColorMapping::SquareRoot;
+        vertexPresentation.colorLegend.minimum = 0.0;
+        vertexPresentation.colorLegend.maximum = 0.04;
         AnalysisSummary distance;
         distance.kind = AnalysisKind::DistanceToReference;
         distance.distance.vertexCount = 3;
@@ -499,6 +505,21 @@ private slots:
         QCOMPARE(
             state.mesh(2)->analysisSummary.distance.percentile99Distance,
             0.004);
+        QCOMPARE(
+            state.mesh(2)->presentation.colorLegend.maximum,
+            0.04);
+
+        ColorPresentation invalidLegend = vertexPresentation;
+        invalidLegend.colorLegend.distanceMapping =
+            static_cast<DistanceColorMapping>(99);
+        QVERIFY(!state
+                     .validateColorUpdates(
+                         {{2,
+                           invalidLegend,
+                           0.0,
+                           false,
+                           distance}})
+                     .ok);
 
         AnalysisSummary invalidDistance = distance;
         invalidDistance.distance.maxDistance = -1.0;

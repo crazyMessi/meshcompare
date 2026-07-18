@@ -83,6 +83,11 @@ public:
         if (!viewport_.isNull())
             viewport_->setScoreLabel(std::move(label));
     }
+    void setColorLegend(ColorLegendSpec legend) override
+    {
+        if (!viewport_.isNull())
+            viewport_->setColorLegend(std::move(legend));
+    }
     void setDiagnostic(DiagnosticFlag flag, bool enabled) override
     {
         if (!viewport_.isNull())
@@ -184,6 +189,7 @@ public:
     {
         const OperationResult result = context_.setColorPresentations(updates);
         if (result.ok && grid_) {
+            grid_->setColorLegends(updates);
             if (diagnosticEnabled_[static_cast<std::size_t>(
                     DiagnosticFlag::Wireframe)]) {
                 grid_->setDiagnostic(DiagnosticFlag::Wireframe, true);
@@ -367,15 +373,6 @@ OperationResult MeshLabRendererAdapter::prepareScene(
             result = candidate->setAnalysisOverlays(overlays);
             if (!result.ok)
                 return result;
-        }
-        if (scene.layoutMode == SceneLayoutMode::Overlay) {
-            for (const SceneMesh& mesh : scene.meshes) {
-                if (mesh.visible)
-                    continue;
-                result = candidate->setMeshVisible(mesh.id, false);
-                if (!result.ok)
-                    return result;
-            }
         }
         if (!scene.initialCamera.viewStateXml.isEmpty()) {
             result = candidate->restoreCamera(scene.initialCamera);

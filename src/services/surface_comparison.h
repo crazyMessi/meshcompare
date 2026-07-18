@@ -31,6 +31,8 @@ struct SurfaceComparisonOptions {
     bool useAbsoluteNormalDot = true;
     std::uint32_t randomSeed = 0x4d595df4u;
     double distanceColorMax = 0.04;
+    DistanceColorMapping distanceColorMapping =
+        DistanceColorMapping::SquareRoot;
     int nearestNeighborCount = 20;
     double oppositeNormalAngleDegrees = 170.0;
     std::uint32_t doubleLayerRandomSeed = 0;
@@ -112,7 +114,9 @@ SurfaceComparisonOutcome compareSampledSurfaces(
 QVector<QColor> surfaceScoreColors(const QVector<double>& faceScores);
 QVector<QColor> distanceToVertexColors(
     const QVector<double>& vertexDistances,
-    double maxDistance = 0.04);
+    double maxDistance = 0.04,
+    DistanceColorMapping mapping =
+        DistanceColorMapping::SquareRoot);
 QVector<QColor> doubleLayerVertexColors(
     const QVector<double>& vertexScores);
 QVector<double> projectFaceMaximumScoresToVertices(

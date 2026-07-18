@@ -25,6 +25,7 @@ public:
     virtual void setReference(bool reference) = 0;
     virtual void setMeshVisible(int meshModelId, bool visible) = 0;
     virtual void setScoreLabel(QString label) = 0;
+    virtual void setColorLegend(ColorLegendSpec legend) = 0;
     virtual void setDiagnostic(DiagnosticFlag flag, bool enabled) = 0;
     virtual void requestRepaint() = 0;
 };

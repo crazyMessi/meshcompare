@@ -34,4 +34,5 @@ struct ViewportDependencies
     QString scoreLabel;
     bool reference = false;
     QVector<int> additionalMeshModelIds;
+    ColorLegendSpec colorLegend;
 };

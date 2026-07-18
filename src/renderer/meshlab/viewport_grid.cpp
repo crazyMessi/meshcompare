@@ -212,7 +212,8 @@ OperationResult ViewportGrid::create(
         sceneMeshIds_.append(mesh.id);
         meshLabels_.insert(mesh.id, mesh.label);
         analysisLabels_.insert(mesh.id, mesh.analysisLabel);
-        meshVisibility_.insert(mesh.id, true);
+        colorLegends_.insert(mesh.id, mesh.presentation.colorLegend);
+        meshVisibility_.insert(mesh.id, mesh.visible);
     }
 
     const int viewportCount = overlayMode_ ? 1 : scene.meshes.size();
@@ -281,7 +282,10 @@ OperationResult ViewportGrid::create(
             selected,
             sceneMesh.analysisLabel,
             reference,
-            additionalMeshModelIds};
+            additionalMeshModelIds,
+            overlayMode_
+                ? overlayColorLegend()
+                : sceneMesh.presentation.colorLegend};
         std::unique_ptr<IViewport> viewport;
         QWidget* viewportHost = viewportHosts[static_cast<std::size_t>(index)];
         auto* viewportLayout = new QVBoxLayout(viewportHost);
@@ -326,7 +330,17 @@ OperationResult ViewportGrid::create(
         }
     }
 
+    if (overlayMode_) {
+        for (int index = 0; index < scene.meshes.size(); ++index) {
+            if (!scene.meshes.at(index).visible) {
+                viewports_.front()->setMeshVisible(
+                    modelIds.at(index),
+                    false);
+            }
+        }
+    }
     setSelectedMesh(selectedMeshId);
+    refreshColorLegends();
     if (overlayMode_)
         refreshOverlayLabels();
     if (viewportCount > 1)
@@ -379,6 +393,7 @@ OperationResult ViewportGrid::setMeshVisible(MeshId meshId, bool visible)
     meshVisibility_[meshId] = visible;
     viewports_.front()->setMeshVisible(modelId, visible);
     refreshOverlayLabels();
+    refreshColorLegends();
     return OperationResult::success();
 }
 
@@ -427,6 +442,17 @@ OperationResult ViewportGrid::setAnalysisOverlays(
     return OperationResult::success();
 }
 
+void ViewportGrid::setColorLegends(
+    const QVector<MeshColorPresentationUpdate>& updates)
+{
+    // RenderSceneContext has already validated and committed this exact batch.
+    // Legend synchronization cannot fail independently without splitting the
+    // renderer's presentation transaction.
+    for (const MeshColorPresentationUpdate& update : updates)
+        colorLegends_[update.meshId] = update.presentation.colorLegend;
+    refreshColorLegends();
+}
+
 void ViewportGrid::refreshOverlayLabels()
 {
     if (!overlayMode_ || viewports_.empty())
@@ -449,6 +475,42 @@ void ViewportGrid::refreshOverlayLabels()
             .arg(visibleCount)
             .arg(sceneMeshIds_.size()));
     viewports_.front()->setScoreLabel(summary.join(QStringLiteral(" · ")));
+}
+
+void ViewportGrid::refreshColorLegends()
+{
+    if (viewports_.empty())
+        return;
+    if (overlayMode_) {
+        viewports_.front()->setColorLegend(overlayColorLegend());
+        return;
+    }
+
+    for (std::size_t index = 0; index < viewports_.size(); ++index) {
+        viewports_[index]->setColorLegend(
+            colorLegends_.value(viewportMeshIds_[index]));
+    }
+}
+
+ColorLegendSpec ViewportGrid::overlayColorLegend() const
+{
+    ColorLegendSpec aggregated;
+    bool found = false;
+    for (MeshId meshId : sceneMeshIds_) {
+        if (!meshVisibility_.value(meshId, true))
+            continue;
+        const ColorLegendSpec legend = colorLegends_.value(meshId);
+        if (legend.kind == ColorLegendKind::None)
+            continue;
+        if (!found) {
+            aggregated = legend;
+            found = true;
+        }
+        else if (aggregated != legend) {
+            return {};
+        }
+    }
+    return found ? aggregated : ColorLegendSpec{};
 }
 
 CameraPose ViewportGrid::captureCamera() const
@@ -577,6 +639,7 @@ void ViewportGrid::clear()
     sceneMeshIds_.clear();
     meshLabels_.clear();
     analysisLabels_.clear();
+    colorLegends_.clear();
     meshModelIds_.clear();
     meshVisibility_.clear();
     overlayMode_ = false;

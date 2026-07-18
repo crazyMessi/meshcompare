@@ -16,6 +16,8 @@ enum class ColorMode {
     VertexColor,
 };
 enum class AnalysisKind { None, DistanceToReference, DoubleLayer };
+enum class DistanceColorMapping { Linear, SquareRoot };
+enum class ColorLegendKind { None, Distance };
 enum class DiagnosticFlag { Orthographic, Wireframe, Normals };
 enum class SceneLayoutMode { ComparisonGrid, Overlay };
 
@@ -33,12 +35,38 @@ struct OperationResult {
 
 struct CameraPose { QString viewStateXml; };
 
+struct ColorLegendSpec {
+    ColorLegendKind kind = ColorLegendKind::None;
+    DistanceColorMapping distanceMapping =
+        DistanceColorMapping::SquareRoot;
+    double minimum = 0.0;
+    double maximum = 0.0;
+};
+
+inline bool operator==(
+    const ColorLegendSpec& left,
+    const ColorLegendSpec& right)
+{
+    return left.kind == right.kind &&
+           left.distanceMapping == right.distanceMapping &&
+           left.minimum == right.minimum &&
+           left.maximum == right.maximum;
+}
+
+inline bool operator!=(
+    const ColorLegendSpec& left,
+    const ColorLegendSpec& right)
+{
+    return !(left == right);
+}
+
 struct ColorPresentation {
     ColorMode mode = ColorMode::Default;
     QColor uniformColor;
     QVector<QColor> faceColors;
     QVector<QColor> vertexColors;
     bool referenceDependent = false;
+    ColorLegendSpec colorLegend;
 };
 
 inline bool isReferenceDependent(

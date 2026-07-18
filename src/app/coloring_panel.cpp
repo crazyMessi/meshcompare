@@ -232,6 +232,16 @@ QWidget* ColoringPanel::buildAnalysisPage()
     auto* distanceLayout = new QFormLayout(distanceParameters_);
     distanceLayout->setContentsMargins(0, 0, 0, 0);
     distanceLayout->setSpacing(6);
+    distanceMappingCombo_ = new QComboBox(distanceParameters_);
+    distanceMappingCombo_->setObjectName(
+        QStringLiteral("distanceMappingCombo"));
+    distanceMappingCombo_->addItem(
+        tr("Square root"),
+        static_cast<int>(DistanceColorMapping::SquareRoot));
+    distanceMappingCombo_->addItem(
+        tr("Linear"),
+        static_cast<int>(DistanceColorMapping::Linear));
+    distanceLayout->addRow(tr("Mapping"), distanceMappingCombo_);
     distanceColorMaxSpin_ = new QDoubleSpinBox(distanceParameters_);
     distanceColorMaxSpin_->setObjectName(
         QStringLiteral("distanceColorMaxSpin"));
@@ -313,6 +323,7 @@ void ColoringPanel::refreshFromState()
     clearButton_->setEnabled(ready);
     advancedParametersToggle_->setEnabled(ready);
     sampleCountSpin_->setEnabled(ready);
+    distanceMappingCombo_->setEnabled(ready);
     distanceColorMaxSpin_->setEnabled(ready);
     nearestNeighborCountSpin_->setEnabled(ready);
     oppositeNormalAngleSpin_->setEnabled(ready);
@@ -475,6 +486,8 @@ SurfaceComparisonOptions ColoringPanel::comparisonOptions() const
     SurfaceComparisonOptions options;
     options.sampleCount = sampleCountSpin_->value();
     options.distanceColorMax = distanceColorMaxSpin_->value();
+    options.distanceColorMapping = static_cast<DistanceColorMapping>(
+        distanceMappingCombo_->currentData().toInt());
     options.nearestNeighborCount = nearestNeighborCountSpin_->value();
     options.oppositeNormalAngleDegrees = oppositeNormalAngleSpin_->value();
     options.doubleLayerRandomSeed = 0;

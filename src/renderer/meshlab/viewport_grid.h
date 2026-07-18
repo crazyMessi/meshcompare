@@ -40,6 +40,8 @@ public:
     OperationResult setMeshVisible(MeshId meshId, bool visible);
     OperationResult setAnalysisOverlays(
         const QVector<MeshAnalysisOverlayUpdate>& updates);
+    void setColorLegends(
+        const QVector<MeshColorPresentationUpdate>& updates);
     CameraPose captureCamera() const;
     OperationResult restoreCamera(const CameraPose& pose);
     void resetCamera();
@@ -58,6 +60,8 @@ private:
     void clear();
     void fillHost();
     void refreshOverlayLabels();
+    void refreshColorLegends();
+    ColorLegendSpec overlayColorLegend() const;
 
     IViewportFactory& viewportFactory_;
     IViewportCallbacks& eventSink_;
@@ -68,6 +72,7 @@ private:
     QVector<MeshId> sceneMeshIds_;
     QHash<MeshId, QString> meshLabels_;
     QHash<MeshId, QString> analysisLabels_;
+    QHash<MeshId, ColorLegendSpec> colorLegends_;
     QHash<MeshId, int> meshModelIds_;
     QHash<MeshId, bool> meshVisibility_;
     bool overlayMode_ = false;

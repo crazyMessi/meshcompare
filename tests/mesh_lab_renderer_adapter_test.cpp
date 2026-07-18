@@ -120,6 +120,19 @@ ColorPresentation vertexAnalysisPresentation(
     return presentation;
 }
 
+ColorPresentation distancePresentation(
+    double maximum,
+    DistanceColorMapping mapping)
+{
+    ColorPresentation presentation = vertexAnalysisPresentation(
+        ColorMode::VertexColor,
+        {QColor(Qt::red), QColor(Qt::green), QColor(Qt::blue)});
+    presentation.colorLegend.kind = ColorLegendKind::Distance;
+    presentation.colorLegend.distanceMapping = mapping;
+    presentation.colorLegend.maximum = maximum;
+    return presentation;
+}
+
 MeshModel* modelFor(RenderSceneContext& context, MeshId meshId)
 {
     return context.document().getMesh(context.modelIdFor(meshId));
@@ -1213,6 +1226,39 @@ private slots:
         QCOMPARE(factory.creationCount(), creationCount);
         QCOMPARE(factory.viewport(0).repaintCount(), 1);
         QCOMPARE(factory.viewport(1).repaintCount(), 1);
+    }
+
+    void distanceLegendRestoresAndUpdatesWithColorPresentations()
+    {
+        FakeViewportFactory factory;
+        QWidget host;
+        MeshLabRendererAdapter adapter(factory);
+        QVERIFY(adapter.mount(&host).ok);
+        FakeResourceProvider resources;
+        SceneDescriptor descriptor = scene(1, {1, 2});
+        descriptor.meshes[1].presentation =
+            distancePresentation(0.04, DistanceColorMapping::SquareRoot);
+
+        QVERIFY(adapter.prepareScene(descriptor, resources).ok);
+        QCOMPARE(
+            factory.viewport(0).colorLegend().kind,
+            ColorLegendKind::None);
+        QCOMPARE(
+            factory.viewport(1).colorLegend(),
+            descriptor.meshes[1].presentation.colorLegend);
+        adapter.commitPreparedScene();
+
+        QVERIFY(adapter
+                    .setColorPresentations(
+                        {{2,
+                          distancePresentation(
+                              0.08,
+                              DistanceColorMapping::Linear)}})
+                    .ok);
+        QCOMPARE(
+            factory.viewport(1).colorLegend().distanceMapping,
+            DistanceColorMapping::Linear);
+        QCOMPARE(factory.viewport(1).colorLegend().maximum, 0.08);
     }
 
     void vertexPresentationAppliesThroughCommittedRendererInterface()

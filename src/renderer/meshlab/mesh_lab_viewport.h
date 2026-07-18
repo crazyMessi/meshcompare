@@ -40,6 +40,7 @@ public:
     void setReference(bool reference);
     void setMeshVisible(int meshModelId, bool visible);
     void setScoreLabel(QString label);
+    void setColorLegend(ColorLegendSpec legend);
     void setDiagnostic(DiagnosticFlag flag, bool enabled);
     RendererDiagnostics rendererDiagnostics() const;
     const QString& scoreLabelForTest() const { return scoreLabel_; }
@@ -93,6 +94,7 @@ private:
     bool selected_;
     QString scoreLabel_;
     bool reference_ = false;
+    ColorLegendSpec colorLegend_;
     bool cameraOrthographic_ = false;
     bool orthographicDiagnostic_ = false;
     bool wireframeDiagnostic_ = false;

@@ -2,6 +2,8 @@ set(MESHCOMPARE_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 set(MESHCOMPARE_TEST_ROOT "${PROJECT_SOURCE_DIR}/tests")
 
 add_library(meshcompare-core STATIC
+	core/analysis_color_map.cpp
+	core/analysis_color_map.h
 	core/camera_pose_uuid.cpp
 	core/camera_pose_uuid.h
 	core/meshcompare_types.cpp

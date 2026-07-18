@@ -28,6 +28,8 @@
 #include <wrap/qt/shot_qt.h>
 #include <wrap/qt/trackball.h>
 
+#include "../../core/analysis_color_map.h"
+
 #ifdef __APPLE__
 #include <OpenGL/glu.h>
 #else
@@ -373,6 +375,23 @@ void setLightColor(GLenum light, GLenum property, const vcg::Color4b& color)
         color[3] / 255.0f};
     glLightfv(light, property, values);
 }
+
+QString distanceMappingLabel(DistanceColorMapping mapping)
+{
+    switch (mapping) {
+    case DistanceColorMapping::Linear:
+        return QStringLiteral("Linear");
+    case DistanceColorMapping::SquareRoot:
+        return QStringLiteral("Square root");
+    default:
+        return {};
+    }
+}
+
+QString legendNumber(double value)
+{
+    return QString::number(value, 'g', 4);
+}
 } // namespace
 
 MeshLabViewport::MeshLabViewport(QWidget* parent, ViewportDependencies dependencies)
@@ -388,7 +407,8 @@ MeshLabViewport::MeshLabViewport(QWidget* parent, ViewportDependencies dependenc
       label_(dependencies.label),
       selected_(dependencies.selected),
       scoreLabel_(dependencies.scoreLabel),
-      reference_(dependencies.reference)
+      reference_(dependencies.reference),
+      colorLegend_(dependencies.colorLegend)
 {
     meshModelIds_ += dependencies.additionalMeshModelIds;
     trackball_.center = vcg::Point3f(0, 0, 0);
@@ -868,6 +888,79 @@ void MeshLabViewport::drawViewportOverlay(QPainter& painter) const
         painter.drawText(scoreRect, Qt::AlignCenter, scoreLabel_);
     }
 
+    const QString mappingLabel =
+        distanceMappingLabel(colorLegend_.distanceMapping);
+    if (colorLegend_.kind == ColorLegendKind::Distance &&
+        !mappingLabel.isEmpty() &&
+        std::isfinite(colorLegend_.minimum) &&
+        std::isfinite(colorLegend_.maximum) &&
+        colorLegend_.minimum >= 0.0 &&
+        colorLegend_.maximum >= colorLegend_.minimum &&
+        width() >= 170 && height() >= 110) {
+        const int legendWidth = qMin(280, width() - 24);
+        const int legendHeight = 70;
+        const QRect legendRect(
+            12,
+            height() - legendHeight - 12,
+            legendWidth,
+            legendHeight);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(12, 22, 36, 220));
+        painter.drawRoundedRect(legendRect, 7.0, 7.0);
+
+        QFont legendTitleFont = font;
+        legendTitleFont.setPointSizeF(qMax(8.5, font.pointSizeF() - 0.5));
+        painter.setFont(legendTitleFont);
+        painter.setPen(QColor(235, 242, 250));
+        painter.drawText(
+            legendRect.adjusted(10, 6, -10, -45),
+            Qt::AlignLeft | Qt::AlignVCenter,
+            QStringLiteral("Distance · %1").arg(mappingLabel));
+
+        const QRect gradientRect(
+            legendRect.left() + 10,
+            legendRect.top() + 29,
+            legendRect.width() - 20,
+            12);
+        for (int x = 0; x < gradientRect.width(); ++x) {
+            const double position =
+                gradientRect.width() <= 1
+                    ? 0.0
+                    : double(x) / double(gradientRect.width() - 1);
+            const double distance =
+                colorLegend_.minimum +
+                ((colorLegend_.maximum - colorLegend_.minimum) * position);
+            painter.fillRect(
+                QRect(gradientRect.left() + x, gradientRect.top(), 1, gradientRect.height()),
+                distanceColorForValue(
+                    distance,
+                    colorLegend_.maximum,
+                    colorLegend_.distanceMapping));
+        }
+        painter.setPen(QColor(255, 255, 255, 85));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRect(gradientRect.adjusted(0, 0, -1, -1));
+
+        QFont labelFont = painter.font();
+        labelFont.setWeight(QFont::Normal);
+        labelFont.setPointSizeF(qMax(8.0, labelFont.pointSizeF() - 1.0));
+        painter.setFont(labelFont);
+        painter.setPen(QColor(215, 225, 235));
+        const QRect labelsRect(
+            gradientRect.left(),
+            gradientRect.bottom() + 3,
+            gradientRect.width(),
+            legendRect.bottom() - gradientRect.bottom() - 6);
+        painter.drawText(
+            labelsRect,
+            Qt::AlignLeft | Qt::AlignVCenter,
+            legendNumber(colorLegend_.minimum));
+        painter.drawText(
+            labelsRect,
+            Qt::AlignRight | Qt::AlignVCenter,
+            legendNumber(colorLegend_.maximum));
+    }
+
     if (selected_) {
         QPen selectionPen(QColor(68, 209, 255), 2.0);
         painter.setPen(selectionPen);
@@ -1015,6 +1108,14 @@ void MeshLabViewport::setScoreLabel(QString label)
     if (scoreLabel_ == label)
         return;
     scoreLabel_ = std::move(label);
+    update();
+}
+
+void MeshLabViewport::setColorLegend(ColorLegendSpec legend)
+{
+    if (colorLegend_ == legend)
+        return;
+    colorLegend_ = std::move(legend);
     update();
 }
 

@@ -55,6 +55,10 @@ public:
         meshVisibility_[meshModelId] = visible;
     }
     void setScoreLabel(QString label) override { scoreLabel_ = std::move(label); }
+    void setColorLegend(ColorLegendSpec legend) override
+    {
+        colorLegend_ = std::move(legend);
+    }
     void setDiagnostic(DiagnosticFlag flag, bool enabled) override
     {
         diagnostics_[static_cast<int>(flag)] = enabled;
@@ -73,6 +77,7 @@ public:
     bool selected() const { return selected_; }
     bool reference() const { return reference_; }
     const QString& scoreLabel() const { return scoreLabel_; }
+    const ColorLegendSpec& colorLegend() const { return colorLegend_; }
     const QString& label() const { return label_; }
     bool meshVisible(int meshModelId) const
     {
@@ -105,6 +110,7 @@ private:
     bool selected_ = false;
     bool reference_ = false;
     QString scoreLabel_;
+    ColorLegendSpec colorLegend_;
     bool diagnostics_[3] = {false, false, false};
     int repaintCount_ = 0;
 };
