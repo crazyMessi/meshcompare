@@ -173,6 +173,37 @@ QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QListWidget {
     selection-background-color: #6252D2;
 }
 
+QFrame#coloringPanel QComboBox {
+    combobox-popup: 0;
+}
+
+QFrame#coloringPanel QComboBox QAbstractItemView {
+    color: #F2F0EB;
+    background: #20211F;
+    border: 1px solid #4A4B46;
+    border-radius: 6px;
+    outline: 0;
+    padding: 4px 0;
+    selection-color: #FFFFFF;
+    selection-background-color: #6252D2;
+}
+
+QFrame#coloringPanel QComboBox QAbstractItemView::item {
+    min-height: 30px;
+    padding: 4px 10px;
+    border: 0;
+}
+
+QFrame#coloringPanel QComboBox QAbstractItemView::item:hover {
+    color: #FFFFFF;
+    background: #383936;
+}
+
+QFrame#coloringPanel QComboBox QAbstractItemView::item:selected {
+    color: #FFFFFF;
+    background: #6252D2;
+}
+
 QTabBar::tab {
     color: #AAA9A3;
     background: #20211F;

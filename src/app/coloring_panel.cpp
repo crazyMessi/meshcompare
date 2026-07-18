@@ -16,6 +16,7 @@
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStackedWidget>
+#include <QStyledItemDelegate>
 #include <QTabBar>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -28,6 +29,13 @@ QString meshName(const WorkspaceState& state, MeshId id)
 {
     const MeshEntry* mesh = state.mesh(id);
     return mesh == nullptr ? QStringLiteral("None") : mesh->displayName;
+}
+
+QComboBox* createStyledPopupComboBox(QWidget* parent)
+{
+    auto* combo = new QComboBox(parent);
+    combo->setItemDelegate(new QStyledItemDelegate(combo));
+    return combo;
 }
 } // namespace
 
@@ -71,7 +79,7 @@ ColoringPanel::ColoringPanel(
     referenceLayout->setContentsMargins(0, 0, 0, 0);
     referenceLayout->setSpacing(6);
     referenceLayout->addWidget(new QLabel(tr("Reference"), referenceRow_));
-    referenceCombo_ = new QComboBox(referenceRow_);
+    referenceCombo_ = createStyledPopupComboBox(referenceRow_);
     referenceCombo_->setObjectName(QStringLiteral("referenceCombo"));
     referenceLayout->addWidget(referenceCombo_, 1);
     root->addWidget(referenceRow_);
@@ -163,7 +171,7 @@ QWidget* ColoringPanel::buildUniformPage()
     meshLayout->setContentsMargins(0, 0, 0, 0);
     meshLayout->setSpacing(6);
     meshLayout->addWidget(new QLabel(tr("Mesh"), meshRow));
-    uniformMeshCombo_ = new QComboBox(meshRow);
+    uniformMeshCombo_ = createStyledPopupComboBox(meshRow);
     uniformMeshCombo_->setObjectName(QStringLiteral("uniformMeshCombo"));
     meshLayout->addWidget(uniformMeshCombo_, 1);
     layout->addWidget(meshRow);
@@ -173,7 +181,7 @@ QWidget* ColoringPanel::buildUniformPage()
     colorLayout->setContentsMargins(0, 0, 0, 0);
     colorLayout->setSpacing(6);
     colorLayout->addWidget(new QLabel(tr("Color"), colorRow));
-    uniformColorCombo_ = new QComboBox(colorRow);
+    uniformColorCombo_ = createStyledPopupComboBox(colorRow);
     uniformColorCombo_->setObjectName(QStringLiteral("uniformColorCombo"));
     uniformColorCombo_->addItem(
         tr("Green"), QColor(QStringLiteral("#5aaa75")));
@@ -232,7 +240,7 @@ QWidget* ColoringPanel::buildAnalysisPage()
     auto* distanceLayout = new QFormLayout(distanceParameters_);
     distanceLayout->setContentsMargins(0, 0, 0, 0);
     distanceLayout->setSpacing(6);
-    distanceMappingCombo_ = new QComboBox(distanceParameters_);
+    distanceMappingCombo_ = createStyledPopupComboBox(distanceParameters_);
     distanceMappingCombo_->setObjectName(
         QStringLiteral("distanceMappingCombo"));
     distanceMappingCombo_->addItem(

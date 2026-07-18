@@ -1,6 +1,9 @@
 #include <QtTest>
 
+#include <cmath>
+
 #include <QAbstractButton>
+#include <QAbstractItemView>
 #include <QApplication>
 #include <QComboBox>
 #include <QDragEnterEvent>
@@ -47,6 +50,30 @@ OperationResult makeReady(WorkspaceState& state)
 {
     state.beginLoading();
     return state.commitWorkspace({entry(1), entry(2)}, 1);
+}
+
+double linearColorComponent(qreal component)
+{
+    return component <= 0.03928
+        ? component / 12.92
+        : std::pow((component + 0.055) / 1.055, 2.4);
+}
+
+double relativeLuminance(const QColor& color)
+{
+    return
+        (0.2126 * linearColorComponent(color.redF())) +
+        (0.7152 * linearColorComponent(color.greenF())) +
+        (0.0722 * linearColorComponent(color.blueF()));
+}
+
+double contrastRatio(const QColor& first, const QColor& second)
+{
+    const double firstLuminance = relativeLuminance(first);
+    const double secondLuminance = relativeLuminance(second);
+    const double lighter = qMax(firstLuminance, secondLuminance);
+    const double darker = qMin(firstLuminance, secondLuminance);
+    return (lighter + 0.05) / (darker + 0.05);
 }
 
 class WindowColoringCommands final : public IColoringCommands
@@ -617,6 +644,60 @@ private slots:
         QTest::mouseClick(button, Qt::LeftButton);
         QVERIFY(panel->isHidden());
         QCOMPARE(host->geometry(), viewportGeometry);
+    }
+
+    void comboPopupUsesReadableDarkTheme()
+    {
+        WorkspaceState state;
+        QVERIFY(makeReady(state).ok);
+        WindowColoringCommands commands(state);
+        StandaloneMainWindow window(state);
+        window.resize(960, 640);
+        window.bindColoringCommands(commands);
+        window.show();
+        QApplication::processEvents();
+
+        auto* coloringButton =
+            window.findChild<QPushButton*>(QStringLiteral("coloringButton"));
+        auto* referenceCombo =
+            window.findChild<QComboBox*>(QStringLiteral("referenceCombo"));
+        QVERIFY(coloringButton != nullptr);
+        QVERIFY(referenceCombo != nullptr);
+        QTest::mouseClick(coloringButton, Qt::LeftButton);
+        referenceCombo->showPopup();
+        QApplication::processEvents();
+        QVERIFY(referenceCombo->view()->isVisible());
+
+        const QPalette palette = referenceCombo->view()->palette();
+        const QColor base = palette.color(QPalette::Base);
+        const QColor text = palette.color(QPalette::Text);
+        const QColor highlight = palette.color(QPalette::Highlight);
+        const QColor highlightedText =
+            palette.color(QPalette::HighlightedText);
+        QVERIFY2(
+            base.lightnessF() < 0.25,
+            qPrintable(QStringLiteral("Popup base is too light: %1")
+                           .arg(base.name(QColor::HexArgb))));
+        QVERIFY2(
+            contrastRatio(text, base) >= 4.5,
+            qPrintable(QStringLiteral(
+                "Popup text contrast is only %1:1")
+                           .arg(contrastRatio(text, base), 0, 'f', 2)));
+        QVERIFY2(
+            contrastRatio(highlightedText, highlight) >= 4.5,
+            qPrintable(QStringLiteral(
+                "Selected popup text contrast is only %1:1")
+                           .arg(
+                               contrastRatio(highlightedText, highlight),
+                               0,
+                               'f',
+                               2)));
+        QVERIFY2(
+            referenceCombo->view()->sizeHintForRow(0) >= 30,
+            qPrintable(QStringLiteral("Popup row is only %1px high")
+                           .arg(referenceCombo->view()->sizeHintForRow(0))));
+
+        referenceCombo->hidePopup();
     }
 
     void cameraPanelIsTransientMutuallyExclusiveAndDoesNotResizeTheViewport()
