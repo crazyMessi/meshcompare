@@ -38,6 +38,45 @@ void makeReady(WorkspaceState& state)
     Q_ASSERT(committed.ok);
 }
 
+void installDistanceAnalysis(
+    WorkspaceState& state,
+    double displayThreshold = 0.04)
+{
+    ColorPresentation presentation;
+    presentation.mode = ColorMode::VertexColor;
+    presentation.vertexColors = {QColor(Qt::blue)};
+    presentation.referenceDependent = true;
+    presentation.colorLegend.kind = ColorLegendKind::Distance;
+    presentation.colorLegend.distanceMapping =
+        DistanceColorMapping::SquareRoot;
+    presentation.colorLegend.minimum = 0.0;
+    presentation.colorLegend.maximum = displayThreshold;
+
+    AnalysisSummary summary;
+    summary.kind = AnalysisKind::DistanceToReference;
+    summary.distance.vertexCount = 1;
+    summary.distance.finiteVertexCount = 1;
+
+    PreparedColorStateUpdate prepared;
+    const OperationResult preparedResult = state.prepareColorUpdates(
+        {{2, presentation, 0.0, false, summary},
+         {3, presentation, 0.0, false, summary}},
+        &prepared);
+    Q_ASSERT(preparedResult.ok);
+    state.commitPreparedColorUpdates(std::move(prepared));
+}
+
+void clearDistanceAnalysis(WorkspaceState& state)
+{
+    PreparedColorStateUpdate prepared;
+    const OperationResult preparedResult = state.prepareColorUpdates(
+        {{2, {}, 0.0, false, {}},
+         {3, {}, 0.0, false, {}}},
+        &prepared);
+    Q_ASSERT(preparedResult.ok);
+    state.commitPreparedColorUpdates(std::move(prepared));
+}
+
 int comboIndexForMesh(const QComboBox& combo, MeshId meshId)
 {
     for (int index = 0; index < combo.count(); ++index) {
@@ -101,6 +140,8 @@ public:
     OperationResult clearColoring() override
     {
         ++clearCount;
+        if (clearResult.ok && clearAction)
+            clearAction();
         return clearResult;
     }
 
@@ -117,6 +158,7 @@ public:
     OperationResult analysisResult = OperationResult::success();
     OperationResult clearResult = OperationResult::success();
     std::function<void()> cancelAction;
+    std::function<void()> clearAction;
     int cancelCount = 0;
     int clearCount = 0;
 };
@@ -372,6 +414,122 @@ private slots:
         QCOMPARE(
             commands.analysisOptions.front().distanceColorMapping,
             DistanceColorMapping::Linear);
+    }
+
+    void editingDistanceThresholdRemapsExistingDistanceAnalysis()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        installDistanceAnalysis(state);
+        RecordingColoringCommands commands(state);
+        ColoringPanel panel(state, commands);
+        auto* tabs =
+            panel.findChild<QTabBar*>(QStringLiteral("coloringModeTabs"));
+        auto* threshold = panel.findChild<QDoubleSpinBox*>(
+            QStringLiteral("distanceDisplayThresholdSpin"));
+        QVERIFY(tabs != nullptr);
+        QVERIFY(threshold != nullptr);
+        tabs->setCurrentIndex(1);
+
+        threshold->setValue(0.009);
+        QVERIFY(QMetaObject::invokeMethod(
+            threshold,
+            "editingFinished",
+            Qt::DirectConnection));
+
+        QTRY_COMPARE_WITH_TIMEOUT(commands.analysisMetrics.size(), 1, 500);
+        QCOMPARE(
+            commands.analysisMetrics.front(),
+            SurfaceComparisonMetric::DistanceToReference);
+        QCOMPARE(commands.analysisOptions.size(), 1);
+        QCOMPARE(
+            commands.analysisOptions.front().distanceDisplayThreshold,
+            0.009);
+    }
+
+    void editingDistanceThresholdBeforeFirstAnalysisDoesNotRunIt()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingColoringCommands commands(state);
+        ColoringPanel panel(state, commands);
+        auto* tabs =
+            panel.findChild<QTabBar*>(QStringLiteral("coloringModeTabs"));
+        auto* threshold = panel.findChild<QDoubleSpinBox*>(
+            QStringLiteral("distanceDisplayThresholdSpin"));
+        QVERIFY(tabs != nullptr);
+        QVERIFY(threshold != nullptr);
+        tabs->setCurrentIndex(1);
+
+        threshold->setValue(0.009);
+        QVERIFY(QMetaObject::invokeMethod(
+            threshold,
+            "editingFinished",
+            Qt::DirectConnection));
+        QTest::qWait(150);
+
+        QCOMPARE(commands.analysisMetrics.size(), 0);
+        QCOMPARE(state.phase(), WorkspacePhase::Ready);
+    }
+
+    void editingUnchangedDistanceThresholdDoesNotRemap()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        installDistanceAnalysis(state);
+        RecordingColoringCommands commands(state);
+        ColoringPanel panel(state, commands);
+        auto* tabs =
+            panel.findChild<QTabBar*>(QStringLiteral("coloringModeTabs"));
+        auto* threshold = panel.findChild<QDoubleSpinBox*>(
+            QStringLiteral("distanceDisplayThresholdSpin"));
+        QVERIFY(tabs != nullptr);
+        QVERIFY(threshold != nullptr);
+        tabs->setCurrentIndex(1);
+        QCOMPARE(threshold->value(), 0.04);
+
+        QVERIFY(QMetaObject::invokeMethod(
+            threshold,
+            "editingFinished",
+            Qt::DirectConnection));
+        QTest::qWait(150);
+
+        QCOMPARE(commands.analysisMetrics.size(), 0);
+        QCOMPARE(state.phase(), WorkspacePhase::Ready);
+    }
+
+    void editingDistanceThresholdDoesNotSwallowImmediateClearClick()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        installDistanceAnalysis(state);
+        RecordingColoringCommands commands(state);
+        commands.clearAction = [&] { clearDistanceAnalysis(state); };
+        ColoringPanel panel(state, commands);
+        auto* tabs =
+            panel.findChild<QTabBar*>(QStringLiteral("coloringModeTabs"));
+        auto* threshold = panel.findChild<QDoubleSpinBox*>(
+            QStringLiteral("distanceDisplayThresholdSpin"));
+        auto* clear =
+            panel.findChild<QPushButton*>(QStringLiteral("clearColoringButton"));
+        QVERIFY(tabs != nullptr);
+        QVERIFY(threshold != nullptr);
+        QVERIFY(clear != nullptr);
+        tabs->setCurrentIndex(1);
+        threshold->setValue(0.009);
+        QVERIFY(QMetaObject::invokeMethod(
+            threshold,
+            "editingFinished",
+            Qt::DirectConnection));
+
+        QTest::mouseClick(clear, Qt::LeftButton);
+        QTest::qWait(150);
+
+        QCOMPARE(commands.clearCount, 1);
+        QCOMPARE(commands.analysisMetrics.size(), 0);
+        QCOMPARE(
+            state.mesh(2)->analysisSummary.kind,
+            AnalysisKind::None);
     }
 
     void doubleLayerRoutesTheExactDefaultOptions()

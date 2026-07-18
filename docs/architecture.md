@@ -78,7 +78,8 @@ The first release preserves the mesh file types supported by the current MeshLab
 
 Reference resolution follows these rules:
 
-1. If a filename or mesh label contains `gt`, case-insensitively, select the first match in import order.
+1. If a filename or mesh label contains `gt`, case-insensitively, select the
+   first match in import order. Parent-directory names do not participate.
 2. If there is no match, temporarily select the first imported mesh.
 3. If there are multiple matches or no match, show a non-blocking notice.
 4. The user can always change the Reference in the coloring panel.
@@ -159,7 +160,10 @@ Parameters” section. A Distance target badge reports the percentage of target
 vertices whose one-way nearest-surface distance is strictly greater than the
 configured threshold. Raw analysis fields are kept separate from presentation
 colors so a Distance mapping or threshold change can remap cached distances
-and recompute that percentage without recomputing geometry.
+and recompute that percentage without recomputing geometry. Once Distance
+results exist, finishing a threshold edit starts that cached remap
+automatically; editing the threshold before the first analysis does not start
+the expensive initial comparison.
 
 Every committed Distance target draws a matching color legend in the viewport
 overlay. The legend samples the same mapping and Viridis implementation as the

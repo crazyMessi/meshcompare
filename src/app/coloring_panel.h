@@ -12,6 +12,7 @@ class QPushButton;
 class QSpinBox;
 class QStackedWidget;
 class QTabBar;
+class QTimer;
 class QToolButton;
 class QWidget;
 class WorkspaceState;
@@ -43,6 +44,7 @@ private:
     QWidget* buildAnalysisPage();
     void chooseUniformColor();
     void applyCurrentMode();
+    void remapCommittedDistanceAnalysis();
     void changeSelectedMesh(int index);
     void changeReference(int index);
     void updateModeUi(int modeIndex);
@@ -69,6 +71,7 @@ private:
     QDoubleSpinBox* distanceDisplayThresholdSpin_ = nullptr;
     QSpinBox* nearestNeighborCountSpin_ = nullptr;
     QDoubleSpinBox* oppositeNormalAngleSpin_ = nullptr;
+    QTimer* distanceRemapTimer_ = nullptr;
     QLabel* analysisStatusLabel_ = nullptr;
     QPushButton* applyButton_ = nullptr;
     QPushButton* cancelButton_ = nullptr;

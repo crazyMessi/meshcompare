@@ -61,6 +61,41 @@ private slots:
                  QStringLiteral("Multiple gt meshes found; using the first import."));
     }
 
+    void gtReferenceResolutionIgnoresGtInAnotherMeshParentDirectory()
+    {
+        QVector<MeshEntry> meshes = {
+            {1,
+             101,
+             "/cache/normalized/s2_norm/model_s2.ply",
+             "s2",
+             {},
+             false},
+            {2,
+             102,
+             "/cache/normalized/hy_norm/model_hy.ply",
+             "hy",
+             {},
+             false},
+            {3,
+             103,
+             "/cache/normalized/gt_norm/model_gt_norm.ply",
+             "gt",
+             {},
+             false},
+            {4,
+             104,
+             "/cache/output/model_gt_norm/mesh.ply",
+             "current_current",
+             {},
+             false},
+        };
+
+        const ReferenceResolution result = resolveReference(meshes);
+
+        QCOMPARE(result.referenceId, MeshId(3));
+        QCOMPARE(result.notice, QString());
+    }
+
     void emptyReferenceResolutionHasNoReferenceOrNotice()
     {
         const ReferenceResolution result = resolveReference({});

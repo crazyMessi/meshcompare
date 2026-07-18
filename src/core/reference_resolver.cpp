@@ -1,10 +1,15 @@
 #include "reference_resolver.h"
 
+#include <QFileInfo>
+
 ReferenceResolution resolveReference(const QVector<MeshEntry>& meshes)
 {
     QVector<MeshId> matches;
     for (const MeshEntry& mesh : meshes) {
-        if (mesh.sourcePath.contains(QStringLiteral("gt"), Qt::CaseInsensitive) ||
+        const QString sourceFileName =
+            QFileInfo(mesh.sourcePath).fileName();
+        if (sourceFileName.contains(
+                QStringLiteral("gt"), Qt::CaseInsensitive) ||
             mesh.displayName.contains(QStringLiteral("gt"), Qt::CaseInsensitive))
             matches.push_back(mesh.id);
     }

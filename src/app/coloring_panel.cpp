@@ -3,6 +3,7 @@
 #include "coloring_commands.h"
 #include "../core/workspace_state.h"
 
+#include <QApplication>
 #include <QColorDialog>
 #include <QComboBox>
 #include <QDoubleSpinBox>
@@ -18,6 +19,7 @@
 #include <QStackedWidget>
 #include <QStyledItemDelegate>
 #include <QTabBar>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QVariant>
@@ -25,6 +27,8 @@
 
 namespace
 {
+constexpr int kDistanceRemapDelayMs = 100;
+
 QString meshName(const WorkspaceState& state, MeshId id)
 {
     const MeshEntry* mesh = state.mesh(id);
@@ -108,6 +112,10 @@ ColoringPanel::ColoringPanel(
     actions->addWidget(applyButton_);
     root->addLayout(actions);
 
+    distanceRemapTimer_ = new QTimer(this);
+    distanceRemapTimer_->setSingleShot(true);
+    distanceRemapTimer_->setInterval(kDistanceRemapDelayMs);
+
     connect(
         modeTabs_,
         &QTabBar::currentChanged,
@@ -137,6 +145,16 @@ ColoringPanel::ColoringPanel(
         &QPushButton::clicked,
         this,
         &ColoringPanel::applyCurrentMode);
+    connect(
+        distanceDisplayThresholdSpin_,
+        &QDoubleSpinBox::editingFinished,
+        this,
+        [this] { distanceRemapTimer_->start(); });
+    connect(
+        distanceRemapTimer_,
+        &QTimer::timeout,
+        this,
+        &ColoringPanel::remapCommittedDistanceAnalysis);
     connect(
         chooseUniformColorButton_,
         &QPushButton::clicked,
@@ -439,6 +457,52 @@ void ColoringPanel::applyCurrentMode()
         }
     }
 
+    reportFailure(result);
+    refreshFromState();
+}
+
+void ColoringPanel::remapCommittedDistanceAnalysis()
+{
+    if (QApplication::mouseButtons() != Qt::NoButton ||
+        QApplication::activePopupWidget() != nullptr) {
+        distanceRemapTimer_->start();
+        return;
+    }
+    if (refreshing_ || state_.phase() != WorkspacePhase::Ready ||
+        modeTabs_->currentIndex() != 1) {
+        return;
+    }
+
+    const SurfaceComparisonOptions options = comparisonOptions();
+    bool hasTarget = false;
+    bool presentationChanged = false;
+    for (const MeshEntry& mesh : state_.meshes()) {
+        if (mesh.id == state_.referenceId())
+            continue;
+        if (mesh.analysisSummary.kind !=
+                AnalysisKind::DistanceToReference ||
+            mesh.presentation.colorLegend.kind !=
+                ColorLegendKind::Distance) {
+            return;
+        }
+        hasTarget = true;
+        presentationChanged =
+            presentationChanged ||
+            mesh.presentation.colorLegend.maximum !=
+                options.distanceDisplayThreshold ||
+            mesh.presentation.colorLegend.distanceMapping !=
+                options.distanceColorMapping;
+    }
+    if (!hasTarget || !presentationChanged)
+        return;
+
+    const OperationResult result = commands_.startAnalysis(
+        SurfaceComparisonMetric::DistanceToReference,
+        options);
+    if (result.ok) {
+        analysisStatusLabel_->setText(tr("Updating distance colors…"));
+        analysisStatusLabel_->show();
+    }
     reportFailure(result);
     refreshFromState();
 }
