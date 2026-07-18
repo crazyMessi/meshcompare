@@ -27,6 +27,7 @@ public:
     ~MeshLabViewport() override;
 
     CameraPose captureCamera() const;
+    OperationResult captureImage(QImage& image);
     OperationResult restoreCamera(const CameraPose& pose);
     QString viewToText() const;
     void resetCamera();

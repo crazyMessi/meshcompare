@@ -353,7 +353,9 @@ private slots:
         viewport.repaint();
         QApplication::processEvents();
 
-        const QImage frame = viewport.grabFrameBuffer();
+        QImage frame;
+        const OperationResult captured = viewport.captureImage(frame);
+        QVERIFY2(captured.ok, qPrintable(captured.error));
         QVERIFY(!frame.isNull());
         QFont font = viewport.font();
         font.setPointSizeF(qMax(9.0, font.pointSizeF()));

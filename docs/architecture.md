@@ -173,6 +173,8 @@ Analysis runs in a bounded, cancellable background work queue. Results for all t
 The camera panel lists the saved poses associated with the current workspace UID and supports:
 
 - Saving the complete current camera state.
+- Saving the current camera state while copying a Retina-resolution screenshot
+  of the complete 3D viewport area to the system clipboard.
 - Applying a selected saved pose.
 - Deleting a selected saved pose.
 - Automatically applying the latest pose after mesh import.

@@ -79,6 +79,15 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(second->size(), first->size(), 2000);
         QVERIFY(first->width() > 100);
         QVERIFY(first->height() > 30);
+        QImage screenshot;
+        const OperationResult captured = adapter.captureImage(screenshot);
+        QVERIFY2(captured.ok, qPrintable(captured.error));
+        QVERIFY(!screenshot.isNull());
+        QCOMPARE(
+            screenshot.size(),
+            QSize(
+                qRound(host.width() * host.devicePixelRatioF()),
+                qRound(host.height() * host.devicePixelRatioF())));
         const QString cameraBefore = first->captureCamera().viewStateXml;
 
         first->trackballStep(QStringLiteral("Horizontal +"));

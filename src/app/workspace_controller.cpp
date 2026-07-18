@@ -660,6 +660,20 @@ OperationResult WorkspaceController::setCameraPoseUid(const QString& uid)
 
 OperationResult WorkspaceController::saveCurrentCameraPose(QString* savedViewId)
 {
+    return saveCurrentCameraPoseImpl(nullptr, savedViewId);
+}
+
+OperationResult WorkspaceController::saveCurrentCameraPoseWithScreenshot(
+    QImage& screenshot,
+    QString* savedViewId)
+{
+    return saveCurrentCameraPoseImpl(&screenshot, savedViewId);
+}
+
+OperationResult WorkspaceController::saveCurrentCameraPoseImpl(
+    QImage* screenshot,
+    QString* savedViewId)
+{
     const OperationResult validation = validateCameraMutation();
     if (!validation.ok) {
         publishCameraSaveFinished(validation);
@@ -667,6 +681,21 @@ OperationResult WorkspaceController::saveCurrentCameraPose(QString* savedViewId)
     }
 
     QScopedValueRollback<bool> commandGuard(cameraCommandInProgress_, true);
+    QImage captured;
+    if (screenshot != nullptr) {
+        const OperationResult imageResult = renderer_.captureImage(captured);
+        if (!imageResult.ok) {
+            publishCameraSaveFinished(imageResult);
+            return imageResult;
+        }
+        if (captured.isNull()) {
+            const OperationResult result = OperationResult::failure(
+                QStringLiteral("The renderer returned an empty screenshot."));
+            publishCameraSaveFinished(result);
+            return result;
+        }
+    }
+
     const CameraPose pose = renderer_.captureCamera();
     QString committedViewId;
     const OperationResult saved =
@@ -675,6 +704,9 @@ OperationResult WorkspaceController::saveCurrentCameraPose(QString* savedViewId)
         publishCameraSaveFinished(saved);
         return saved;
     }
+
+    if (screenshot != nullptr)
+        *screenshot = std::move(captured);
     if (savedViewId != nullptr)
         *savedViewId = committedViewId;
     const OperationResult result = OperationResult::success();

@@ -263,6 +263,12 @@ public:
     }
 
     CameraPose captureCamera() const override { return camera_; }
+    OperationResult captureImage(QImage& image) override
+    {
+        Q_UNUSED(image);
+        return OperationResult::failure(
+            QStringLiteral("Lifecycle renderer image capture is unavailable."));
+    }
     OperationResult restoreCamera(const CameraPose& pose) override
     {
         camera_ = pose;

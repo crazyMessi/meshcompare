@@ -3,6 +3,7 @@
 #include <functional>
 
 #include <QApplication>
+#include <QImage>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -73,6 +74,21 @@ public:
         return saveResult;
     }
 
+    OperationResult saveCurrentCameraPoseWithScreenshot(
+        QImage& screenshot,
+        QString* savedViewId) override
+    {
+        ++saveWithScreenshotCalls;
+        if (!saveWithScreenshotResult.ok)
+            return saveWithScreenshotResult;
+        if (saveWithScreenshotAction)
+            saveWithScreenshotAction();
+        screenshot = screenshotToCopy;
+        if (savedViewId != nullptr)
+            *savedViewId = QStringLiteral("view_screenshot");
+        return saveWithScreenshotResult;
+    }
+
     OperationResult applyCameraPose(const QString& viewId) override
     {
         if (applyAction)
@@ -91,18 +107,22 @@ public:
 
     CameraPanelSnapshot snapshot;
     OperationResult saveResult = OperationResult::success();
+    OperationResult saveWithScreenshotResult = OperationResult::success();
     OperationResult setUidResult = OperationResult::success();
     OperationResult applyResult = OperationResult::success();
     OperationResult deleteResult = OperationResult::success();
     std::function<void()> saveAction;
+    std::function<void()> saveWithScreenshotAction;
     std::function<void()> applyAction;
     std::function<void()> deleteAction;
     mutable int snapshotCalls = 0;
     int saveCalls = 0;
+    int saveWithScreenshotCalls = 0;
     int setUidCalls = 0;
     QStringList setUids;
     QStringList applyViewIds;
     QStringList deleteViewIds;
+    QImage screenshotToCopy;
 };
 
 struct Controls {
@@ -110,6 +130,7 @@ struct Controls {
     QLineEdit* uidInput = nullptr;
     QListWidget* poses = nullptr;
     QPushButton* save = nullptr;
+    QPushButton* saveAndCopyScreenshot = nullptr;
     QPushButton* apply = nullptr;
     QPushButton* remove = nullptr;
 };
@@ -125,6 +146,8 @@ Controls controls(CameraPanel& panel)
         panel.findChild<QListWidget*>(QStringLiteral("cameraPoseList"));
     result.save = panel.findChild<QPushButton*>(
         QStringLiteral("saveCameraPoseButton"));
+    result.saveAndCopyScreenshot = panel.findChild<QPushButton*>(
+        QStringLiteral("saveCameraPoseAndCopyScreenshotButton"));
     result.apply = panel.findChild<QPushButton*>(
         QStringLiteral("applyCameraPoseButton"));
     result.remove = panel.findChild<QPushButton*>(
@@ -184,11 +207,16 @@ private slots:
             QStringLiteral("view_001"));
         QVERIFY(ui.save != nullptr);
         QCOMPARE(ui.save->text(), QStringLiteral("Save Current Pose"));
+        QVERIFY(ui.saveAndCopyScreenshot != nullptr);
+        QCOMPARE(
+            ui.saveAndCopyScreenshot->text(),
+            QStringLiteral("Save Pose & Copy Screenshot"));
         QVERIFY(ui.apply != nullptr);
         QCOMPARE(ui.apply->text(), QStringLiteral("Apply"));
         QVERIFY(ui.remove != nullptr);
         QCOMPARE(ui.remove->text(), QStringLiteral("Delete"));
         QVERIFY(ui.save->isEnabled());
+        QVERIFY(ui.saveAndCopyScreenshot->isEnabled());
         QVERIFY(!ui.apply->isEnabled());
         QVERIFY(!ui.remove->isEnabled());
         QCOMPARE(commands.snapshotCalls, 1);
@@ -218,6 +246,39 @@ private slots:
         QCOMPARE(commands.applyViewIds, QStringList({QStringLiteral("view_002")}));
     }
 
+    void saveAndCopyScreenshotUsesOneCombinedCommandAndRefreshes()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral(
+            "123e4567-e89b-12d3-a456-426614174000");
+        commands.screenshotToCopy =
+            QImage(3, 2, QImage::Format_ARGB32_Premultiplied);
+        commands.screenshotToCopy.fill(QColor(24, 96, 180));
+        commands.saveWithScreenshotAction = [&commands] {
+            commands.snapshot.poses.append(summary(
+                QStringLiteral("view_screenshot"),
+                QStringLiteral("latest")));
+        };
+        QImage copiedImage;
+        CameraPanelServices services;
+        services.copyImageToClipboard = [&copiedImage](const QImage& image) {
+            copiedImage = image;
+            return true;
+        };
+        CameraPanel panel(state, commands, nullptr, std::move(services));
+        const Controls ui = controls(panel);
+
+        QTest::mouseClick(ui.saveAndCopyScreenshot, Qt::LeftButton);
+
+        QCOMPARE(commands.saveWithScreenshotCalls, 1);
+        QCOMPARE(commands.saveCalls, 0);
+        QCOMPARE(commands.snapshotCalls, 2);
+        QCOMPARE(ui.poses->count(), 1);
+        QCOMPARE(copiedImage, commands.screenshotToCopy);
+    }
+
     void missingUidPreloadsProjectNameAndCanSaveImmediately()
     {
         WorkspaceState state;
@@ -237,6 +298,7 @@ private slots:
         QCOMPARE(ui.uidInput->text(), QStringLiteral("comparison_run-42"));
         QCOMPARE(ui.poses->count(), 0);
         QVERIFY(ui.save->isEnabled());
+        QVERIFY(ui.saveAndCopyScreenshot->isEnabled());
         QVERIFY(!ui.apply->isEnabled());
         QVERIFY(!ui.remove->isEnabled());
 
@@ -263,6 +325,7 @@ private slots:
             QStringLiteral("Enter a workspace UID."));
         QVERIFY(ui.uidInput->text().isEmpty());
         QVERIFY(!ui.save->isEnabled());
+        QVERIFY(!ui.saveAndCopyScreenshot->isEnabled());
         QVERIFY(!ui.apply->isEnabled());
         QVERIFY(!ui.remove->isEnabled());
     }
@@ -284,6 +347,7 @@ private slots:
 
         QCOMPARE(ui.poses->count(), 1);
         QVERIFY(!ui.save->isEnabled());
+        QVERIFY(!ui.saveAndCopyScreenshot->isEnabled());
         QVERIFY(!ui.apply->isEnabled());
         QVERIFY(!ui.remove->isEnabled());
     }
@@ -348,6 +412,15 @@ private slots:
         QCOMPARE(status.takeFirst().at(0).toString(), QStringLiteral("Save failed."));
         QCOMPARE(commands.snapshotCalls, 1);
 
+        commands.saveWithScreenshotResult =
+            OperationResult::failure(QStringLiteral("Capture failed."));
+        QTest::mouseClick(ui.saveAndCopyScreenshot, Qt::LeftButton);
+        QCOMPARE(status.count(), 1);
+        QCOMPARE(
+            status.takeFirst().at(0).toString(),
+            QStringLiteral("Capture failed."));
+        QCOMPARE(commands.snapshotCalls, 1);
+
         ui.poses->setCurrentRow(0);
         commands.applyResult =
             OperationResult::failure(QStringLiteral("Apply failed."));
@@ -363,6 +436,38 @@ private slots:
         QCOMPARE(status.takeFirst().at(0).toString(), QStringLiteral("Delete failed."));
         QCOMPARE(commands.snapshotCalls, 1);
         QCOMPARE(ui.poses->count(), 1);
+    }
+
+    void clipboardFailureReportsAfterRefreshingTheSavedPose()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral(
+            "123e4567-e89b-12d3-a456-426614174000");
+        commands.screenshotToCopy = QImage(2, 2, QImage::Format_RGB32);
+        commands.screenshotToCopy.fill(Qt::green);
+        commands.saveWithScreenshotAction = [&commands] {
+            commands.snapshot.poses.append(summary(
+                QStringLiteral("view_screenshot"),
+                QStringLiteral("latest")));
+        };
+        CameraPanelServices services;
+        services.copyImageToClipboard = [](const QImage&) { return false; };
+        CameraPanel panel(state, commands, nullptr, std::move(services));
+        const Controls ui = controls(panel);
+        QSignalSpy status(&panel, &CameraPanel::statusMessage);
+
+        QTest::mouseClick(ui.saveAndCopyScreenshot, Qt::LeftButton);
+
+        QCOMPARE(commands.saveWithScreenshotCalls, 1);
+        QCOMPARE(commands.snapshotCalls, 2);
+        QCOMPARE(ui.poses->count(), 1);
+        QCOMPARE(status.count(), 1);
+        QCOMPARE(
+            status.takeFirst().at(0).toString(),
+            QStringLiteral(
+                "Camera pose was saved, but the screenshot could not be copied."));
     }
 
     void snapshotFailureEmitsOneStatusAndLeavesActionsDisabled()
@@ -384,6 +489,7 @@ private slots:
             QStringLiteral("Camera list failed."));
         QCOMPARE(ui.poses->count(), 0);
         QVERIFY(!ui.save->isEnabled());
+        QVERIFY(!ui.saveAndCopyScreenshot->isEnabled());
         QVERIFY(!ui.apply->isEnabled());
         QVERIFY(!ui.remove->isEnabled());
     }

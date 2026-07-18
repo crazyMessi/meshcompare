@@ -6,6 +6,7 @@
 
 #include <QObject>
 #include <QHash>
+#include <QImage>
 #include <QPointer>
 
 #include "viewport_factory.h"
@@ -43,6 +44,7 @@ public:
     void setColorLegends(
         const QVector<MeshColorPresentationUpdate>& updates);
     CameraPose captureCamera() const;
+    OperationResult captureImage(QImage& image);
     OperationResult restoreCamera(const CameraPose& pose);
     void resetCamera();
     void setDiagnostic(DiagnosticFlag flag, bool enabled);

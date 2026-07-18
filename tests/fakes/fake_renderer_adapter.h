@@ -179,6 +179,21 @@ public:
         return OperationResult::success();
     }
     CameraPose captureCamera() const override { return m_camera; }
+    OperationResult captureImage(QImage& image) override
+    {
+        ++m_captureImageCount;
+        if (!m_nextCaptureImageError.isEmpty()) {
+            const QString error = m_nextCaptureImageError;
+            m_nextCaptureImageError.clear();
+            return OperationResult::failure(error);
+        }
+        if (m_captureImage.isNull()) {
+            return OperationResult::failure(
+                QStringLiteral("Fake renderer has no capture image."));
+        }
+        image = m_captureImage;
+        return OperationResult::success();
+    }
     OperationResult restoreCamera(const CameraPose& pose) override
     {
         ++m_restoreCount;
@@ -232,6 +247,7 @@ public:
     int overlayAttemptCount() const { return m_overlayAttemptCount; }
     int overlayUpdateCount() const { return m_overlayUpdateCount; }
     int restoreCount() const { return m_restoreCount; }
+    int captureImageCount() const { return m_captureImageCount; }
     CameraPose camera() const { return m_camera; }
     CameraPose restoredPose() const { return m_camera; }
     CameraPose lastRestoreAttempt() const { return m_lastRestoreAttempt; }
@@ -252,7 +268,12 @@ public:
         m_nextVisibilityError = error;
     }
     void failNextRestore(const QString& error) { m_nextRestoreError = error; }
+    void failNextCaptureImage(const QString& error)
+    {
+        m_nextCaptureImageError = error;
+    }
     void setCamera(const CameraPose& pose) { m_camera = pose; }
+    void setCaptureImage(QImage image) { m_captureImage = std::move(image); }
     void setTrace(QStringList* trace) { m_trace = trace; }
     void setPrepareObserver(std::function<void()> observer)
     {
@@ -326,12 +347,14 @@ private:
 
     RendererEvents m_events;
     CameraPose m_camera;
+    QImage m_captureImage;
     QString m_nextMountError;
     QString m_nextPrepareError;
     QString m_nextPresentationError;
     QString m_nextOverlayError;
     QString m_nextVisibilityError;
     QString m_nextRestoreError;
+    QString m_nextCaptureImageError;
     QStringList* m_trace = nullptr;
     std::function<void()> m_prepareObserver;
     std::function<void()> m_commitObserver;
@@ -367,5 +390,6 @@ private:
     int m_visibilityAttemptCount = 0;
     int m_visibilityUpdateCount = 0;
     int m_restoreCount = 0;
+    int m_captureImageCount = 0;
     bool m_resourceAvailableDuringClear = false;
 };

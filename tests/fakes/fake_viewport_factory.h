@@ -41,6 +41,12 @@ public:
 
     QWidget* widget() const override { return widget_.data(); }
     CameraPose captureCamera() const override { return camera_; }
+    OperationResult captureImage(QImage& image) override
+    {
+        Q_UNUSED(image);
+        return OperationResult::failure(
+            QStringLiteral("The fake viewport has no capture image."));
+    }
     OperationResult restoreCamera(const CameraPose& pose) override
     {
         camera_ = pose;

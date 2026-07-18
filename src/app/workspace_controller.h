@@ -65,6 +65,9 @@ public:
     OperationResult setCameraPoseUid(const QString& uid) override;
     OperationResult saveCurrentCameraPose(
         QString* savedViewId = nullptr) override;
+    OperationResult saveCurrentCameraPoseWithScreenshot(
+        QImage& screenshot,
+        QString* savedViewId = nullptr) override;
     OperationResult applyCameraPose(const QString& viewId) override;
     OperationResult deleteCameraPose(const QString& viewId) override;
 
@@ -100,6 +103,9 @@ private:
     QVector<MeshAnalysisOverlayUpdate> committedAnalysisOverlays() const;
     QString restoreLatestCameraPose();
     OperationResult validateCameraMutation() const;
+    OperationResult saveCurrentCameraPoseImpl(
+        QImage* screenshot,
+        QString* savedViewId);
 
     WorkspaceState& state_;
     IMeshImportService& importer_;

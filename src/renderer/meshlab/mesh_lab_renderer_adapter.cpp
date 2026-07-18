@@ -47,6 +47,14 @@ public:
     {
         return viewport_.isNull() ? CameraPose{} : viewport_->captureCamera();
     }
+    OperationResult captureImage(QImage& image) override
+    {
+        if (viewport_.isNull()) {
+            return OperationResult::failure(
+                QStringLiteral("The viewport is no longer available."));
+        }
+        return viewport_->captureImage(image);
+    }
     OperationResult restoreCamera(const CameraPose& pose) override
     {
         if (viewport_.isNull())
@@ -212,6 +220,15 @@ public:
     CameraPose captureCamera() const
     {
         return grid_ ? grid_->captureCamera() : CameraPose{};
+    }
+
+    OperationResult captureImage(QImage& image)
+    {
+        if (!grid_) {
+            return OperationResult::failure(
+                QStringLiteral("No committed viewport is available for image capture."));
+        }
+        return grid_->captureImage(image);
     }
 
     OperationResult restoreCamera(const CameraPose& pose)
@@ -460,6 +477,15 @@ OperationResult MeshLabRendererAdapter::setAnalysisOverlays(
 CameraPose MeshLabRendererAdapter::captureCamera() const
 {
     return committed_ ? committed_->captureCamera() : CameraPose{};
+}
+
+OperationResult MeshLabRendererAdapter::captureImage(QImage& image)
+{
+    if (!committed_) {
+        return OperationResult::failure(
+            QStringLiteral("No committed scene is available for image capture."));
+    }
+    return committed_->captureImage(image);
 }
 
 OperationResult MeshLabRendererAdapter::restoreCamera(const CameraPose& pose)

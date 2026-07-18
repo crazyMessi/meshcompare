@@ -1,6 +1,9 @@
 #pragma once
 
+#include <functional>
+
 #include <QFrame>
+#include <QImage>
 #include <QString>
 
 class ICameraCommands;
@@ -12,6 +15,11 @@ class QWidget;
 class WorkspaceState;
 struct OperationResult;
 
+struct CameraPanelServices
+{
+    std::function<bool(const QImage&)> copyImageToClipboard;
+};
+
 class CameraPanel final : public QFrame
 {
     Q_OBJECT
@@ -20,7 +28,8 @@ public:
     explicit CameraPanel(
         WorkspaceState& state,
         ICameraCommands& commands,
-        QWidget* parent = nullptr);
+        QWidget* parent = nullptr,
+        CameraPanelServices services = {});
 
     void refreshFromState();
 
@@ -37,10 +46,12 @@ private:
 
     WorkspaceState& state_;
     ICameraCommands& commands_;
+    CameraPanelServices services_;
     QLabel* uuidLabel_ = nullptr;
     QLineEdit* uidInput_ = nullptr;
     QListWidget* poseList_ = nullptr;
     QPushButton* saveButton_ = nullptr;
+    QPushButton* saveAndCopyScreenshotButton_ = nullptr;
     QPushButton* applyButton_ = nullptr;
     QPushButton* deleteButton_ = nullptr;
     QString workspaceUuid_;

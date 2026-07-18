@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <QEvent>
+#include <QPainter>
 #include <QRectF>
 #include <QScopedValueRollback>
 #include <QSet>
@@ -516,6 +517,61 @@ ColorLegendSpec ViewportGrid::overlayColorLegend() const
 CameraPose ViewportGrid::captureCamera() const
 {
     return viewports_.empty() ? CameraPose{} : viewports_.front()->captureCamera();
+}
+
+OperationResult ViewportGrid::captureImage(QImage& image)
+{
+    if (container_.isNull() || viewports_.empty()) {
+        return OperationResult::failure(
+            QStringLiteral("No committed viewport is available for image capture."));
+    }
+    if (container_->size().isEmpty()) {
+        return OperationResult::failure(
+            QStringLiteral("The viewport area has no drawable size."));
+    }
+
+    const qreal devicePixelRatio = container_->devicePixelRatioF();
+    if (!std::isfinite(devicePixelRatio) || devicePixelRatio <= 0.0) {
+        return OperationResult::failure(
+            QStringLiteral("The viewport has an invalid display scale."));
+    }
+    const QSize pixelSize(
+        qMax(1, qRound(container_->width() * devicePixelRatio)),
+        qMax(1, qRound(container_->height() * devicePixelRatio)));
+    QImage captured(pixelSize, QImage::Format_RGB32);
+    captured.setDevicePixelRatio(devicePixelRatio);
+    captured.fill(container_->palette().color(QPalette::Window));
+    QPainter painter(&captured);
+
+    for (std::size_t index = 0; index < viewports_.size(); ++index) {
+        QWidget* widget = viewports_[index]->widget();
+        if (widget == nullptr || widget->size().isEmpty()) {
+            return OperationResult::failure(QStringLiteral(
+                "Viewport %1 has no drawable image area.").arg(index + 1));
+        }
+
+        QImage viewportImage;
+        const OperationResult result =
+            viewports_[index]->captureImage(viewportImage);
+        if (!result.ok) {
+            return OperationResult::failure(QStringLiteral(
+                "Could not capture viewport %1: %2")
+                    .arg(index + 1)
+                    .arg(result.error));
+        }
+        if (viewportImage.isNull()) {
+            return OperationResult::failure(QStringLiteral(
+                "Viewport %1 returned an empty image.").arg(index + 1));
+        }
+
+        const QRect target(
+            widget->mapTo(container_.data(), QPoint(0, 0)),
+            widget->size());
+        painter.drawImage(target, viewportImage);
+    }
+    painter.end();
+    image = std::move(captured);
+    return OperationResult::success();
 }
 
 OperationResult ViewportGrid::restoreCamera(const CameraPose& pose)

@@ -47,6 +47,12 @@ public:
         return OperationResult::success();
     }
     CameraPose captureCamera() const override { return {}; }
+    OperationResult captureImage(QImage& image) override
+    {
+        Q_UNUSED(image);
+        return OperationResult::failure(
+            QStringLiteral("Diagnostics renderer image capture is unavailable."));
+    }
     OperationResult restoreCamera(const CameraPose&) override
     {
         return OperationResult::success();

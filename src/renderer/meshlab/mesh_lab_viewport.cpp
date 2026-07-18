@@ -994,6 +994,24 @@ CameraPose MeshLabViewport::captureCamera() const
     return {viewToText()};
 }
 
+OperationResult MeshLabViewport::captureImage(QImage& image)
+{
+    if (!isVisible() || !hasUsableOpenGLContexts() ||
+        openGLInitializationState_ != OpenGLInitializationState::Ready) {
+        return OperationResult::failure(
+            QStringLiteral("The viewport is not ready for image capture."));
+    }
+
+    repaint();
+    QImage captured = grabFrameBuffer(false);
+    if (captured.isNull()) {
+        return OperationResult::failure(
+            QStringLiteral("The viewport returned an empty framebuffer image."));
+    }
+    image = std::move(captured);
+    return OperationResult::success();
+}
+
 OperationResult MeshLabViewport::restoreCamera(const CameraPose& pose)
 {
     QDomDocument document(QStringLiteral("ViewState"));

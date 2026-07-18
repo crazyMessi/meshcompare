@@ -34,6 +34,7 @@ public:
     OperationResult setAnalysisOverlays(
         const QVector<MeshAnalysisOverlayUpdate>& updates) override;
     CameraPose captureCamera() const override;
+    OperationResult captureImage(QImage& image) override;
     OperationResult restoreCamera(const CameraPose& pose) override;
     void resetCamera() override;
     void setDiagnostic(DiagnosticFlag flag, bool enabled) override;

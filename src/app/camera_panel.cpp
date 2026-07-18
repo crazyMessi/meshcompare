@@ -3,7 +3,11 @@
 #include "camera_commands.h"
 #include "../core/workspace_state.h"
 
+#include <utility>
+
+#include <QClipboard>
 #include <QFont>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLayout>
@@ -18,9 +22,23 @@
 CameraPanel::CameraPanel(
     WorkspaceState& state,
     ICameraCommands& commands,
-    QWidget* parent)
-    : QFrame(parent), state_(state), commands_(commands)
+    QWidget* parent,
+    CameraPanelServices services)
+    : QFrame(parent),
+      state_(state),
+      commands_(commands),
+      services_(std::move(services))
 {
+    if (!services_.copyImageToClipboard) {
+        services_.copyImageToClipboard = [](const QImage& image) {
+            QClipboard* clipboard = QGuiApplication::clipboard();
+            if (clipboard == nullptr)
+                return false;
+            clipboard->setImage(image, QClipboard::Clipboard);
+            return true;
+        };
+    }
+
     setObjectName(QStringLiteral("cameraPanel"));
     setWindowModality(Qt::NonModal);
     setFrameShape(QFrame::StyledPanel);
@@ -53,6 +71,14 @@ CameraPanel::CameraPanel(
     saveButton_ = new QPushButton(tr("Save Current Pose"), this);
     saveButton_->setObjectName(QStringLiteral("saveCameraPoseButton"));
     root->addWidget(saveButton_);
+
+    saveAndCopyScreenshotButton_ =
+        new QPushButton(tr("Save Pose & Copy Screenshot"), this);
+    saveAndCopyScreenshotButton_->setObjectName(
+        QStringLiteral("saveCameraPoseAndCopyScreenshotButton"));
+    saveAndCopyScreenshotButton_->setToolTip(
+        tr("Save the current pose and copy the complete 3D viewport area"));
+    root->addWidget(saveAndCopyScreenshotButton_);
 
     poseList_ = new QListWidget(this);
     poseList_->setObjectName(QStringLiteral("cameraPoseList"));
@@ -97,6 +123,32 @@ CameraPanel::CameraPanel(
         }
         refreshFromState();
     });
+    connect(
+        saveAndCopyScreenshotButton_,
+        &QPushButton::clicked,
+        this,
+        [this] {
+            const OperationResult selectedUid = commitUidInput(false);
+            if (!selectedUid.ok) {
+                reportFailure(selectedUid);
+                return;
+            }
+
+            QImage screenshot;
+            const OperationResult result =
+                commands_.saveCurrentCameraPoseWithScreenshot(screenshot);
+            if (!result.ok) {
+                reportFailure(result);
+                return;
+            }
+
+            refreshFromState();
+            if (screenshot.isNull() ||
+                !services_.copyImageToClipboard(screenshot)) {
+                reportFailure(OperationResult::failure(tr(
+                    "Camera pose was saved, but the screenshot could not be copied.")));
+            }
+        });
     connect(
         applyButton_,
         &QPushButton::clicked,
@@ -221,6 +273,7 @@ void CameraPanel::updateActionState()
         enteredUid.compare(workspaceUuid_, Qt::CaseInsensitive) == 0;
     const bool hasSelection = !selectedViewId().isEmpty();
     saveButton_->setEnabled(ready && hasUidInput);
+    saveAndCopyScreenshotButton_->setEnabled(ready && hasUidInput);
     applyButton_->setEnabled(ready && inputMatchesSnapshot && hasSelection);
     deleteButton_->setEnabled(ready && inputMatchesSnapshot && hasSelection);
 }

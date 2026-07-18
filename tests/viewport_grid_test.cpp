@@ -7,6 +7,7 @@
 
 #include <QPointer>
 #include <QHash>
+#include <QImage>
 #include <QWidget>
 
 #include <common/ml_document/mesh_document.h>
@@ -148,6 +149,15 @@ public:
         return OperationResult::success();
     }
     CameraPose captureCamera() const override { return restoredPose_; }
+    OperationResult captureImage(QImage& image) override
+    {
+        if (captureImage_.isNull()) {
+            return OperationResult::failure(
+                QStringLiteral("The fake viewport has no capture image."));
+        }
+        image = captureImage_;
+        return OperationResult::success();
+    }
     OperationResult restoreCamera(const CameraPose& value) override
     {
         ++restoreCount_;
@@ -227,6 +237,7 @@ public:
         emitCameraChangedOnRestore_ = enabled;
     }
     void setPose(const CameraPose& value) { restoredPose_ = value; }
+    void setCaptureImage(QImage image) { captureImage_ = std::move(image); }
     void failNextRestore(const QString& error) { nextRestoreError_ = error; }
 
 private:
@@ -238,6 +249,7 @@ private:
     int& initializationCount_;
     QString initializationError_;
     CameraPose restoredPose_;
+    QImage captureImage_;
     int restoreCount_ = 0;
     bool selected_ = false;
     bool reference_ = false;
@@ -376,6 +388,61 @@ private slots:
         QCOMPARE(
             factory.viewport(0).label(),
             QStringLiteral("Overlay · 2/3 visible"));
+    }
+
+    void captureImageComposesEveryVisibleGridViewport()
+    {
+        QWidget host;
+        host.resize(402, 200);
+        host.show();
+        TestRenderScene renderScene;
+        GridFakeViewportFactory factory;
+        RecordingCallbacks callbacks;
+        ViewportGrid grid(factory, callbacks);
+        const SceneDescriptor descriptor = scene(2);
+        QVERIFY(grid.create(
+                    &host,
+                    descriptor,
+                    renderScene.dependencies(),
+                    descriptor.referenceId)
+                    .ok);
+        QImage referenceImage(8, 8, QImage::Format_RGB32);
+        referenceImage.fill(QColor(205, 52, 67));
+        QImage candidateImage(8, 8, QImage::Format_RGB32);
+        candidateImage.fill(QColor(36, 116, 194));
+        factory.viewport(0).setCaptureImage(referenceImage);
+        factory.viewport(1).setCaptureImage(candidateImage);
+        grid.showCommitted();
+        QApplication::processEvents();
+
+        QImage captured;
+        const OperationResult result = grid.captureImage(captured);
+
+        QVERIFY2(result.ok, qPrintable(result.error));
+        QVERIFY(!captured.isNull());
+        const auto sampledColor = [&captured, &host](QWidget* viewport) {
+            const QPoint logicalCenter =
+                viewport->mapTo(&host, viewport->rect().center());
+            const int x = qBound(
+                0,
+                qRound(
+                    logicalCenter.x() *
+                    (qreal(captured.width()) / host.width())),
+                captured.width() - 1);
+            const int y = qBound(
+                0,
+                qRound(
+                    logicalCenter.y() *
+                    (qreal(captured.height()) / host.height())),
+                captured.height() - 1);
+            return captured.pixelColor(x, y);
+        };
+        QCOMPARE(
+            sampledColor(factory.viewport(0).widget()),
+            QColor(205, 52, 67));
+        QCOMPARE(
+            sampledColor(factory.viewport(1).widget()),
+            QColor(36, 116, 194));
     }
 
     void overlayVisibilityControlsAssignedMeshesAndScoreSummary()

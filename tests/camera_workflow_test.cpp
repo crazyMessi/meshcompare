@@ -394,6 +394,78 @@ private slots:
         QCOMPARE(controller.cameraPanelSnapshot().poses.size(), 1);
     }
 
+    void saveWithScreenshotCapturesTheViewportAndPersistsTheCurrentPose()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(staged(
+            {entry(1, QStringLiteral("reference_gt.obj"), {UuidA}),
+             entry(2, QStringLiteral("candidate.obj"))}));
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        FakeCameraPoseStore store;
+        WorkspaceController controller(state, importer, renderer, comparer, store);
+        QVERIFY(importWorkspace(controller).result.ok);
+        renderer.setCamera(pose(QStringLiteral("captured-with-screenshot")));
+        QImage expected(5, 3, QImage::Format_RGB32);
+        expected.fill(QColor(72, 140, 211));
+        renderer.setCaptureImage(expected);
+
+        QImage screenshot;
+        QString savedViewId;
+        const OperationResult saved =
+            controller.saveCurrentCameraPoseWithScreenshot(
+                screenshot,
+                &savedViewId);
+
+        QVERIFY2(saved.ok, qPrintable(saved.error));
+        QCOMPARE(savedViewId, QStringLiteral("view_001"));
+        QCOMPARE(renderer.captureImageCount(), 1);
+        QCOMPARE(screenshot, expected);
+        QCOMPARE(store.lastSaveUuid(), UuidA);
+        QCOMPARE(
+            store.lastSavedPose().viewStateXml,
+            QStringLiteral("captured-with-screenshot"));
+    }
+
+    void screenshotCaptureFailureDoesNotPersistOrMutateOutputs()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(staged(
+            {entry(1, QStringLiteral("reference_gt.obj"), {UuidA}),
+             entry(2, QStringLiteral("candidate.obj"))}));
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        FakeCameraPoseStore store;
+        WorkspaceController controller(state, importer, renderer, comparer, store);
+        QVERIFY(importWorkspace(controller).result.ok);
+        store.resetObservations();
+        renderer.failNextCaptureImage(QStringLiteral("framebuffer unavailable"));
+        QSignalSpy saveSpy(
+            &controller,
+            &WorkspaceController::cameraSaveFinished);
+        QImage screenshot(2, 2, QImage::Format_RGB32);
+        screenshot.fill(Qt::magenta);
+        const QImage unchangedScreenshot = screenshot;
+        QString savedViewId = QStringLiteral("unchanged");
+
+        const OperationResult saved =
+            controller.saveCurrentCameraPoseWithScreenshot(
+                screenshot,
+                &savedViewId);
+
+        QVERIFY(!saved.ok);
+        QCOMPARE(saved.error, QStringLiteral("framebuffer unavailable"));
+        QCOMPARE(renderer.captureImageCount(), 1);
+        QCOMPARE(store.saveCount(), 0);
+        QCOMPARE(screenshot, unchangedScreenshot);
+        QCOMPARE(savedViewId, QStringLiteral("unchanged"));
+        QCOMPARE(saveSpy.size(), 1);
+        QCOMPARE(saveSpy.at(0).at(0).toBool(), false);
+        QCOMPARE(
+            saveSpy.at(0).at(1).toString(),
+            QStringLiteral("framebuffer unavailable"));
+    }
+
     void cameraSaveAndApplyPublishDiagnosticsOutcomes()
     {
         WorkspaceState state;

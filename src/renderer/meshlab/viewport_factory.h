@@ -2,6 +2,8 @@
 
 #include <memory>
 
+#include <QImage>
+
 #include "../../core/meshcompare_types.h"
 #include "viewport_dependencies.h"
 
@@ -18,6 +20,7 @@ public:
     virtual QWidget* widget() const = 0;
     virtual OperationResult initializeForScenePreparation() = 0;
     virtual CameraPose captureCamera() const = 0;
+    virtual OperationResult captureImage(QImage& image) = 0;
     virtual OperationResult restoreCamera(const CameraPose& pose) = 0;
     virtual void resetCamera() = 0;
     virtual void setLabel(QString label) = 0;

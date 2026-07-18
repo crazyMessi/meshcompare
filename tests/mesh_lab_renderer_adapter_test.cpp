@@ -325,6 +325,25 @@ class MeshLabRendererAdapterTest : public QObject
     Q_OBJECT
 
 private slots:
+    void imageCaptureRequiresACommittedScene()
+    {
+        FakeViewportFactory factory;
+        QWidget host;
+        MeshLabRendererAdapter adapter(factory);
+        QVERIFY(adapter.mount(&host).ok);
+        QImage image(2, 2, QImage::Format_RGB32);
+        image.fill(Qt::magenta);
+        const QImage unchanged = image;
+
+        const OperationResult result = adapter.captureImage(image);
+
+        QVERIFY(!result.ok);
+        QVERIFY(result.error.contains(
+            QStringLiteral("committed scene"),
+            Qt::CaseInsensitive));
+        QCOMPARE(image, unchanged);
+    }
+
     void failedPreparationKeepsCommittedScene()
     {
         FakeViewportFactory factory;

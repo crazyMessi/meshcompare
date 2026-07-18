@@ -2,6 +2,8 @@
 
 #include <functional>
 
+#include <QImage>
+
 #include "mesh_resource_provider.h"
 
 class QWidget;
@@ -32,6 +34,7 @@ public:
     virtual OperationResult setAnalysisOverlays(
         const QVector<MeshAnalysisOverlayUpdate>& updates) = 0;
     virtual CameraPose captureCamera() const = 0;
+    virtual OperationResult captureImage(QImage& image) = 0;
     virtual OperationResult restoreCamera(const CameraPose& pose) = 0;
     virtual void resetCamera() = 0;
     virtual void setDiagnostic(DiagnosticFlag flag, bool enabled) = 0;
