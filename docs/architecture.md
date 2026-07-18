@@ -153,11 +153,13 @@ scores use the square-root-strength orange map from the reference workflow;
 unaffected vertices use RGBA `(180, 180, 180, 255)`. The default random seed is
 `0`.
 
-Distance mapping and maximum, plus Double Layer sample count, neighbor count,
+Distance mapping and threshold, plus Double Layer sample count, neighbor count,
 and opposite normal angle, live in a collapsed, mode-specific “Advanced
-Parameters” section. Raw analysis fields are kept separate from presentation
-colors so a Distance mapping or maximum change can remap cached distances
-without recomputing geometry.
+Parameters” section. A Distance target badge reports the percentage of target
+vertices whose one-way nearest-surface distance is strictly greater than the
+configured threshold. Raw analysis fields are kept separate from presentation
+colors so a Distance mapping or threshold change can remap cached distances
+and recompute that percentage without recomputing geometry.
 
 Every committed Distance target draws a matching color legend in the viewport
 overlay. The legend samples the same mapping and Viridis implementation as the

@@ -30,7 +30,7 @@ struct SurfaceComparisonOptions {
     float distanceThreshold = 0.004f;
     bool useAbsoluteNormalDot = true;
     std::uint32_t randomSeed = 0x4d595df4u;
-    double distanceColorMax = 0.04;
+    double distanceDisplayThreshold = 0.04;
     DistanceColorMapping distanceColorMapping =
         DistanceColorMapping::SquareRoot;
     int nearestNeighborCount = 20;

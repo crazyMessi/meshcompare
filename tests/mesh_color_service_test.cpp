@@ -238,7 +238,7 @@ AnalysisRequest distanceRequest(const WorkspaceState& state)
     value.referenceId = state.referenceId();
     value.targetIds = {2, 3};
     value.metric = SurfaceComparisonMetric::DistanceToReference;
-    value.options.distanceColorMax = 0.04;
+    value.options.distanceDisplayThreshold = 0.04;
     return value;
 }
 
@@ -318,6 +318,14 @@ private slots:
             state.mesh(2)->analysisSummary.distance.vertexCount,
             3);
         QCOMPARE(
+            state.mesh(2)
+                ->analysisSummary.distance.aboveThresholdVertexFraction,
+            0.0);
+        QCOMPARE(
+            state.mesh(3)
+                ->analysisSummary.distance.aboveThresholdVertexFraction,
+            1.0 / 3.0);
+        QCOMPARE(
             state.mesh(2)->presentation.colorLegend.kind,
             ColorLegendKind::Distance);
         QCOMPARE(
@@ -368,6 +376,48 @@ private slots:
         QCOMPARE(
             state.mesh(2)->presentation.colorLegend.maximum,
             0.04);
+    }
+
+    void distanceRawFieldCacheRecomputesThresholdFractionWithoutRecomparison()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        OwningResourceProvider resources;
+        FakeRendererAdapter renderer;
+        commitFakeScene(renderer, state, resources);
+        FakeSurfaceComparer comparer;
+        comparer.enqueueDistanceSuccess({0.0, 0.01, 0.04});
+        comparer.enqueueDistanceSuccess({0.0, 0.01, 0.04});
+        MeshColorService service(resources, comparer, state, renderer);
+        QSignalSpy finished(&service, &MeshColorService::analysisFinished);
+
+        QVERIFY(service.startAnalysis(distanceRequest(state)).ok);
+        QVERIFY(takeBatch(finished).result.ok);
+        QCOMPARE(comparer.callCount(), 2);
+        QCOMPARE(
+            state.mesh(2)
+                ->analysisSummary.distance.aboveThresholdVertexFraction,
+            0.0);
+        resources.blockSurfaceSnapshotAccess(102);
+        resources.blockSurfaceSnapshotAccess(103);
+
+        AnalysisRequest thresholdChanged = distanceRequest(state);
+        thresholdChanged.options.distanceDisplayThreshold = 0.009;
+        QVERIFY(service.startAnalysis(thresholdChanged).ok);
+        const AnalysisBatchResult cachedBatch = takeBatch(finished);
+
+        QVERIFY2(cachedBatch.result.ok, qPrintable(cachedBatch.result.error));
+        QCOMPARE(comparer.callCount(), 2);
+        QCOMPARE(cachedBatch.meshes.size(), 2);
+        for (const MeshAnalysisResult& mesh : cachedBatch.meshes)
+            QVERIFY(mesh.reusedRawComparison);
+        QCOMPARE(
+            state.mesh(2)
+                ->analysisSummary.distance.aboveThresholdVertexFraction,
+            2.0 / 3.0);
+        QCOMPARE(
+            state.mesh(2)->presentation.colorLegend.maximum,
+            0.009);
     }
 
     void doubleLayerAnalyzesEveryMeshAndCachesItsRawField()

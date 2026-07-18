@@ -1030,10 +1030,11 @@ OperationResult validateSurfaceComparisonOptions(
 {
     switch (metric) {
     case SurfaceComparisonMetric::DistanceToReference:
-        if (!std::isfinite(options.distanceColorMax)
-            || options.distanceColorMax < 0.0) {
+        if (!std::isfinite(options.distanceDisplayThreshold)
+            || options.distanceDisplayThreshold < 0.0) {
             return OperationResult::failure(
-                QStringLiteral("Distance color maximum must be non-negative and finite."));
+                QStringLiteral(
+                    "Distance display threshold must be non-negative and finite."));
         }
         if (!isValidDistanceColorMapping(
                 options.distanceColorMapping)) {

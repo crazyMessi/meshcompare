@@ -250,13 +250,19 @@ QWidget* ColoringPanel::buildAnalysisPage()
         tr("Linear"),
         static_cast<int>(DistanceColorMapping::Linear));
     distanceLayout->addRow(tr("Mapping"), distanceMappingCombo_);
-    distanceColorMaxSpin_ = new QDoubleSpinBox(distanceParameters_);
-    distanceColorMaxSpin_->setObjectName(
-        QStringLiteral("distanceColorMaxSpin"));
-    distanceColorMaxSpin_->setDecimals(6);
-    distanceColorMaxSpin_->setRange(0.0, 1000000.0);
-    distanceColorMaxSpin_->setValue(0.04);
-    distanceLayout->addRow(tr("Maximum distance"), distanceColorMaxSpin_);
+    distanceDisplayThresholdSpin_ =
+        new QDoubleSpinBox(distanceParameters_);
+    distanceDisplayThresholdSpin_->setObjectName(
+        QStringLiteral("distanceDisplayThresholdSpin"));
+    distanceDisplayThresholdSpin_->setDecimals(6);
+    distanceDisplayThresholdSpin_->setRange(0.0, 1000000.0);
+    distanceDisplayThresholdSpin_->setValue(0.04);
+    distanceDisplayThresholdSpin_->setToolTip(tr(
+        "The badge reports the share of target vertices whose distance is "
+        "strictly greater than this value."));
+    distanceLayout->addRow(
+        tr("Distance threshold"),
+        distanceDisplayThresholdSpin_);
     advancedLayout->addWidget(distanceParameters_);
 
     doubleLayerParameters_ = new QWidget(advancedParameters_);
@@ -332,7 +338,7 @@ void ColoringPanel::refreshFromState()
     advancedParametersToggle_->setEnabled(ready);
     sampleCountSpin_->setEnabled(ready);
     distanceMappingCombo_->setEnabled(ready);
-    distanceColorMaxSpin_->setEnabled(ready);
+    distanceDisplayThresholdSpin_->setEnabled(ready);
     nearestNeighborCountSpin_->setEnabled(ready);
     oppositeNormalAngleSpin_->setEnabled(ready);
     applyButton_->setVisible(!analyzing);
@@ -493,7 +499,8 @@ SurfaceComparisonOptions ColoringPanel::comparisonOptions() const
 {
     SurfaceComparisonOptions options;
     options.sampleCount = sampleCountSpin_->value();
-    options.distanceColorMax = distanceColorMaxSpin_->value();
+    options.distanceDisplayThreshold =
+        distanceDisplayThresholdSpin_->value();
     options.distanceColorMapping = static_cast<DistanceColorMapping>(
         distanceMappingCombo_->currentData().toInt());
     options.nearestNeighborCount = nearestNeighborCountSpin_->value();

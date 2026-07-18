@@ -83,6 +83,7 @@ struct DistanceAnalysisSummary {
     double meanDistance = 0.0;
     double percentile99Distance = 0.0;
     double maxDistance = 0.0;
+    double aboveThresholdVertexFraction = 0.0;
 };
 
 struct DoubleLayerAnalysisSummary {

@@ -268,7 +268,7 @@ private slots:
     {
         const SurfaceComparisonOptions defaults;
         QCOMPARE(defaults.sampleCount, 500000);
-        QCOMPARE(defaults.distanceColorMax, 0.04);
+        QCOMPARE(defaults.distanceDisplayThreshold, 0.04);
         QCOMPARE(
             defaults.distanceColorMapping,
             DistanceColorMapping::SquareRoot);

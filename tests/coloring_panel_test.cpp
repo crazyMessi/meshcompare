@@ -154,8 +154,9 @@ private slots:
         ColoringPanel panel(state, commands);
 
         auto* samples = panel.findChild<QSpinBox*>(QStringLiteral("sampleCountSpin"));
-        auto* distanceColorMax =
-            panel.findChild<QDoubleSpinBox*>(QStringLiteral("distanceColorMaxSpin"));
+        auto* distanceDisplayThreshold =
+            panel.findChild<QDoubleSpinBox*>(
+                QStringLiteral("distanceDisplayThresholdSpin"));
         auto* distanceMapping =
             panel.findChild<QComboBox*>(QStringLiteral("distanceMappingCombo"));
         auto* nearestNeighborCount =
@@ -173,11 +174,16 @@ private slots:
         QCOMPARE(samples->minimum(), 1);
         QCOMPARE(samples->maximum(), 5000000);
         QCOMPARE(samples->value(), 500000);
-        QVERIFY(distanceColorMax != nullptr);
-        QCOMPARE(distanceColorMax->decimals(), 6);
-        QCOMPARE(distanceColorMax->minimum(), 0.0);
-        QCOMPARE(distanceColorMax->maximum(), 1000000.0);
-        QCOMPARE(distanceColorMax->value(), 0.04);
+        QVERIFY(distanceDisplayThreshold != nullptr);
+        QCOMPARE(distanceDisplayThreshold->decimals(), 6);
+        QCOMPARE(distanceDisplayThreshold->minimum(), 0.0);
+        QCOMPARE(distanceDisplayThreshold->maximum(), 1000000.0);
+        QCOMPARE(distanceDisplayThreshold->value(), 0.04);
+        QCOMPARE(
+            distanceDisplayThreshold->toolTip(),
+            QStringLiteral(
+                "The badge reports the share of target vertices whose "
+                "distance is strictly greater than this value."));
         QVERIFY(distanceMapping != nullptr);
         QCOMPARE(distanceMapping->count(), 2);
         QCOMPARE(distanceMapping->itemText(0), QStringLiteral("Square root"));
@@ -196,6 +202,13 @@ private slots:
             qobject_cast<QLabel*>(distanceForm->labelForField(distanceMapping));
         QVERIFY(mappingLabel != nullptr);
         QCOMPARE(mappingLabel->text(), QStringLiteral("Mapping"));
+        auto* thresholdLabel =
+            qobject_cast<QLabel*>(
+                distanceForm->labelForField(distanceDisplayThreshold));
+        QVERIFY(thresholdLabel != nullptr);
+        QCOMPARE(
+            thresholdLabel->text(),
+            QStringLiteral("Distance threshold"));
         QVERIFY(nearestNeighborCount != nullptr);
         QCOMPARE(nearestNeighborCount->minimum(), 1);
         QCOMPARE(nearestNeighborCount->maximum(), 1000);
@@ -321,7 +334,9 @@ private slots:
         QCOMPARE(commands.analysisMetrics.size(), 1);
         QCOMPARE(commands.analysisMetrics.front(),
                  SurfaceComparisonMetric::DistanceToReference);
-        QCOMPARE(commands.analysisOptions.front().distanceColorMax, 0.04);
+        QCOMPARE(
+            commands.analysisOptions.front().distanceDisplayThreshold,
+            0.04);
         QCOMPARE(
             commands.analysisOptions.front().distanceColorMapping,
             DistanceColorMapping::SquareRoot);

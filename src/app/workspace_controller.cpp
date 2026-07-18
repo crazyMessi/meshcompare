@@ -54,11 +54,11 @@ WorkspaceImportOutcome failureOutcome(
 QString analysisScoreLabel(const MeshEntry& mesh)
 {
     if (mesh.analysisSummary.kind == AnalysisKind::DistanceToReference) {
-        return QStringLiteral("D p99 %1").arg(
-            mesh.analysisSummary.distance.percentile99Distance,
+        return QStringLiteral("> threshold %1%").arg(
+            mesh.analysisSummary.distance.aboveThresholdVertexFraction * 100.0,
             0,
-            'g',
-            4);
+            'f',
+            1);
     }
     if (mesh.analysisSummary.kind == AnalysisKind::DoubleLayer) {
         return QStringLiteral("DL %1%").arg(

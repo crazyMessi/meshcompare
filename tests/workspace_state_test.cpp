@@ -487,6 +487,7 @@ private slots:
         distance.distance.meanDistance = 0.001;
         distance.distance.percentile99Distance = 0.004;
         distance.distance.maxDistance = 0.02;
+        distance.distance.aboveThresholdVertexFraction = 0.25;
 
         PreparedColorStateUpdate prepared;
         QVERIFY(state
@@ -506,6 +507,10 @@ private slots:
             state.mesh(2)->analysisSummary.distance.percentile99Distance,
             0.004);
         QCOMPARE(
+            state.mesh(2)
+                ->analysisSummary.distance.aboveThresholdVertexFraction,
+            0.25);
+        QCOMPARE(
             state.mesh(2)->presentation.colorLegend.maximum,
             0.04);
 
@@ -523,6 +528,17 @@ private slots:
 
         AnalysisSummary invalidDistance = distance;
         invalidDistance.distance.maxDistance = -1.0;
+        QVERIFY(!state
+                     .validateColorUpdates(
+                         {{2,
+                           vertexPresentation,
+                           0.0,
+                           false,
+                           invalidDistance}})
+                     .ok);
+
+        invalidDistance = distance;
+        invalidDistance.distance.aboveThresholdVertexFraction = 1.01;
         QVERIFY(!state
                      .validateColorUpdates(
                          {{2,

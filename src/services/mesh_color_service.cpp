@@ -57,8 +57,11 @@ bool doubleLayerCacheOptionsMatch(
 }
 
 AnalysisSummary distanceSummary(
-    const DistanceToReferenceStatistics& statistics)
+    const SurfaceComparisonResult& comparison,
+    double threshold)
 {
+    const DistanceToReferenceStatistics& statistics =
+        comparison.distanceStatistics;
     AnalysisSummary summary;
     summary.kind = AnalysisKind::DistanceToReference;
     summary.distance.vertexCount = statistics.vertexCount;
@@ -67,6 +70,16 @@ AnalysisSummary distanceSummary(
     summary.distance.percentile99Distance =
         statistics.percentile99Distance;
     summary.distance.maxDistance = statistics.maxDistance;
+    int aboveThresholdCount = 0;
+    for (double distance : comparison.vertexDistances) {
+        if (distance > threshold)
+            ++aboveThresholdCount;
+    }
+    summary.distance.aboveThresholdVertexFraction =
+        comparison.vertexDistances.isEmpty()
+        ? 0.0
+        : double(aboveThresholdCount)
+            / double(comparison.vertexDistances.size());
     return summary;
 }
 
@@ -323,10 +336,11 @@ private:
                 }
                 result.vertexColors = distanceToVertexColors(
                     outcome.comparison.vertexDistances,
-                    request_.options.distanceColorMax,
+                    request_.options.distanceDisplayThreshold,
                     request_.options.distanceColorMapping);
-                result.analysisSummary =
-                    distanceSummary(outcome.comparison.distanceStatistics);
+                result.analysisSummary = distanceSummary(
+                    outcome.comparison,
+                    request_.options.distanceDisplayThreshold);
             }
             else if (request_.metric ==
                      SurfaceComparisonMetric::DoubleLayer) {
@@ -839,7 +853,7 @@ void MeshColorService::completeAnalysis(AnalysisBatchResult result)
                         result.options.distanceColorMapping;
                     presentation.colorLegend.minimum = 0.0;
                     presentation.colorLegend.maximum =
-                        result.options.distanceColorMax;
+                        result.options.distanceDisplayThreshold;
                 }
                 stateUpdates.append(
                     {meshResult.meshId,

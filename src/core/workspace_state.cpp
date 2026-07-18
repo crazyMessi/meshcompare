@@ -66,6 +66,7 @@ OperationResult validateAnalysisSummary(const AnalysisSummary& summary)
             !isFiniteNonNegative(distance.meanDistance) ||
             !isFiniteNonNegative(distance.percentile99Distance) ||
             !isFiniteNonNegative(distance.maxDistance) ||
+            !isUnitFraction(distance.aboveThresholdVertexFraction) ||
             distance.meanDistance > distance.maxDistance ||
             distance.percentile99Distance > distance.maxDistance) {
             return OperationResult::failure(

@@ -935,6 +935,7 @@ private slots:
         distanceSummary.distance.finiteVertexCount = 3;
         distanceSummary.distance.percentile99Distance = 0.004;
         distanceSummary.distance.maxDistance = 0.004;
+        distanceSummary.distance.aboveThresholdVertexFraction = 0.25;
         AnalysisSummary doubleLayerSummary;
         doubleLayerSummary.kind = AnalysisKind::DoubleLayer;
         doubleLayerSummary.doubleLayer.sampleCount = 500000;
@@ -994,6 +995,7 @@ private slots:
         distanceSummary.distance.finiteVertexCount = 3;
         distanceSummary.distance.percentile99Distance = 0.004;
         distanceSummary.distance.maxDistance = 0.004;
+        distanceSummary.distance.aboveThresholdVertexFraction = 0.25;
         AnalysisSummary doubleLayerSummary;
         doubleLayerSummary.kind = AnalysisKind::DoubleLayer;
         doubleLayerSummary.doubleLayer.sampleCount = 500000;
@@ -1022,7 +1024,7 @@ private slots:
         QVERIFY2(switched.ok, qPrintable(switched.error));
         QCOMPARE(
             renderer.lastPreparedScene().meshes.at(1).analysisLabel,
-            QStringLiteral("D p99 0.004"));
+            QStringLiteral("> threshold 25.0%"));
         QCOMPARE(
             renderer.lastPreparedScene().meshes.at(2).analysisLabel,
             QStringLiteral("DL 3.2%"));
