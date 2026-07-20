@@ -2,6 +2,7 @@
 
 #include <QImage>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 #include "../core/meshcompare_types.h"
@@ -10,6 +11,7 @@ struct CameraPoseSummary
 {
     QString viewId;
     QString savedAtUtc;
+    QStringList tags;
 };
 
 struct CameraPanelSnapshot
@@ -33,5 +35,8 @@ public:
         QImage& screenshot,
         QString* savedViewId = nullptr) = 0;
     virtual OperationResult applyCameraPose(const QString& viewId) = 0;
+    virtual OperationResult setCameraPoseTags(
+        const QString& viewId,
+        const QStringList& tags) = 0;
     virtual OperationResult deleteCameraPose(const QString& viewId) = 0;
 };

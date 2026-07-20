@@ -38,8 +38,10 @@ signals:
 
 private:
     QString selectedViewId() const;
+    void refreshTagInput();
     OperationResult commitUidInput(bool refreshAfterCommit);
     void applySelectedPose();
+    void updateSelectedPoseTags();
     void deleteSelectedPose();
     void updateActionState();
     void reportFailure(const OperationResult& result);
@@ -50,9 +52,11 @@ private:
     QLabel* uuidLabel_ = nullptr;
     QLineEdit* uidInput_ = nullptr;
     QListWidget* poseList_ = nullptr;
+    QLineEdit* tagInput_ = nullptr;
     QPushButton* saveButton_ = nullptr;
     QPushButton* saveAndCopyScreenshotButton_ = nullptr;
     QPushButton* applyButton_ = nullptr;
+    QPushButton* updateTagsButton_ = nullptr;
     QPushButton* deleteButton_ = nullptr;
     QString workspaceUuid_;
     bool snapshotAvailable_ = false;

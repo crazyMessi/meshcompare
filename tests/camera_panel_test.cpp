@@ -35,11 +35,15 @@ void makeReady(WorkspaceState& state)
     Q_ASSERT(result.ok);
 }
 
-CameraPoseSummary summary(const QString& viewId, const QString& savedAtUtc)
+CameraPoseSummary summary(
+    const QString& viewId,
+    const QString& savedAtUtc,
+    const QStringList& tags = {})
 {
     CameraPoseSummary result;
     result.viewId = viewId;
     result.savedAtUtc = savedAtUtc;
+    result.tags = tags;
     return result;
 }
 
@@ -97,6 +101,17 @@ public:
         return applyResult;
     }
 
+    OperationResult setCameraPoseTags(
+        const QString& viewId,
+        const QStringList& tags) override
+    {
+        taggedViewIds.append(viewId);
+        assignedTags.append(tags);
+        if (setTagsAction)
+            setTagsAction();
+        return setTagsResult;
+    }
+
     OperationResult deleteCameraPose(const QString& viewId) override
     {
         if (deleteAction)
@@ -110,10 +125,12 @@ public:
     OperationResult saveWithScreenshotResult = OperationResult::success();
     OperationResult setUidResult = OperationResult::success();
     OperationResult applyResult = OperationResult::success();
+    OperationResult setTagsResult = OperationResult::success();
     OperationResult deleteResult = OperationResult::success();
     std::function<void()> saveAction;
     std::function<void()> saveWithScreenshotAction;
     std::function<void()> applyAction;
+    std::function<void()> setTagsAction;
     std::function<void()> deleteAction;
     mutable int snapshotCalls = 0;
     int saveCalls = 0;
@@ -121,6 +138,8 @@ public:
     int setUidCalls = 0;
     QStringList setUids;
     QStringList applyViewIds;
+    QStringList taggedViewIds;
+    QVector<QStringList> assignedTags;
     QStringList deleteViewIds;
     QImage screenshotToCopy;
 };
@@ -132,6 +151,8 @@ struct Controls {
     QPushButton* save = nullptr;
     QPushButton* saveAndCopyScreenshot = nullptr;
     QPushButton* apply = nullptr;
+    QLineEdit* tags = nullptr;
+    QPushButton* updateTags = nullptr;
     QPushButton* remove = nullptr;
 };
 
@@ -150,6 +171,10 @@ Controls controls(CameraPanel& panel)
         QStringLiteral("saveCameraPoseAndCopyScreenshotButton"));
     result.apply = panel.findChild<QPushButton*>(
         QStringLiteral("applyCameraPoseButton"));
+    result.tags = panel.findChild<QLineEdit*>(
+        QStringLiteral("cameraPoseTagInput"));
+    result.updateTags = panel.findChild<QPushButton*>(
+        QStringLiteral("updateCameraPoseTagsButton"));
     result.remove = panel.findChild<QPushButton*>(
         QStringLiteral("deleteCameraPoseButton"));
     return result;
@@ -244,6 +269,42 @@ private slots:
         QVERIFY(ui.remove->isEnabled());
         QTest::mouseClick(ui.apply, Qt::LeftButton);
         QCOMPARE(commands.applyViewIds, QStringList({QStringLiteral("view_002")}));
+    }
+
+    void selectedPoseDisplaysAndUpdatesItsTags()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral(
+            "123e4567-e89b-12d3-a456-426614174000");
+        commands.snapshot.poses = {summary(
+            QStringLiteral("view_001"),
+            QStringLiteral("saved"),
+            {QStringLiteral("hole"), QStringLiteral("edge")})};
+        CameraPanel panel(state, commands);
+        const Controls ui = controls(panel);
+        QVERIFY(ui.tags != nullptr);
+        QVERIFY(ui.updateTags != nullptr);
+
+        ui.poses->setCurrentRow(0);
+        QCOMPARE(ui.tags->text(), QStringLiteral("hole, edge"));
+        ui.tags->setText(QStringLiteral("inspection, underside"));
+        commands.setTagsAction = [&commands] {
+            commands.snapshot.poses[0].tags = QStringList{
+                QStringLiteral("inspection"), QStringLiteral("underside")};
+        };
+
+        QTest::mouseClick(ui.updateTags, Qt::LeftButton);
+
+        QCOMPARE(commands.taggedViewIds, QStringList({QStringLiteral("view_001")}));
+        QCOMPARE(
+            commands.assignedTags,
+            QVector<QStringList>({
+                {QStringLiteral("inspection"), QStringLiteral(" underside")}}));
+        QCOMPARE(ui.tags->text(), QStringLiteral("inspection, underside"));
+        QVERIFY(ui.poses->item(0)->text().contains(QStringLiteral("#inspection")));
+        QVERIFY(ui.poses->item(0)->text().contains(QStringLiteral("#underside")));
     }
 
     void saveAndCopyScreenshotUsesOneCombinedCommandAndRefreshes()

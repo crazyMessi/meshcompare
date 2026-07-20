@@ -161,6 +161,7 @@ private slots:
 	void missingLibraryIsAnEmptySuccess();
 	void invalidUuidAndEmptyStoragePathFailWithoutMutatingOutputs();
 	void saveCreatesNestedSchema2Library();
+	void poseTagsCanBeAssignedAndLegacyPosesReceiveHoleTag();
 	void migrationCopiesLegacyOnlyWhenCurrentIsAbsent();
 	void deletionIsAtomicAndScopedToUuid();
 	void malformedLibraryFailsEveryOperationWithoutChangingBytes_data();
@@ -288,7 +289,48 @@ void CameraPoseStoreTest::saveCreatesNestedSchema2Library()
 	QCOMPARE(error.error, QJsonParseError::NoError);
 	QVERIFY(document.isObject());
 	QCOMPARE(document.object().value(QStringLiteral("schema")).toInt(), 2);
-	QVERIFY(document.object().value(QStringLiteral("poses")).toObject().contains(UuidA));
+	const QJsonObject poses = document.object().value(QStringLiteral("poses")).toObject();
+	QVERIFY(poses.contains(UuidA));
+	QCOMPARE(
+		poses.value(UuidA).toArray().at(0).toObject().value(QStringLiteral("tags")).toArray(),
+		QJsonArray());
+}
+
+void CameraPoseStoreTest::poseTagsCanBeAssignedAndLegacyPosesReceiveHoleTag()
+{
+	QTemporaryDir dir;
+	QVERIFY(dir.isValid());
+	const QString current = dir.filePath(QStringLiteral("poses.json"));
+	QJsonArray viewsA;
+	viewsA.append(poseObject(QStringLiteral("view_001"), QStringLiteral("<first/>")));
+	QJsonArray viewsB;
+	QJsonObject second = poseObject(
+		QStringLiteral("view_002"), QStringLiteral("<second/>"));
+	second.insert(
+		QStringLiteral("tags"), QJsonArray({QStringLiteral("edge")}));
+	viewsB.append(second);
+	QJsonObject poses;
+	poses.insert(UuidA, viewsA);
+	poses.insert(UuidB, viewsB);
+	QVERIFY(writeBytes(current, schema2Bytes(poses)));
+
+	CameraPoseStore store(current, QString());
+	QVERIFY(store.migrateLegacyIfNeeded().ok);
+	QCOMPARE(store.list(UuidA).front().tags, QStringList({QStringLiteral("hole")}));
+	QCOMPARE(
+		store.list(UuidB).front().tags,
+		QStringList({QStringLiteral("edge"), QStringLiteral("hole")}));
+
+	QVERIFY(store.setTags(
+		UuidA,
+		QStringLiteral("view_001"),
+		{QStringLiteral("inspection"), QStringLiteral("edge")}).ok);
+	QCOMPARE(
+		store.list(UuidA).front().tags,
+		QStringList({QStringLiteral("inspection"), QStringLiteral("edge")}));
+	QCOMPARE(
+		store.list(UuidB).front().tags,
+		QStringList({QStringLiteral("edge"), QStringLiteral("hole")}));
 }
 
 void CameraPoseStoreTest::migrationCopiesLegacyOnlyWhenCurrentIsAbsent()
@@ -307,10 +349,12 @@ void CameraPoseStoreTest::migrationCopiesLegacyOnlyWhenCurrentIsAbsent()
 
 	CameraPoseStore store(current, legacy);
 	QVERIFY(store.migrateLegacyIfNeeded().ok);
-	QCOMPARE(readBytes(current), legacyBytes);
 	QCOMPARE(readBytes(legacy), legacyBytes);
 	QCOMPARE(QFileInfo(legacy).lastModified(), legacyMtime);
-	QCOMPARE(store.list(UuidA).size(), 1);
+	const QVector<SavedCameraPose> migrated = store.list(UuidA);
+	QCOMPARE(migrated.size(), 1);
+	QCOMPARE(migrated.front().tags, QStringList({QStringLiteral("hole")}));
+	QCOMPARE(readRoot(current).value(QStringLiteral("kept")).toInt(), 17);
 
 	const QByteArray replacement = schema2Bytes(QJsonObject());
 	QVERIFY(writeBytes(current, replacement));
@@ -894,7 +938,10 @@ void CameraPoseStoreTest::migrationRejectsCorruptionAndExistingCurrentAlwaysWins
 	QVERIFY(idempotentStore.migrateLegacyIfNeeded().ok);
 	QVERIFY(writeBytes(idempotentLegacy, onePoseLibrary(UuidB)));
 	QVERIFY(idempotentStore.migrateLegacyIfNeeded().ok);
-	QCOMPARE(readBytes(idempotentCurrent), legacyBytes);
+	const QVector<SavedCameraPose> idempotent = idempotentStore.list(UuidA);
+	QCOMPARE(idempotent.size(), 1);
+	QCOMPARE(idempotent.front().tags, QStringList({QStringLiteral("hole")}));
+	QVERIFY(idempotentStore.list(UuidB).isEmpty());
 }
 
 void CameraPoseStoreTest::migrationRejectsStructurallyCorruptJson()
@@ -1123,8 +1170,10 @@ void CameraPoseStoreTest::migrationConcurrentDestinationWinsWithoutBeingRemoved(
 	QVERIFY(legacyWritten);
 	QVERIFY(legacyUnlinked);
 	QVERIFY2(migrationResult.ok, qPrintable(migrationResult.error));
-	QCOMPARE(readBytes(current), concurrentCurrentBytes);
-	QCOMPARE(CameraPoseStore(current, QString()).list(UuidB).size(), 1);
+	const QVector<SavedCameraPose> concurrent =
+		CameraPoseStore(current, QString()).list(UuidB);
+	QCOMPARE(concurrent.size(), 1);
+	QCOMPARE(concurrent.front().tags, QStringList({QStringLiteral("hole")}));
 #else
 	QSKIP("This race harness requires a POSIX FIFO.");
 #endif

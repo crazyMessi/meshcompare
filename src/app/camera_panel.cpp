@@ -19,6 +19,12 @@
 #include <QVBoxLayout>
 #include <QVariant>
 
+namespace
+{
+constexpr int PoseViewIdRole = Qt::UserRole;
+constexpr int PoseTagsRole = Qt::UserRole + 1;
+}
+
 CameraPanel::CameraPanel(
     WorkspaceState& state,
     ICameraCommands& commands,
@@ -86,6 +92,15 @@ CameraPanel::CameraPanel(
     poseList_->setMinimumHeight(144);
     root->addWidget(poseList_);
 
+    tagInput_ = new QLineEdit(this);
+    tagInput_->setObjectName(QStringLiteral("cameraPoseTagInput"));
+    tagInput_->setPlaceholderText(tr("Tags (comma separated)"));
+    root->addWidget(tagInput_);
+
+    updateTagsButton_ = new QPushButton(tr("Update Tags"), this);
+    updateTagsButton_->setObjectName(QStringLiteral("updateCameraPoseTagsButton"));
+    root->addWidget(updateTagsButton_);
+
     auto* actions = new QHBoxLayout;
     deleteButton_ = new QPushButton(tr("Delete"), this);
     deleteButton_->setObjectName(QStringLiteral("deleteCameraPoseButton"));
@@ -100,7 +115,10 @@ CameraPanel::CameraPanel(
         poseList_,
         &QListWidget::itemSelectionChanged,
         this,
-        &CameraPanel::updateActionState);
+        [this] {
+            refreshTagInput();
+            updateActionState();
+        });
     connect(
         uidInput_,
         &QLineEdit::textChanged,
@@ -155,6 +173,11 @@ CameraPanel::CameraPanel(
         this,
         &CameraPanel::applySelectedPose);
     connect(
+        updateTagsButton_,
+        &QPushButton::clicked,
+        this,
+        &CameraPanel::updateSelectedPoseTags);
+    connect(
         deleteButton_,
         &QPushButton::clicked,
         this,
@@ -169,6 +192,10 @@ void CameraPanel::refreshFromState()
     workspaceUuid_ = snapshot.workspaceUuid;
     snapshotAvailable_ = snapshot.result.ok;
     poseList_->clear();
+    {
+        const QSignalBlocker tagBlocker(tagInput_);
+        tagInput_->clear();
+    }
     {
         const QSignalBlocker inputBlocker(uidInput_);
         uidInput_->setText(
@@ -200,11 +227,19 @@ void CameraPanel::refreshFromState()
     uuidLabel_->setText(tr("Workspace UID"));
     poseList_->setEnabled(true);
     for (const CameraPoseSummary& pose : snapshot.poses) {
-        const QString label = pose.savedAtUtc.isEmpty()
+        QString label = pose.savedAtUtc.isEmpty()
             ? pose.viewId
             : tr("%1 — %2").arg(pose.viewId, pose.savedAtUtc);
+        if (!pose.tags.isEmpty()) {
+            QStringList renderedTags;
+            renderedTags.reserve(pose.tags.size());
+            for (const QString& tag : pose.tags)
+                renderedTags.append(QStringLiteral("#%1").arg(tag));
+            label.append(tr(" · %1").arg(renderedTags.join(QLatin1Char(' '))));
+        }
         auto* item = new QListWidgetItem(label, poseList_);
-        item->setData(Qt::UserRole, pose.viewId);
+        item->setData(PoseViewIdRole, pose.viewId);
+        item->setData(PoseTagsRole, pose.tags);
     }
     updateActionState();
 }
@@ -232,7 +267,17 @@ QString CameraPanel::selectedViewId() const
     const QListWidgetItem* item = poseList_->currentItem();
     return item == nullptr
         ? QString()
-        : item->data(Qt::UserRole).toString();
+        : item->data(PoseViewIdRole).toString();
+}
+
+void CameraPanel::refreshTagInput()
+{
+    const QListWidgetItem* item = poseList_->currentItem();
+    const QStringList tags = item == nullptr
+        ? QStringList()
+        : item->data(PoseTagsRole).toStringList();
+    const QSignalBlocker blocker(tagInput_);
+    tagInput_->setText(tags.join(QStringLiteral(", ")));
 }
 
 void CameraPanel::applySelectedPose()
@@ -245,6 +290,30 @@ void CameraPanel::applySelectedPose()
         return;
     }
     reportFailure(commands_.applyCameraPose(viewId));
+}
+
+void CameraPanel::updateSelectedPoseTags()
+{
+    const QString viewId = selectedViewId();
+    if (viewId.isEmpty()) {
+        updateActionState();
+        return;
+    }
+    const OperationResult result = commands_.setCameraPoseTags(
+        viewId,
+        tagInput_->text().split(QLatin1Char(','), Qt::SkipEmptyParts));
+    if (!result.ok) {
+        reportFailure(result);
+        return;
+    }
+    refreshFromState();
+    for (int index = 0; index < poseList_->count(); ++index) {
+        QListWidgetItem* item = poseList_->item(index);
+        if (item != nullptr && item->data(PoseViewIdRole).toString() == viewId) {
+            poseList_->setCurrentItem(item);
+            break;
+        }
+    }
 }
 
 void CameraPanel::deleteSelectedPose()
@@ -275,6 +344,8 @@ void CameraPanel::updateActionState()
     saveButton_->setEnabled(ready && hasUidInput);
     saveAndCopyScreenshotButton_->setEnabled(ready && hasUidInput);
     applyButton_->setEnabled(ready && inputMatchesSnapshot && hasSelection);
+    tagInput_->setEnabled(ready && inputMatchesSnapshot && hasSelection);
+    updateTagsButton_->setEnabled(ready && inputMatchesSnapshot && hasSelection);
     deleteButton_->setEnabled(ready && inputMatchesSnapshot && hasSelection);
 }
 

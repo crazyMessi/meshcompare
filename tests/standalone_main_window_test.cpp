@@ -148,6 +148,12 @@ public:
     {
         return OperationResult::success();
     }
+    OperationResult setCameraPoseTags(
+        const QString&,
+        const QStringList&) override
+    {
+        return OperationResult::success();
+    }
     OperationResult deleteCameraPose(const QString&) override
     {
         return OperationResult::success();

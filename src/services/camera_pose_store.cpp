@@ -29,6 +29,8 @@ const QString ViewIdKey = QStringLiteral("view_id");
 const QString SavedAtUtcKey = QStringLiteral("saved_at_utc");
 const QString ParametersKey = QStringLiteral("parameters");
 const QString ViewStateXmlKey = QStringLiteral("meshlab_view_state_xml");
+const QString TagsKey = QStringLiteral("tags");
+const QString DefaultPoseTag = QStringLiteral("hole");
 
 const QRegularExpression NumericViewIdPattern(QStringLiteral("^view_(\\d+)$"));
 
@@ -39,6 +41,7 @@ struct ParsedView
 	QString savedAtUtc;
 	QDateTime savedAt;
 	bool hasSavedAt = false;
+	QStringList tags;
 	CameraPose pose;
 };
 
@@ -162,6 +165,18 @@ OperationResult parseLibraryRoot(const QJsonObject& root, ParsedLibrary* destina
 					if (!view.savedAt.isValid())
 						return failure(QStringLiteral("The camera-pose library contains an invalid saved time."));
 					view.hasSavedAt = true;
+				}
+			}
+			if (viewObject.contains(TagsKey)) {
+				const QJsonValue tagsValue = viewObject.value(TagsKey);
+				if (!tagsValue.isArray())
+					return failure(QStringLiteral(
+						"The camera-pose library contains invalid pose tags."));
+				for (const QJsonValue& tagValue : tagsValue.toArray()) {
+					if (!tagValue.isString())
+						return failure(QStringLiteral(
+							"The camera-pose library contains invalid pose tags."));
+					view.tags.append(tagValue.toString());
 				}
 			}
 			collection.views.push_back(view);
@@ -371,6 +386,7 @@ SavedCameraPose savedPose(const ParsedView& view)
 	result.uuid = view.uuid;
 	result.viewId = view.viewId;
 	result.savedAtUtc = view.savedAtUtc;
+	result.tags = view.tags;
 	result.pose = view.pose;
 	return result;
 }
@@ -394,6 +410,57 @@ QJsonArray collectionAsArray(const ParsedCollection& collection)
 		}
 	}
 	return values;
+}
+
+QStringList normalizedTags(const QStringList& tags)
+{
+	QStringList normalized;
+	for (const QString& rawTag : tags) {
+		const QString tag = rawTag.trimmed();
+		if (!tag.isEmpty() && !normalized.contains(tag))
+			normalized.append(tag);
+	}
+	return normalized;
+}
+
+OperationResult addDefaultTagsToExistingPoses(const QString& storagePath)
+{
+	ParsedLibrary library;
+	const OperationResult readResult = readLibraryFile(storagePath, true, &library);
+	if (!readResult.ok)
+		// An already-owned library always wins over the legacy source. Keep the
+		// established migration guarantee for corrupt files: do not interpret or
+		// replace them while trying to add a default tag.
+		return OperationResult::success();
+
+	bool changed = false;
+	QJsonObject poses = library.poses;
+	for (auto collectionIt = library.collections.constBegin();
+		 collectionIt != library.collections.constEnd();
+		 ++collectionIt) {
+		const ParsedCollection& collection = collectionIt.value();
+		QJsonArray views = collectionAsArray(collection);
+		bool collectionChanged = false;
+		for (int index = 0; index < collection.views.size(); ++index) {
+			QStringList tags = collection.views.at(index).tags;
+			if (tags.contains(DefaultPoseTag))
+				continue;
+			tags.append(DefaultPoseTag);
+			QJsonObject view = views.at(index).toObject();
+			view.insert(TagsKey, QJsonArray::fromStringList(tags));
+			views[index] = view;
+			collectionChanged = true;
+		}
+		if (!collectionChanged)
+			continue;
+		poses.insert(collection.sourceKey, views);
+		changed = true;
+	}
+
+	if (!changed)
+		return OperationResult::success();
+	library.root.insert(PosesKey, poses);
+	return writeLibraryFile(storagePath, library.root);
 }
 
 QString canonicalDecimal(QString digits)
@@ -443,7 +510,7 @@ OperationResult CameraPoseStore::migrateLegacyIfNeeded()
 	if (storagePath_.isEmpty())
 		return failure(QStringLiteral("The camera-pose library path is empty."));
 	if (pathEntryExists(storagePath_))
-		return OperationResult::success();
+		return addDefaultTagsToExistingPoses(storagePath_);
 	if (legacyPath_.isEmpty() || !QFileInfo::exists(legacyPath_))
 		return OperationResult::success();
 
@@ -455,7 +522,7 @@ OperationResult CameraPoseStore::migrateLegacyIfNeeded()
 	if (!directoryResult.ok)
 		return directoryResult;
 	if (pathEntryExists(storagePath_))
-		return OperationResult::success();
+		return addDefaultTagsToExistingPoses(storagePath_);
 
 	// Copy into an owned staging directory first. The legacy path is opened
 	// again by QFile::copy(), so validate the staged bytes as well: the source
@@ -483,7 +550,7 @@ OperationResult CameraPoseStore::migrateLegacyIfNeeded()
 			stagedPath, storagePath_, &publishError);
 	if (publishResult == camera_pose_store_detail::PublishResult::Failed)
 		return failure(publishError);
-	return OperationResult::success();
+	return addDefaultTagsToExistingPoses(storagePath_);
 }
 
 OperationResult CameraPoseStore::save(
@@ -524,6 +591,7 @@ OperationResult CameraPoseStore::save(
 	newView.insert(
 		SavedAtUtcKey,
 		QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+	newView.insert(TagsKey, QJsonArray());
 	newView.insert(ParametersKey, poseParameters(pose.viewStateXml));
 	newView.insert(ViewStateXmlKey, pose.viewStateXml);
 	views.append(newView);
@@ -603,6 +671,46 @@ OperationResult CameraPoseStore::load(
 		}
 	}
 	return failure(QStringLiteral("The selected saved camera pose no longer exists."));
+}
+
+OperationResult CameraPoseStore::setTags(
+	const QString& uuid,
+	const QString& viewId,
+	const QStringList& tags)
+{
+	const QString normalizedUuid = normalizeUuid(uuid);
+	if (normalizedUuid.isEmpty())
+		return invalidUuidResult();
+	if (viewId.isEmpty())
+		return failure(QStringLiteral("The camera-pose view ID is empty."));
+
+	ParsedLibrary library;
+	const OperationResult readResult = readLibraryFile(storagePath_, true, &library);
+	if (!readResult.ok)
+		return readResult;
+	const auto collectionIt = library.collections.constFind(normalizedUuid);
+	if (collectionIt == library.collections.constEnd())
+		return failure(QStringLiteral("No saved camera poses exist for this UID."));
+
+	int viewIndex = -1;
+	for (int index = 0; index < collectionIt.value().views.size(); ++index) {
+		if (collectionIt.value().views.at(index).viewId == viewId) {
+			viewIndex = index;
+			break;
+		}
+	}
+	if (viewIndex < 0)
+		return failure(QStringLiteral("The selected saved camera pose no longer exists."));
+
+	QJsonArray views = collectionAsArray(collectionIt.value());
+	QJsonObject view = views.at(viewIndex).toObject();
+	view.insert(TagsKey, QJsonArray::fromStringList(normalizedTags(tags)));
+	views[viewIndex] = view;
+	QJsonObject poses = library.poses;
+	poses.remove(collectionIt.value().sourceKey);
+	poses.insert(normalizedUuid, views);
+	library.root.insert(PosesKey, poses);
+	return writeLibraryFile(storagePath_, library.root);
 }
 
 OperationResult CameraPoseStore::remove(const QString& uuid, const QString& viewId)

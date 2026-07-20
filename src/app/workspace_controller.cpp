@@ -621,7 +621,7 @@ CameraPanelSnapshot WorkspaceController::cameraPanelSnapshot() const
 
     snapshot.poses.reserve(poses.size());
     for (const SavedCameraPose& saved : poses)
-        snapshot.poses.append({saved.viewId, saved.savedAtUtc});
+        snapshot.poses.append({saved.viewId, saved.savedAtUtc, saved.tags});
     return snapshot;
 }
 
@@ -739,6 +739,22 @@ OperationResult WorkspaceController::applyCameraPose(const QString& viewId)
     const OperationResult restored = renderer_.restoreCamera(pose);
     publishCameraApplyFinished(restored);
     return restored;
+}
+
+OperationResult WorkspaceController::setCameraPoseTags(
+    const QString& viewId,
+    const QStringList& tags)
+{
+    const OperationResult validation = validateCameraMutation();
+    if (!validation.ok)
+        return validation;
+    if (viewId.isEmpty()) {
+        return OperationResult::failure(
+            QStringLiteral("Select a saved camera pose to update its tags."));
+    }
+
+    QScopedValueRollback<bool> commandGuard(cameraCommandInProgress_, true);
+    return cameraStore_.setTags(workspaceUuid_, viewId, tags);
 }
 
 OperationResult WorkspaceController::deleteCameraPose(const QString& viewId)

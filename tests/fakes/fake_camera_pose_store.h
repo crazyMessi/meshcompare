@@ -16,10 +16,11 @@ public:
         const QString& uuid,
         const QString& viewId,
         const CameraPose& pose,
-        const QString& savedAtUtc)
+        const QString& savedAtUtc,
+        const QStringList& tags = {})
     {
         records_.append(
-            {CameraPoseStore::normalizeUuid(uuid), viewId, savedAtUtc, pose});
+            {CameraPoseStore::normalizeUuid(uuid), viewId, savedAtUtc, tags, pose});
     }
 
     OperationResult migrateLegacyIfNeeded() override
@@ -49,6 +50,7 @@ public:
             {CameraPoseStore::normalizeUuid(uuid),
              generated,
              QStringLiteral("2026-07-15T00:00:00Z"),
+             QStringList(),
              pose});
         if (viewId != nullptr)
             *viewId = generated;
@@ -132,10 +134,33 @@ public:
         return OperationResult::failure(QStringLiteral("Pose not found."));
     }
 
+    OperationResult setTags(
+        const QString& uuid,
+        const QString& viewId,
+        const QStringList& tags) override
+    {
+        ++setTagsCount_;
+        lastSetTagsUuid_ = uuid;
+        lastSetTagsViewId_ = viewId;
+        lastSetTags_ = tags;
+        if (!nextSetTagsError_.isEmpty())
+            return OperationResult::failure(takeError(nextSetTagsError_));
+
+        const QString normalized = CameraPoseStore::normalizeUuid(uuid);
+        for (SavedCameraPose& record : records_) {
+            if (record.uuid == normalized && record.viewId == viewId) {
+                record.tags = tags;
+                return OperationResult::success();
+            }
+        }
+        return OperationResult::failure(QStringLiteral("Pose not found."));
+    }
+
     void failNextSave(const QString& error) { nextSaveError_ = error; }
     void failNextList(const QString& error) const { nextListError_ = error; }
     void failNextLoad(const QString& error) const { nextLoadError_ = error; }
     void failNextRemove(const QString& error) { nextRemoveError_ = error; }
+    void failNextSetTags(const QString& error) { nextSetTagsError_ = error; }
 
     void setTrace(QStringList* trace) const { trace_ = trace; }
     void setSaveObserver(std::function<void()> observer)
@@ -159,12 +184,16 @@ public:
     int listCount() const { return listCount_; }
     int loadCount() const { return loadCount_; }
     int removeCount() const { return removeCount_; }
+    int setTagsCount() const { return setTagsCount_; }
     QString lastSaveUuid() const { return lastSaveUuid_; }
     QString lastListUuid() const { return lastListUuid_; }
     QString lastLoadUuid() const { return lastLoadUuid_; }
     QString lastLoadViewId() const { return lastLoadViewId_; }
     QString lastRemoveUuid() const { return lastRemoveUuid_; }
     QString lastRemoveViewId() const { return lastRemoveViewId_; }
+    QString lastSetTagsUuid() const { return lastSetTagsUuid_; }
+    QString lastSetTagsViewId() const { return lastSetTagsViewId_; }
+    QStringList lastSetTags() const { return lastSetTags_; }
     CameraPose lastSavedPose() const { return lastSavedPose_; }
 
     void resetObservations()
@@ -173,12 +202,16 @@ public:
         listCount_ = 0;
         loadCount_ = 0;
         removeCount_ = 0;
+        setTagsCount_ = 0;
         lastSaveUuid_.clear();
         lastListUuid_.clear();
         lastLoadUuid_.clear();
         lastLoadViewId_.clear();
         lastRemoveUuid_.clear();
         lastRemoveViewId_.clear();
+        lastSetTagsUuid_.clear();
+        lastSetTagsViewId_.clear();
+        lastSetTags_.clear();
         lastSavedPose_ = {};
     }
 
@@ -201,6 +234,7 @@ private:
     mutable QString nextLoadError_;
     QString nextSaveError_;
     QString nextRemoveError_;
+    QString nextSetTagsError_;
     mutable QStringList* trace_ = nullptr;
     std::function<void()> saveObserver_;
     mutable std::function<void()> listObserver_;
@@ -212,10 +246,14 @@ private:
     mutable QString lastLoadViewId_;
     QString lastRemoveUuid_;
     QString lastRemoveViewId_;
+    QString lastSetTagsUuid_;
+    QString lastSetTagsViewId_;
+    QStringList lastSetTags_;
     CameraPose lastSavedPose_;
     int nextViewNumber_ = 0;
     int saveCount_ = 0;
     mutable int listCount_ = 0;
     mutable int loadCount_ = 0;
     int removeCount_ = 0;
+    int setTagsCount_ = 0;
 };

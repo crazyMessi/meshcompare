@@ -727,6 +727,52 @@ private slots:
         QCOMPARE(state.referenceId(), MeshId(1));
         QCOMPARE(snapshot.workspaceUuid, UuidA);
     }
+
+    void poseTagsAreScopedToTheSelectedUuidPose()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(staged(
+            {entry(1, QStringLiteral("reference_gt.obj"), {UuidA}),
+             entry(2, QStringLiteral("candidate.obj"), {UuidB})}));
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        FakeCameraPoseStore store;
+        store.add(
+            UuidA,
+            QStringLiteral("view_001"),
+            pose(QStringLiteral("first")),
+            QStringLiteral("2026-07-15T01:00:00Z"),
+            {QStringLiteral("hole")});
+        store.add(
+            UuidA,
+            QStringLiteral("view_002"),
+            pose(QStringLiteral("second")),
+            QStringLiteral("2026-07-15T02:00:00Z"),
+            {QStringLiteral("edge")});
+        WorkspaceController controller(state, importer, renderer, comparer, store);
+        QVERIFY(importWorkspace(controller).result.ok);
+        store.resetObservations();
+
+        const OperationResult updated = controller.setCameraPoseTags(
+            QStringLiteral("view_001"),
+            {QStringLiteral("inspection"), QStringLiteral("underside")});
+
+        QVERIFY2(updated.ok, qPrintable(updated.error));
+        QCOMPARE(store.setTagsCount(), 1);
+        QCOMPARE(store.lastSetTagsUuid(), UuidA);
+        QCOMPARE(store.lastSetTagsViewId(), QStringLiteral("view_001"));
+        QCOMPARE(
+            store.lastSetTags(),
+            QStringList({QStringLiteral("inspection"), QStringLiteral("underside")}));
+        const CameraPanelSnapshot snapshot = controller.cameraPanelSnapshot();
+        QCOMPARE(snapshot.poses.size(), 2);
+        QCOMPARE(
+            snapshot.poses.at(0).tags,
+            QStringList({QStringLiteral("inspection"), QStringLiteral("underside")}));
+        QCOMPARE(
+            snapshot.poses.at(1).tags,
+            QStringList({QStringLiteral("edge")}));
+    }
 };
 
 QTEST_MAIN(CameraWorkflowTest)

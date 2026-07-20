@@ -69,6 +69,9 @@ public:
         QImage& screenshot,
         QString* savedViewId = nullptr) override;
     OperationResult applyCameraPose(const QString& viewId) override;
+    OperationResult setCameraPoseTags(
+        const QString& viewId,
+        const QStringList& tags) override;
     OperationResult deleteCameraPose(const QString& viewId) override;
 
 signals:
