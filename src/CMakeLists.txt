@@ -127,6 +127,7 @@ target_link_libraries(meshcompare-grid-render
 		meshcompare-core
 		meshcompare-meshlab-infrastructure
 		meshcompare-meshlab-renderer
+		meshcompare-color-service
 		Qt5::Widgets
 		Qt5::Xml)
 target_include_directories(meshcompare-grid-render

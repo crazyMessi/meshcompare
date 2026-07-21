@@ -5,6 +5,7 @@
 #include <QString>
 
 #include "app/grid_render_camera.h"
+#include "app/grid_render_coloring.h"
 #include "app/grid_render_size.h"
 #include "core/meshcompare_types.h"
 
@@ -15,6 +16,7 @@ struct GridRenderRequest
     QSize outputSize = defaultGridRenderSize();
     GridRenderCamera camera;
     QString initialCameraViewStateXml;
+    GridRenderColoring coloring = GridRenderColoring::None;
 };
 
 QImage normalizeGridRenderImage(QImage image, const QSize& outputSize);

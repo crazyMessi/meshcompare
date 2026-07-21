@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QImage>
 #include <QThread>
+#include <QTimer>
 #include <QWidget>
 
 #include <common/ml_document/base_types.h>
@@ -18,11 +19,15 @@
 #include "core/reference_resolver.h"
 #include "infrastructure/meshlab/meshlab_mesh_loader.h"
 #include "renderer/meshlab/mesh_lab_renderer_adapter.h"
+#include "services/mesh_color_service.h"
 #include "services/mesh_import_service.h"
+#include "services/surface_comparison.h"
+#include "core/workspace_state.h"
 
 namespace
 {
 constexpr int ViewportReadyTimeoutMs = 10000;
+constexpr int ColoringTimeoutMs = 300000;
 
 SceneDescriptor gridSceneFor(
     const QVector<MeshEntry>& entries,
@@ -107,6 +112,66 @@ OperationResult waitForViewports(
     }
     return OperationResult::failure(
         QStringLiteral("Timed out while preparing OpenGL viewports for grid rendering."));
+}
+
+OperationResult applyGridColoring(
+    GridRenderColoring coloring,
+    const QVector<MeshEntry>& entries,
+    MeshId referenceId,
+    const IMeshResourceProvider& resources,
+    MeshLabRendererAdapter& renderer)
+{
+    if (coloring == GridRenderColoring::None)
+        return OperationResult::success();
+
+    const SurfaceComparisonMetric metric =
+        coloring == GridRenderColoring::Distance
+        ? SurfaceComparisonMetric::DistanceToReference
+        : SurfaceComparisonMetric::DoubleLayer;
+    WorkspaceState state;
+    state.beginLoading();
+    const OperationResult committed = state.commitWorkspace(entries, referenceId);
+    if (!committed.ok)
+        return committed;
+
+    SurfaceComparer comparer;
+    MeshColorService colorService(resources, comparer, state, renderer);
+    AnalysisRequest request;
+    request.generation = state.generation();
+    request.referenceId = referenceId;
+    request.metric = metric;
+    for (const MeshEntry& mesh : state.meshes()) {
+        if (metric == SurfaceComparisonMetric::DoubleLayer || !mesh.isReference)
+            request.targetIds.append(mesh.id);
+    }
+
+    OperationResult finished = OperationResult::failure(
+        QStringLiteral("Grid coloring did not complete."));
+    QEventLoop eventLoop;
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    QObject::connect(
+        &colorService,
+        &MeshColorService::analysisFinished,
+        &eventLoop,
+        [&finished, &eventLoop](const AnalysisBatchResult& result) {
+            finished = result.result;
+            eventLoop.quit();
+        });
+    QObject::connect(&timeout, &QTimer::timeout, &eventLoop, &QEventLoop::quit);
+
+    const OperationResult started = colorService.startAnalysis(request);
+    if (!started.ok)
+        return started;
+    timeout.start(ColoringTimeoutMs);
+    eventLoop.exec();
+    if (timeout.isActive()) {
+        timeout.stop();
+        return finished;
+    }
+    colorService.cancelAnalysis();
+    return OperationResult::failure(
+        QStringLiteral("Timed out while applying grid coloring."));
 }
 
 OperationResult outputPathFor(
@@ -237,6 +302,14 @@ OperationResult renderComparisonGrid(
     const OperationResult ready = waitForViewports(renderer, scene.meshes.size());
     if (!ready.ok)
         return ready;
+    const OperationResult colored = applyGridColoring(
+        request.coloring,
+        staged.entries,
+        reference.referenceId,
+        *staged.repository,
+        renderer);
+    if (!colored.ok)
+        return colored;
 
     QImage image;
     const OperationResult captured = renderer.captureImage(image);

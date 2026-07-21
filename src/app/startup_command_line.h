@@ -5,6 +5,7 @@
 #include <QStringList>
 
 #include "app/grid_render_camera.h"
+#include "app/grid_render_coloring.h"
 
 struct StartupCommandLine
 {
@@ -17,6 +18,7 @@ struct StartupCommandLine
     GridRenderCamera camera;
     QString cameraPoseUuid;
     QString cameraPoseViewId;
+    GridRenderColoring coloring = GridRenderColoring::None;
     QString error;
 };
 

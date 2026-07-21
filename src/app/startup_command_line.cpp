@@ -84,6 +84,21 @@ bool parseCameraPoseReference(
     *viewId = parsedViewId;
     return true;
 }
+
+bool parseGridRenderColoring(
+    const QString& value,
+    GridRenderColoring* coloring)
+{
+    if (value == QStringLiteral("distance")) {
+        *coloring = GridRenderColoring::Distance;
+        return true;
+    }
+    if (value == QStringLiteral("double-layer")) {
+        *coloring = GridRenderColoring::DoubleLayer;
+        return true;
+    }
+    return false;
+}
 } // namespace
 
 StartupCommandLine parseStartupCommandLine(const QStringList& arguments)
@@ -99,6 +114,7 @@ StartupCommandLine parseStartupCommandLine(const QStringList& arguments)
     bool invalidCameraCoordinates = false;
     bool invalidFieldOfView = false;
     bool invalidCameraPoseReference = false;
+    bool invalidColoring = false;
     for (int index = 1; index < arguments.size(); ++index) {
         const QString argument = arguments.at(index);
         if (!optionsEnded && argument == QStringLiteral("--")) {
@@ -168,6 +184,13 @@ StartupCommandLine parseStartupCommandLine(const QStringList& arguments)
             }
             continue;
         }
+        if (!optionsEnded && argument == QStringLiteral("--coloring")) {
+            if (index + 1 >= arguments.size() ||
+                !parseGridRenderColoring(arguments.at(++index), &command.coloring)) {
+                invalidColoring = true;
+            }
+            continue;
+        }
         if (!optionsEnded &&
             (argument == QStringLiteral("--help") ||
              argument == QStringLiteral("-h"))) {
@@ -185,6 +208,7 @@ StartupCommandLine parseStartupCommandLine(const QStringList& arguments)
         command.camera = GridRenderCamera{};
         command.cameraPoseUuid.clear();
         command.cameraPoseViewId.clear();
+        command.coloring = GridRenderColoring::None;
         return command;
     }
 
@@ -212,6 +236,12 @@ StartupCommandLine parseStartupCommandLine(const QStringList& arguments)
     if (invalidCameraPoseReference) {
         command.ok = false;
         command.error = QStringLiteral("--camera-pose requires a UID:view_id value.");
+        return command;
+    }
+    if (invalidColoring) {
+        command.ok = false;
+        command.error = QStringLiteral(
+            "--coloring must be either distance or double-layer.");
         return command;
     }
     if (cameraSpecified != lookAtSpecified) {
@@ -250,10 +280,12 @@ StartupCommandLine parseStartupCommandLine(const QStringList& arguments)
     }
     else if (!command.renderComparisonGrid &&
              (!command.outputDirectory.isEmpty() || command.outputSize.isValid() ||
-              hasCameraOptions || cameraPoseSpecified)) {
+              hasCameraOptions || cameraPoseSpecified ||
+              command.coloring != GridRenderColoring::None)) {
         command.ok = false;
         command.error =
-            QStringLiteral("--output-dir, --size, and camera options require --render-grid.");
+            QStringLiteral(
+                "--output-dir, --size, --coloring, and camera options require --render-grid.");
     }
     return command;
 }
@@ -263,7 +295,7 @@ QString startupCommandLineUsage()
     return QStringLiteral(
         "Usage:\n"
         "  meshcompare [mesh ...]\n"
-        "  meshcompare --render-grid comparison.mlp --output-dir output [--size WIDTHxHEIGHT] [--camera X,Y,Z --look-at X,Y,Z [--up X,Y,Z] [--fov DEGREES] | --camera-pose UID:view_id]\n"
+        "  meshcompare --render-grid comparison.mlp --output-dir output [--size WIDTHxHEIGHT] [--coloring distance|double-layer] [--camera X,Y,Z --look-at X,Y,Z [--up X,Y,Z] [--fov DEGREES] | --camera-pose UID:view_id]\n"
         "\n"
         "--render-grid  Render one MeshLab project to a PNG without opening a window.\n"
         "--output-dir   Directory that receives <project>.grid.png.\n"
@@ -273,5 +305,6 @@ QString startupCommandLineUsage()
         "--up           Camera up vector; defaults to 0,1,0.\n"
         "--fov          Perspective field of view in degrees; defaults to 60.\n"
         "--camera-pose  Reuse a saved camera pose, addressed as UID:view_id.\n"
+        "--coloring     Apply existing distance or double-layer analysis colors.\n"
         "--help         Show this help text.\n");
 }

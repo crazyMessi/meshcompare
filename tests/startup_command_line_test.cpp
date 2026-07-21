@@ -151,6 +151,53 @@ private slots:
         QCOMPARE(command.cameraPoseViewId, QStringLiteral("view_003"));
     }
 
+    void renderGridAcceptsDistanceColoring()
+    {
+        const StartupCommandLine command = parseStartupCommandLine(
+            {QStringLiteral("meshcompare"),
+             QStringLiteral("--render-grid"),
+             QStringLiteral("comparison.mlp"),
+             QStringLiteral("--output-dir"),
+             QStringLiteral("/tmp/rendered"),
+             QStringLiteral("--coloring"),
+             QStringLiteral("distance")});
+
+        QVERIFY(command.ok);
+        QCOMPARE(command.coloring, GridRenderColoring::Distance);
+    }
+
+    void renderGridAcceptsDoubleLayerColoring()
+    {
+        const StartupCommandLine command = parseStartupCommandLine(
+            {QStringLiteral("meshcompare"),
+             QStringLiteral("--render-grid"),
+             QStringLiteral("comparison.mlp"),
+             QStringLiteral("--output-dir"),
+             QStringLiteral("/tmp/rendered"),
+             QStringLiteral("--coloring"),
+             QStringLiteral("double-layer")});
+
+        QVERIFY(command.ok);
+        QCOMPARE(command.coloring, GridRenderColoring::DoubleLayer);
+    }
+
+    void renderGridRejectsUnsupportedColoring()
+    {
+        const StartupCommandLine command = parseStartupCommandLine(
+            {QStringLiteral("meshcompare"),
+             QStringLiteral("--render-grid"),
+             QStringLiteral("comparison.mlp"),
+             QStringLiteral("--output-dir"),
+             QStringLiteral("/tmp/rendered"),
+             QStringLiteral("--coloring"),
+             QStringLiteral("uniform")});
+
+        QVERIFY(!command.ok);
+        QCOMPARE(
+            command.error,
+            QStringLiteral("--coloring must be either distance or double-layer."));
+    }
+
     void renderGridRejectsSavedPoseCombinedWithExplicitCamera()
     {
         const StartupCommandLine command = parseStartupCommandLine(

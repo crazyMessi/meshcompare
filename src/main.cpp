@@ -98,6 +98,7 @@ int main(int argc, char** argv)
             if (startupCommand.outputSize.isValid())
                 request.outputSize = startupCommand.outputSize;
             request.camera = startupCommand.camera;
+            request.coloring = startupCommand.coloring;
             if (!startupCommand.cameraPoseUuid.isEmpty()) {
                 const CameraPosePaths cameraPaths = resolveCameraPosePaths(
                     applicationDataRoot,
