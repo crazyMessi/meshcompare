@@ -1,6 +1,7 @@
 #include "camera_pose_store.h"
 #include "camera_pose_store_file_ops.h"
 
+#include "core/camera_pose_tags.h"
 #include "core/camera_pose_uuid.h"
 
 #include <QDateTime>
@@ -412,17 +413,6 @@ QJsonArray collectionAsArray(const ParsedCollection& collection)
 	return values;
 }
 
-QStringList normalizedTags(const QStringList& tags)
-{
-	QStringList normalized;
-	for (const QString& rawTag : tags) {
-		const QString tag = rawTag.trimmed();
-		if (!tag.isEmpty() && !normalized.contains(tag))
-			normalized.append(tag);
-	}
-	return normalized;
-}
-
 OperationResult addDefaultTagsToExistingPoses(const QString& storagePath)
 {
 	ParsedLibrary library;
@@ -556,7 +546,8 @@ OperationResult CameraPoseStore::migrateLegacyIfNeeded()
 OperationResult CameraPoseStore::save(
 	const QString& uuid,
 	const CameraPose& pose,
-	QString* viewId)
+	QString* viewId,
+	const QStringList& tags)
 {
 	const QString normalizedUuid = normalizeUuid(uuid);
 	if (normalizedUuid.isEmpty())
@@ -591,7 +582,9 @@ OperationResult CameraPoseStore::save(
 	newView.insert(
 		SavedAtUtcKey,
 		QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
-	newView.insert(TagsKey, QJsonArray());
+	newView.insert(
+		TagsKey,
+		QJsonArray::fromStringList(meshcompare::normalizeCameraPoseTags(tags)));
 	newView.insert(ParametersKey, poseParameters(pose.viewStateXml));
 	newView.insert(ViewStateXmlKey, pose.viewStateXml);
 	views.append(newView);
@@ -704,7 +697,9 @@ OperationResult CameraPoseStore::setTags(
 
 	QJsonArray views = collectionAsArray(collectionIt.value());
 	QJsonObject view = views.at(viewIndex).toObject();
-	view.insert(TagsKey, QJsonArray::fromStringList(normalizedTags(tags)));
+	view.insert(
+		TagsKey,
+		QJsonArray::fromStringList(meshcompare::normalizeCameraPoseTags(tags)));
 	views[viewIndex] = view;
 	QJsonObject poses = library.poses;
 	poses.remove(collectionIt.value().sourceKey);

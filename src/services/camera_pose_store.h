@@ -25,7 +25,8 @@ public:
 	virtual OperationResult save(
 		const QString& uuid,
 		const CameraPose& pose,
-		QString* viewId = nullptr) = 0;
+		QString* viewId = nullptr,
+		const QStringList& tags = {}) = 0;
 	virtual QVector<SavedCameraPose> list(
 		const QString& uuid,
 		OperationResult* result = nullptr) const = 0;
@@ -49,7 +50,8 @@ public:
 	OperationResult save(
 		const QString& uuid,
 		const CameraPose& pose,
-		QString* viewId = nullptr) override;
+		QString* viewId = nullptr,
+		const QStringList& tags = {}) override;
 	QVector<SavedCameraPose> list(
 		const QString& uuid,
 		OperationResult* result = nullptr) const override;

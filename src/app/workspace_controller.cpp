@@ -658,21 +658,25 @@ OperationResult WorkspaceController::setCameraPoseUid(const QString& uid)
     return OperationResult::success();
 }
 
-OperationResult WorkspaceController::saveCurrentCameraPose(QString* savedViewId)
+OperationResult WorkspaceController::saveCurrentCameraPose(
+    QString* savedViewId,
+    const QStringList& tags)
 {
-    return saveCurrentCameraPoseImpl(nullptr, savedViewId);
+    return saveCurrentCameraPoseImpl(nullptr, savedViewId, tags);
 }
 
 OperationResult WorkspaceController::saveCurrentCameraPoseWithScreenshot(
     QImage& screenshot,
-    QString* savedViewId)
+    QString* savedViewId,
+    const QStringList& tags)
 {
-    return saveCurrentCameraPoseImpl(&screenshot, savedViewId);
+    return saveCurrentCameraPoseImpl(&screenshot, savedViewId, tags);
 }
 
 OperationResult WorkspaceController::saveCurrentCameraPoseImpl(
     QImage* screenshot,
-    QString* savedViewId)
+    QString* savedViewId,
+    const QStringList& tags)
 {
     const OperationResult validation = validateCameraMutation();
     if (!validation.ok) {
@@ -699,7 +703,7 @@ OperationResult WorkspaceController::saveCurrentCameraPoseImpl(
     const CameraPose pose = renderer_.captureCamera();
     QString committedViewId;
     const OperationResult saved =
-        cameraStore_.save(workspaceUuid_, pose, &committedViewId);
+        cameraStore_.save(workspaceUuid_, pose, &committedViewId, tags);
     if (!saved.ok) {
         publishCameraSaveFinished(saved);
         return saved;

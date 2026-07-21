@@ -31,7 +31,8 @@ public:
     OperationResult save(
         const QString& uuid,
         const CameraPose& pose,
-        QString* viewId = nullptr) override
+        QString* viewId = nullptr,
+        const QStringList& tags = {}) override
     {
         ++saveCount_;
         lastSaveUuid_ = uuid;
@@ -50,7 +51,7 @@ public:
             {CameraPoseStore::normalizeUuid(uuid),
              generated,
              QStringLiteral("2026-07-15T00:00:00Z"),
-             QStringList(),
+             tags,
              pose});
         if (viewId != nullptr)
             *viewId = generated;

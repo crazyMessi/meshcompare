@@ -7,12 +7,15 @@
 #include <QString>
 
 class ICameraCommands;
+class QCompleter;
 class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPushButton;
+class QStringListModel;
 class QWidget;
 class WorkspaceState;
+struct CameraPanelSnapshot;
 struct OperationResult;
 
 struct CameraPanelServices
@@ -38,7 +41,11 @@ signals:
 
 private:
     QString selectedViewId() const;
+    QStringList enteredTags() const;
     void refreshTagInput();
+    void updateTagSuggestions(const CameraPanelSnapshot& snapshot);
+    void rememberTags(const QStringList& tags);
+    void rememberTagsForView(const QString& viewId);
     OperationResult commitUidInput(bool refreshAfterCommit);
     void applySelectedPose();
     void updateSelectedPoseTags();
@@ -53,11 +60,16 @@ private:
     QLineEdit* uidInput_ = nullptr;
     QListWidget* poseList_ = nullptr;
     QLineEdit* tagInput_ = nullptr;
+    QStringListModel* tagSuggestionModel_ = nullptr;
+    QCompleter* tagCompleter_ = nullptr;
     QPushButton* saveButton_ = nullptr;
     QPushButton* saveAndCopyScreenshotButton_ = nullptr;
     QPushButton* applyButton_ = nullptr;
     QPushButton* updateTagsButton_ = nullptr;
     QPushButton* deleteButton_ = nullptr;
     QString workspaceUuid_;
+    QString tagHistoryUuid_;
+    QStringList lastUsedTags_;
+    bool hasLastUsedTags_ = false;
     bool snapshotAvailable_ = false;
 };

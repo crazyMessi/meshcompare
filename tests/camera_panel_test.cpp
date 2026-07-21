@@ -3,6 +3,7 @@
 #include <functional>
 
 #include <QApplication>
+#include <QCompleter>
 #include <QImage>
 #include <QLabel>
 #include <QLineEdit>
@@ -66,9 +67,12 @@ public:
         return setUidResult;
     }
 
-    OperationResult saveCurrentCameraPose(QString* savedViewId) override
+    OperationResult saveCurrentCameraPose(
+        QString* savedViewId,
+        const QStringList& tags) override
     {
         ++saveCalls;
+        lastSaveTags = tags;
         if (!saveResult.ok)
             return saveResult;
         if (saveAction)
@@ -80,9 +84,11 @@ public:
 
     OperationResult saveCurrentCameraPoseWithScreenshot(
         QImage& screenshot,
-        QString* savedViewId) override
+        QString* savedViewId,
+        const QStringList& tags) override
     {
         ++saveWithScreenshotCalls;
+        lastSaveTags = tags;
         if (!saveWithScreenshotResult.ok)
             return saveWithScreenshotResult;
         if (saveWithScreenshotAction)
@@ -140,6 +146,7 @@ public:
     QStringList applyViewIds;
     QStringList taggedViewIds;
     QVector<QStringList> assignedTags;
+    QStringList lastSaveTags;
     QStringList deleteViewIds;
     QImage screenshotToCopy;
 };
@@ -254,6 +261,7 @@ private slots:
         RecordingCameraCommands commands;
         commands.snapshot.workspaceUuid = QStringLiteral(
             "123e4567-e89b-12d3-a456-426614174000");
+        // Legacy pose libraries may omit milliseconds and do not promise list order.
         commands.snapshot.poses = {
             summary(QStringLiteral("view_001"), QStringLiteral("first")),
             summary(QStringLiteral("view_002"), QStringLiteral("second"))};
@@ -301,10 +309,87 @@ private slots:
         QCOMPARE(
             commands.assignedTags,
             QVector<QStringList>({
-                {QStringLiteral("inspection"), QStringLiteral(" underside")}}));
+                {QStringLiteral("inspection"), QStringLiteral("underside")}}));
         QCOMPARE(ui.tags->text(), QStringLiteral("inspection, underside"));
         QVERIFY(ui.poses->item(0)->text().contains(QStringLiteral("#inspection")));
         QVERIFY(ui.poses->item(0)->text().contains(QStringLiteral("#underside")));
+    }
+
+    void latestPoseTagsPrefillAndSaveTheNextPose()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral(
+            "123e4567-e89b-12d3-a456-426614174000");
+        commands.snapshot.poses = {
+            summary(QStringLiteral("view_002"), QStringLiteral("2026-07-21T12:00:00Z"),
+                    {QStringLiteral("inspection"), QStringLiteral("underside")}),
+            summary(QStringLiteral("view_001"), QStringLiteral("2026-07-21T11:00:00Z"),
+                    {QStringLiteral("hole")})};
+        CameraPanel panel(state, commands);
+        const Controls ui = controls(panel);
+
+        QCOMPARE(ui.tags->text(), QStringLiteral("inspection, underside"));
+        QVERIFY(ui.tags->isEnabled());
+        QTest::mouseClick(ui.save, Qt::LeftButton);
+
+        QCOMPARE(
+            commands.lastSaveTags,
+            QStringList({QStringLiteral("inspection"), QStringLiteral("underside")}));
+    }
+
+    void successfulSaveRemembersTagsWhenTheRefreshDoesNotYetContainThePose()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral(
+            "123e4567-e89b-12d3-a456-426614174000");
+        commands.snapshot.poses = {summary(
+            QStringLiteral("view_001"),
+            QStringLiteral("2026-07-21T12:00:00Z"),
+            {QStringLiteral("hole")})};
+        CameraPanel panel(state, commands);
+        const Controls ui = controls(panel);
+
+        ui.tags->setText(QStringLiteral("inspection, underside"));
+        QTest::mouseClick(ui.save, Qt::LeftButton);
+
+        QCOMPARE(
+            commands.lastSaveTags,
+            QStringList({QStringLiteral("inspection"), QStringLiteral("underside")}));
+        QCOMPARE(ui.tags->text(), QStringLiteral("inspection, underside"));
+    }
+
+    void tagSuggestionsMatchTheCurrentCommaSeparatedPrefix()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral(
+            "123e4567-e89b-12d3-a456-426614174000");
+        commands.snapshot.poses = {
+            summary(QStringLiteral("view_001"), QStringLiteral("first"),
+                    {QStringLiteral("hole"), QStringLiteral("inspection")}),
+            summary(QStringLiteral("view_002"), QStringLiteral("latest"),
+                    {QStringLiteral("underside")})};
+        CameraPanel panel(state, commands);
+        const Controls ui = controls(panel);
+        QVERIFY(ui.tags != nullptr);
+        QCompleter* completer = ui.tags->completer();
+        QVERIFY(completer != nullptr);
+
+        ui.tags->clear();
+        QTest::keyClicks(ui.tags, QStringLiteral("hole, un"));
+
+        QCOMPARE(
+            ui.tags->text().section(QLatin1Char(','), -1).trimmed(),
+            QStringLiteral("un"));
+        QCOMPARE(completer->completionCount(), 1);
+        QCOMPARE(
+            completer->currentCompletion(),
+            QStringLiteral("hole, underside"));
     }
 
     void saveAndCopyScreenshotUsesOneCombinedCommandAndRefreshes()

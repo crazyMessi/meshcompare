@@ -132,13 +132,16 @@ public:
         return OperationResult::success();
     }
 
-    OperationResult saveCurrentCameraPose(QString*) override
+    OperationResult saveCurrentCameraPose(
+        QString*,
+        const QStringList&) override
     {
         return OperationResult::success();
     }
     OperationResult saveCurrentCameraPoseWithScreenshot(
         QImage& screenshot,
-        QString*) override
+        QString*,
+        const QStringList&) override
     {
         screenshot = QImage(4, 3, QImage::Format_RGB32);
         screenshot.fill(QColor(42, 96, 164));

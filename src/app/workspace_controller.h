@@ -64,10 +64,12 @@ public:
     CameraPanelSnapshot cameraPanelSnapshot() const override;
     OperationResult setCameraPoseUid(const QString& uid) override;
     OperationResult saveCurrentCameraPose(
-        QString* savedViewId = nullptr) override;
+        QString* savedViewId = nullptr,
+        const QStringList& tags = {}) override;
     OperationResult saveCurrentCameraPoseWithScreenshot(
         QImage& screenshot,
-        QString* savedViewId = nullptr) override;
+        QString* savedViewId = nullptr,
+        const QStringList& tags = {}) override;
     OperationResult applyCameraPose(const QString& viewId) override;
     OperationResult setCameraPoseTags(
         const QString& viewId,
@@ -108,7 +110,8 @@ private:
     OperationResult validateCameraMutation() const;
     OperationResult saveCurrentCameraPoseImpl(
         QImage* screenshot,
-        QString* savedViewId);
+        QString* savedViewId,
+        const QStringList& tags);
 
     WorkspaceState& state_;
     IMeshImportService& importer_;

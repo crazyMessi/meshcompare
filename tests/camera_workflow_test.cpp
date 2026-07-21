@@ -242,7 +242,9 @@ private slots:
         const OperationResult selected =
             controller.setCameraPoseUid(QStringLiteral("  Manual-2048  "));
         QVERIFY2(selected.ok, qPrintable(selected.error));
-        const OperationResult saved = controller.saveCurrentCameraPose();
+        const QStringList tags = {
+            QStringLiteral("inspection"), QStringLiteral("underside")};
+        const OperationResult saved = controller.saveCurrentCameraPose(nullptr, tags);
 
         QVERIFY2(saved.ok, qPrintable(saved.error));
         QCOMPARE(
@@ -252,6 +254,9 @@ private slots:
         QCOMPARE(
             store.lastSavedPose().viewStateXml,
             QStringLiteral("manual-camera"));
+        const CameraPanelSnapshot afterSave = controller.cameraPanelSnapshot();
+        QCOMPARE(afterSave.poses.size(), 1);
+        QCOMPARE(afterSave.poses.at(0).tags, tags);
     }
 
     void storeListFailureIsANonFatalImportNotice()

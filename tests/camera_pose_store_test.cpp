@@ -280,7 +280,12 @@ void CameraPoseStoreTest::saveCreatesNestedSchema2Library()
 	const QString current = dir.filePath(QStringLiteral("deep/current/poses.json"));
 	CameraPoseStore store(current, QString());
 	QString viewId = QStringLiteral("stale");
-	QVERIFY(store.save(UuidA, pose(QStringLiteral("<camera>one</camera>")), &viewId).ok);
+	QVERIFY(store.save(
+		UuidA,
+		pose(QStringLiteral("<camera>one</camera>")),
+		&viewId,
+		{QStringLiteral(" inspection "), QStringLiteral("hole"),
+		 QStringLiteral("inspection")}).ok);
 	QCOMPARE(viewId, QStringLiteral("view_001"));
 	QVERIFY(QFileInfo::exists(current));
 
@@ -293,7 +298,7 @@ void CameraPoseStoreTest::saveCreatesNestedSchema2Library()
 	QVERIFY(poses.contains(UuidA));
 	QCOMPARE(
 		poses.value(UuidA).toArray().at(0).toObject().value(QStringLiteral("tags")).toArray(),
-		QJsonArray());
+		QJsonArray({QStringLiteral("inspection"), QStringLiteral("hole")}));
 }
 
 void CameraPoseStoreTest::poseTagsCanBeAssignedAndLegacyPosesReceiveHoleTag()

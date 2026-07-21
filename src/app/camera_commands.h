@@ -30,10 +30,12 @@ public:
     virtual CameraPanelSnapshot cameraPanelSnapshot() const = 0;
     virtual OperationResult setCameraPoseUid(const QString& uid) = 0;
     virtual OperationResult saveCurrentCameraPose(
-        QString* savedViewId = nullptr) = 0;
+        QString* savedViewId = nullptr,
+        const QStringList& tags = {}) = 0;
     virtual OperationResult saveCurrentCameraPoseWithScreenshot(
         QImage& screenshot,
-        QString* savedViewId = nullptr) = 0;
+        QString* savedViewId = nullptr,
+        const QStringList& tags = {}) = 0;
     virtual OperationResult applyCameraPose(const QString& viewId) = 0;
     virtual OperationResult setCameraPoseTags(
         const QString& viewId,
