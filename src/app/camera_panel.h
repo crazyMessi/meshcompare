@@ -3,16 +3,17 @@
 #include <functional>
 
 #include <QFrame>
+#include <QHash>
 #include <QImage>
 #include <QString>
+#include <QStringList>
 
 class ICameraCommands;
-class QCompleter;
 class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPushButton;
-class QStringListModel;
+class TagEditor;
 class QWidget;
 class WorkspaceState;
 struct CameraPanelSnapshot;
@@ -41,9 +42,11 @@ signals:
 
 private:
     QString selectedViewId() const;
-    QStringList enteredTags() const;
-    void refreshTagInput();
+    void refreshSelectedTagEditor();
     void updateTagSuggestions(const CameraPanelSnapshot& snapshot);
+    void appendKnownTags(const QStringList& tags);
+    void publishKnownTags();
+    void rememberKnownTags(const QStringList& tags);
     void rememberTags(const QStringList& tags);
     void rememberTagsForView(const QString& viewId);
     OperationResult commitUidInput(bool refreshAfterCommit);
@@ -59,9 +62,9 @@ private:
     QLabel* uuidLabel_ = nullptr;
     QLineEdit* uidInput_ = nullptr;
     QListWidget* poseList_ = nullptr;
-    QLineEdit* tagInput_ = nullptr;
-    QStringListModel* tagSuggestionModel_ = nullptr;
-    QCompleter* tagCompleter_ = nullptr;
+    TagEditor* newPoseTagEditor_ = nullptr;
+    QLabel* selectedPoseTagLabel_ = nullptr;
+    TagEditor* selectedPoseTagEditor_ = nullptr;
     QPushButton* saveButton_ = nullptr;
     QPushButton* saveAndCopyScreenshotButton_ = nullptr;
     QPushButton* applyButton_ = nullptr;
@@ -69,7 +72,9 @@ private:
     QPushButton* deleteButton_ = nullptr;
     QString workspaceUuid_;
     QString tagHistoryUuid_;
+    QStringList knownTags_;
     QStringList lastUsedTags_;
+    QHash<QString, QStringList> pendingTagUpdates_;
     bool hasLastUsedTags_ = false;
     bool snapshotAvailable_ = false;
 };

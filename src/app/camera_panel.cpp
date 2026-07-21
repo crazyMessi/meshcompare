@@ -1,13 +1,12 @@
 #include "camera_panel.h"
 
 #include "camera_commands.h"
-#include "../core/camera_pose_tags.h"
+#include "tag_editor.h"
 #include "../core/workspace_state.h"
 
 #include <utility>
 
 #include <QClipboard>
-#include <QCompleter>
 #include <QDateTime>
 #include <QFont>
 #include <QGuiApplication>
@@ -19,7 +18,6 @@
 #include <QPalette>
 #include <QPushButton>
 #include <QSignalBlocker>
-#include <QStringListModel>
 #include <QVBoxLayout>
 #include <QVariant>
 
@@ -27,11 +25,6 @@ namespace
 {
 constexpr int PoseViewIdRole = Qt::UserRole;
 constexpr int PoseTagsRole = Qt::UserRole + 1;
-
-QString tagPrefix(const QString& text)
-{
-    return text.section(QLatin1Char(','), -1).trimmed();
-}
 
 QDateTime parseSavedAtUtc(const QString& value)
 {
@@ -63,34 +56,6 @@ const CameraPoseSummary* mostRecentPose(
     }
     return mostRecent;
 }
-
-class TagCompleter final : public QCompleter
-{
-public:
-    explicit TagCompleter(QAbstractItemModel* model, QObject* parent)
-        : QCompleter(model, parent)
-    {
-    }
-
-protected:
-    QStringList splitPath(const QString& path) const override
-    {
-        return {tagPrefix(path)};
-    }
-
-    QString pathFromIndex(const QModelIndex& index) const override
-    {
-        const QString completion = QCompleter::pathFromIndex(index);
-        const auto* input = qobject_cast<const QLineEdit*>(widget());
-        if (input == nullptr)
-            return completion;
-        const QString text = input->text();
-        const int separator = text.lastIndexOf(QLatin1Char(','));
-        return separator < 0
-            ? completion
-            : text.left(separator + 1) + QLatin1Char(' ') + completion;
-    }
-};
 }
 
 CameraPanel::CameraPanel(
@@ -142,6 +107,16 @@ CameraPanel::CameraPanel(
     uidInput_->setPlaceholderText(tr("Enter workspace UID"));
     root->addWidget(uidInput_);
 
+    auto* newPoseTagRow = new QHBoxLayout;
+    auto* newPoseTagLabel = new QLabel(tr("New pose tags"), this);
+    newPoseTagRow->addWidget(newPoseTagLabel);
+    newPoseTagEditor_ = new TagEditor(this);
+    newPoseTagEditor_->setObjectName(QStringLiteral("newPoseTagEditor"));
+    newPoseTagEditor_->setAccessibleName(tr("Tags for new pose"));
+    newPoseTagLabel->setBuddy(newPoseTagEditor_);
+    newPoseTagRow->addWidget(newPoseTagEditor_, 1);
+    root->addLayout(newPoseTagRow);
+
     saveButton_ = new QPushButton(tr("Save Current Pose"), this);
     saveButton_->setObjectName(QStringLiteral("saveCameraPoseButton"));
     root->addWidget(saveButton_);
@@ -160,16 +135,16 @@ CameraPanel::CameraPanel(
     poseList_->setMinimumHeight(144);
     root->addWidget(poseList_);
 
-    tagInput_ = new QLineEdit(this);
-    tagInput_->setObjectName(QStringLiteral("cameraPoseTagInput"));
-    tagInput_->setPlaceholderText(tr("Tags (comma separated)"));
-    tagSuggestionModel_ = new QStringListModel(this);
-    tagCompleter_ = new TagCompleter(tagSuggestionModel_, this);
-    tagCompleter_->setCaseSensitivity(Qt::CaseInsensitive);
-    tagCompleter_->setFilterMode(Qt::MatchStartsWith);
-    tagCompleter_->setCompletionMode(QCompleter::PopupCompletion);
-    tagInput_->setCompleter(tagCompleter_);
-    root->addWidget(tagInput_);
+    auto* selectedPoseTagRow = new QHBoxLayout;
+    selectedPoseTagLabel_ = new QLabel(tr("Selected pose tags"), this);
+    selectedPoseTagLabel_->setObjectName(QStringLiteral("selectedPoseTagLabel"));
+    selectedPoseTagRow->addWidget(selectedPoseTagLabel_);
+    selectedPoseTagEditor_ = new TagEditor(this);
+    selectedPoseTagEditor_->setObjectName(QStringLiteral("selectedPoseTagEditor"));
+    selectedPoseTagEditor_->setAccessibleName(tr("Tags for selected pose"));
+    selectedPoseTagLabel_->setBuddy(selectedPoseTagEditor_);
+    selectedPoseTagRow->addWidget(selectedPoseTagEditor_, 1);
+    root->addLayout(selectedPoseTagRow);
 
     updateTagsButton_ = new QPushButton(tr("Update Tags"), this);
     updateTagsButton_->setObjectName(QStringLiteral("updateCameraPoseTagsButton"));
@@ -190,7 +165,7 @@ CameraPanel::CameraPanel(
         &QListWidget::itemSelectionChanged,
         this,
         [this] {
-            refreshTagInput();
+            refreshSelectedTagEditor();
             updateActionState();
         });
     connect(
@@ -198,12 +173,6 @@ CameraPanel::CameraPanel(
         &QLineEdit::textChanged,
         this,
         &CameraPanel::updateActionState);
-    connect(tagInput_, &QLineEdit::textEdited, this, [this] {
-        const QString prefix = tagPrefix(tagInput_->text());
-        tagCompleter_->setCompletionPrefix(prefix);
-        if (!prefix.isEmpty())
-            tagCompleter_->complete();
-    });
     connect(uidInput_, &QLineEdit::editingFinished, this, [this] {
         const OperationResult result = commitUidInput(true);
         reportFailure(result);
@@ -215,7 +184,7 @@ CameraPanel::CameraPanel(
             return;
         }
         QString savedViewId;
-        const QStringList tags = enteredTags();
+        const QStringList tags = newPoseTagEditor_->tags();
         const OperationResult result = commands_.saveCurrentCameraPose(
             &savedViewId, tags);
         if (!result.ok) {
@@ -225,7 +194,7 @@ CameraPanel::CameraPanel(
         refreshFromState();
         rememberTags(tags);
         rememberTagsForView(savedViewId);
-        refreshTagInput();
+        newPoseTagEditor_->load(lastUsedTags_);
     });
     connect(
         saveAndCopyScreenshotButton_,
@@ -240,7 +209,7 @@ CameraPanel::CameraPanel(
 
             QImage screenshot;
             QString savedViewId;
-            const QStringList tags = enteredTags();
+            const QStringList tags = newPoseTagEditor_->tags();
             const OperationResult result =
                 commands_.saveCurrentCameraPoseWithScreenshot(
                     screenshot, &savedViewId, tags);
@@ -252,7 +221,7 @@ CameraPanel::CameraPanel(
             refreshFromState();
             rememberTags(tags);
             rememberTagsForView(savedViewId);
-            refreshTagInput();
+            newPoseTagEditor_->load(lastUsedTags_);
             if (screenshot.isNull() ||
                 !services_.copyImageToClipboard(screenshot)) {
                 reportFailure(OperationResult::failure(tr(
@@ -283,11 +252,15 @@ void CameraPanel::refreshFromState()
     const CameraPanelSnapshot snapshot = commands_.cameraPanelSnapshot();
     workspaceUuid_ = snapshot.workspaceUuid;
     snapshotAvailable_ = snapshot.result.ok;
-    if (tagHistoryUuid_ != workspaceUuid_) {
+    const bool workspaceChanged = tagHistoryUuid_ != workspaceUuid_;
+    if (workspaceChanged) {
         tagHistoryUuid_ = workspaceUuid_;
+        knownTags_.clear();
         lastUsedTags_.clear();
+        pendingTagUpdates_.clear();
         hasLastUsedTags_ = false;
-        tagSuggestionModel_->setStringList({});
+        newPoseTagEditor_->setSuggestions({});
+        selectedPoseTagEditor_->setSuggestions({});
     }
     if (snapshotAvailable_ && !hasLastUsedTags_) {
         const CameraPoseSummary* latest = mostRecentPose(snapshot.poses);
@@ -296,11 +269,10 @@ void CameraPanel::refreshFromState()
             hasLastUsedTags_ = true;
         }
     }
+    if (workspaceChanged)
+        newPoseTagEditor_->load(lastUsedTags_);
     poseList_->clear();
-    {
-        const QSignalBlocker tagBlocker(tagInput_);
-        tagInput_->clear();
-    }
+    selectedPoseTagEditor_->load({});
     {
         const QSignalBlocker inputBlocker(uidInput_);
         uidInput_->setText(
@@ -331,23 +303,32 @@ void CameraPanel::refreshFromState()
 
     uuidLabel_->setText(tr("Workspace UID"));
     poseList_->setEnabled(true);
+    for (const CameraPoseSummary& pose : snapshot.poses) {
+        auto pending = pendingTagUpdates_.find(pose.viewId);
+        if (pending != pendingTagUpdates_.end() && pending.value() == pose.tags)
+            pendingTagUpdates_.erase(pending);
+    }
     updateTagSuggestions(snapshot);
     for (const CameraPoseSummary& pose : snapshot.poses) {
+        const auto pending = pendingTagUpdates_.constFind(pose.viewId);
+        const QStringList poseTags = pending == pendingTagUpdates_.constEnd()
+            ? pose.tags
+            : pending.value();
         QString label = pose.savedAtUtc.isEmpty()
             ? pose.viewId
             : tr("%1 — %2").arg(pose.viewId, pose.savedAtUtc);
-        if (!pose.tags.isEmpty()) {
+        if (!poseTags.isEmpty()) {
             QStringList renderedTags;
-            renderedTags.reserve(pose.tags.size());
-            for (const QString& tag : pose.tags)
+            renderedTags.reserve(poseTags.size());
+            for (const QString& tag : poseTags)
                 renderedTags.append(QStringLiteral("#%1").arg(tag));
             label.append(tr(" · %1").arg(renderedTags.join(QLatin1Char(' '))));
         }
         auto* item = new QListWidgetItem(label, poseList_);
         item->setData(PoseViewIdRole, pose.viewId);
-        item->setData(PoseTagsRole, pose.tags);
+        item->setData(PoseTagsRole, poseTags);
     }
-    refreshTagInput();
+    refreshSelectedTagEditor();
     updateActionState();
 }
 
@@ -377,41 +358,59 @@ QString CameraPanel::selectedViewId() const
         : item->data(PoseViewIdRole).toString();
 }
 
-QStringList CameraPanel::enteredTags() const
-{
-    return meshcompare::normalizeCameraPoseTags(
-        tagInput_->text().split(QLatin1Char(','), Qt::SkipEmptyParts));
-}
-
-void CameraPanel::refreshTagInput()
+void CameraPanel::refreshSelectedTagEditor()
 {
     const QListWidgetItem* item = poseList_->currentItem();
-    const QStringList tags = item == nullptr
-        ? lastUsedTags_
-        : item->data(PoseTagsRole).toStringList();
-    const QSignalBlocker blocker(tagInput_);
-    tagInput_->setText(tags.join(QStringLiteral(", ")));
+    selectedPoseTagLabel_->setText(
+        item == nullptr
+            ? tr("Selected pose tags")
+            : tr("Selected pose tags — %1")
+                  .arg(item->data(PoseViewIdRole).toString()));
+    selectedPoseTagEditor_->load(
+        item == nullptr
+            ? QStringList()
+            : item->data(PoseTagsRole).toStringList());
 }
 
 void CameraPanel::updateTagSuggestions(const CameraPanelSnapshot& snapshot)
 {
-    QStringList suggestions;
-    const auto appendUnique = [&suggestions](const QStringList& tags) {
-        for (const QString& tag : tags) {
-            if (!tag.isEmpty() && !suggestions.contains(tag, Qt::CaseInsensitive))
-                suggestions.append(tag);
-        }
-    };
-    appendUnique(lastUsedTags_);
+    knownTags_.clear();
+    appendKnownTags(lastUsedTags_);
     for (const CameraPoseSummary& pose : snapshot.poses)
-        appendUnique(pose.tags);
-    tagSuggestionModel_->setStringList(suggestions);
+        appendKnownTags(pose.tags);
+    for (auto pending = pendingTagUpdates_.cbegin();
+         pending != pendingTagUpdates_.cend();
+         ++pending) {
+        appendKnownTags(pending.value());
+    }
+    publishKnownTags();
+}
+
+void CameraPanel::appendKnownTags(const QStringList& tags)
+{
+    for (const QString& tag : tags) {
+        if (!tag.isEmpty() && !knownTags_.contains(tag, Qt::CaseInsensitive))
+            knownTags_.append(tag);
+    }
+}
+
+void CameraPanel::publishKnownTags()
+{
+    newPoseTagEditor_->setSuggestions(knownTags_);
+    selectedPoseTagEditor_->setSuggestions(knownTags_);
+}
+
+void CameraPanel::rememberKnownTags(const QStringList& tags)
+{
+    appendKnownTags(tags);
+    publishKnownTags();
 }
 
 void CameraPanel::rememberTags(const QStringList& tags)
 {
     lastUsedTags_ = tags;
     hasLastUsedTags_ = true;
+    rememberKnownTags(tags);
 }
 
 void CameraPanel::rememberTagsForView(const QString& viewId)
@@ -444,15 +443,15 @@ void CameraPanel::updateSelectedPoseTags()
         updateActionState();
         return;
     }
-    const QStringList tags = enteredTags();
+    const QStringList tags = selectedPoseTagEditor_->tags();
     const OperationResult result = commands_.setCameraPoseTags(viewId, tags);
     if (!result.ok) {
         reportFailure(result);
         return;
     }
+    pendingTagUpdates_.insert(viewId, tags);
     refreshFromState();
-    rememberTags(tags);
-    rememberTagsForView(viewId);
+    rememberKnownTags(tags);
     for (int index = 0; index < poseList_->count(); ++index) {
         QListWidgetItem* item = poseList_->item(index);
         if (item != nullptr && item->data(PoseViewIdRole).toString() == viewId) {
@@ -475,6 +474,7 @@ void CameraPanel::deleteSelectedPose()
         reportFailure(result);
         return;
     }
+    pendingTagUpdates_.remove(viewId);
     refreshFromState();
 }
 
@@ -490,7 +490,11 @@ void CameraPanel::updateActionState()
     saveButton_->setEnabled(ready && hasUidInput);
     saveAndCopyScreenshotButton_->setEnabled(ready && hasUidInput);
     applyButton_->setEnabled(ready && inputMatchesSnapshot && hasSelection);
-    tagInput_->setEnabled(ready && hasUidInput);
+    newPoseTagEditor_->setEnabled(ready && hasUidInput);
+    selectedPoseTagLabel_->setEnabled(
+        ready && inputMatchesSnapshot && hasSelection);
+    selectedPoseTagEditor_->setEnabled(
+        ready && inputMatchesSnapshot && hasSelection);
     updateTagsButton_->setEnabled(ready && inputMatchesSnapshot && hasSelection);
     deleteButton_->setEnabled(ready && inputMatchesSnapshot && hasSelection);
 }

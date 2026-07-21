@@ -15,6 +15,7 @@
 
 #include "app/camera_commands.h"
 #include "app/camera_panel.h"
+#include "app/tag_editor.h"
 #include "core/workspace_state.h"
 
 namespace
@@ -158,7 +159,8 @@ struct Controls {
     QPushButton* save = nullptr;
     QPushButton* saveAndCopyScreenshot = nullptr;
     QPushButton* apply = nullptr;
-    QLineEdit* tags = nullptr;
+    TagEditor* newPoseTags = nullptr;
+    TagEditor* selectedPoseTags = nullptr;
     QPushButton* updateTags = nullptr;
     QPushButton* remove = nullptr;
 };
@@ -178,8 +180,10 @@ Controls controls(CameraPanel& panel)
         QStringLiteral("saveCameraPoseAndCopyScreenshotButton"));
     result.apply = panel.findChild<QPushButton*>(
         QStringLiteral("applyCameraPoseButton"));
-    result.tags = panel.findChild<QLineEdit*>(
-        QStringLiteral("cameraPoseTagInput"));
+    result.newPoseTags = panel.findChild<TagEditor*>(
+        QStringLiteral("newPoseTagEditor"));
+    result.selectedPoseTags = panel.findChild<TagEditor*>(
+        QStringLiteral("selectedPoseTagEditor"));
     result.updateTags = panel.findChild<QPushButton*>(
         QStringLiteral("updateCameraPoseTagsButton"));
     result.remove = panel.findChild<QPushButton*>(
@@ -193,6 +197,97 @@ class CameraPanelTest : public QObject
     Q_OBJECT
 
 private slots:
+    void selectingAPoseDoesNotOverwriteTheNewPoseTagDraft()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral(
+            "123e4567-e89b-12d3-a456-426614174000");
+        commands.snapshot.poses = {
+            summary(QStringLiteral("view_001"), QStringLiteral("2026-07-21T11:00:00Z"),
+                    {QStringLiteral("hole")}),
+            summary(QStringLiteral("view_002"), QStringLiteral("2026-07-21T12:00:00Z"),
+                    {QStringLiteral("inspection"), QStringLiteral("underside")})};
+        CameraPanel panel(state, commands);
+        const Controls ui = controls(panel);
+
+        QVERIFY(ui.newPoseTags != nullptr);
+        QVERIFY(ui.selectedPoseTags != nullptr);
+        QCOMPARE(
+            ui.newPoseTags->tags(),
+            QStringList({QStringLiteral("inspection"), QStringLiteral("underside")}));
+        QVERIFY(!ui.selectedPoseTags->isEnabled());
+
+        ui.newPoseTags->load({QStringLiteral("draft")});
+        ui.poses->setCurrentRow(0);
+
+        QCOMPARE(ui.newPoseTags->tags(), QStringList({QStringLiteral("draft")}));
+        QCOMPARE(ui.selectedPoseTags->tags(), QStringList({QStringLiteral("hole")}));
+        QVERIFY(ui.selectedPoseTags->isEnabled());
+    }
+
+    void updatingSelectedPoseTagsDoesNotChangeTheNewPoseDraft()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral(
+            "123e4567-e89b-12d3-a456-426614174000");
+        commands.snapshot.poses = {summary(
+            QStringLiteral("view_001"),
+            QStringLiteral("2026-07-21T12:00:00Z"),
+            {QStringLiteral("hole")})};
+        CameraPanel panel(state, commands);
+        const Controls ui = controls(panel);
+        ui.newPoseTags->load({QStringLiteral("next-shot")});
+        ui.poses->setCurrentRow(0);
+        ui.selectedPoseTags->load({QStringLiteral("reviewed")});
+        commands.setTagsAction = [&commands] {
+            commands.snapshot.poses[0].tags =
+                QStringList({QStringLiteral("reviewed")});
+        };
+
+        QTest::mouseClick(ui.updateTags, Qt::LeftButton);
+
+        QCOMPARE(
+            ui.newPoseTags->tags(),
+            QStringList({QStringLiteral("next-shot")}));
+        QCOMPARE(
+            ui.selectedPoseTags->tags(),
+            QStringList({QStringLiteral("reviewed")}));
+    }
+
+    void successfulSelectedTagUpdateSurvivesALaggingSnapshot()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral(
+            "123e4567-e89b-12d3-a456-426614174000");
+        commands.snapshot.poses = {summary(
+            QStringLiteral("view_001"),
+            QStringLiteral("2026-07-21T12:00:00Z"),
+            {QStringLiteral("hole")})};
+        CameraPanel panel(state, commands);
+        const Controls ui = controls(panel);
+        ui.poses->setCurrentRow(0);
+        ui.selectedPoseTags->load({QStringLiteral("reviewed")});
+
+        QTest::mouseClick(ui.updateTags, Qt::LeftButton);
+
+        QCOMPARE(
+            commands.assignedTags,
+            QVector<QStringList>({{QStringLiteral("reviewed")}}));
+        QCOMPARE(
+            ui.selectedPoseTags->tags(),
+            QStringList({QStringLiteral("reviewed")}));
+        QVERIFY(ui.poses->currentItem()->text().contains(
+            QStringLiteral("#reviewed")));
+        QVERIFY(!ui.poses->currentItem()->text().contains(
+            QStringLiteral("#hole")));
+    }
+
     void exposesOpaqueEnglishControlsAndScopedPoseSummaries()
     {
         WorkspaceState state;
@@ -292,12 +387,15 @@ private slots:
             {QStringLiteral("hole"), QStringLiteral("edge")})};
         CameraPanel panel(state, commands);
         const Controls ui = controls(panel);
-        QVERIFY(ui.tags != nullptr);
+        QVERIFY(ui.selectedPoseTags != nullptr);
         QVERIFY(ui.updateTags != nullptr);
 
         ui.poses->setCurrentRow(0);
-        QCOMPARE(ui.tags->text(), QStringLiteral("hole, edge"));
-        ui.tags->setText(QStringLiteral("inspection, underside"));
+        QCOMPARE(
+            ui.selectedPoseTags->tags(),
+            QStringList({QStringLiteral("hole"), QStringLiteral("edge")}));
+        ui.selectedPoseTags->load(
+            {QStringLiteral("inspection"), QStringLiteral("underside")});
         commands.setTagsAction = [&commands] {
             commands.snapshot.poses[0].tags = QStringList{
                 QStringLiteral("inspection"), QStringLiteral("underside")};
@@ -310,7 +408,9 @@ private slots:
             commands.assignedTags,
             QVector<QStringList>({
                 {QStringLiteral("inspection"), QStringLiteral("underside")}}));
-        QCOMPARE(ui.tags->text(), QStringLiteral("inspection, underside"));
+        QCOMPARE(
+            ui.selectedPoseTags->tags(),
+            QStringList({QStringLiteral("inspection"), QStringLiteral("underside")}));
         QVERIFY(ui.poses->item(0)->text().contains(QStringLiteral("#inspection")));
         QVERIFY(ui.poses->item(0)->text().contains(QStringLiteral("#underside")));
     }
@@ -330,8 +430,10 @@ private slots:
         CameraPanel panel(state, commands);
         const Controls ui = controls(panel);
 
-        QCOMPARE(ui.tags->text(), QStringLiteral("inspection, underside"));
-        QVERIFY(ui.tags->isEnabled());
+        QCOMPARE(
+            ui.newPoseTags->tags(),
+            QStringList({QStringLiteral("inspection"), QStringLiteral("underside")}));
+        QVERIFY(ui.newPoseTags->isEnabled());
         QTest::mouseClick(ui.save, Qt::LeftButton);
 
         QCOMPARE(
@@ -353,16 +455,28 @@ private slots:
         CameraPanel panel(state, commands);
         const Controls ui = controls(panel);
 
-        ui.tags->setText(QStringLiteral("inspection, underside"));
+        ui.newPoseTags->load(
+            {QStringLiteral("inspection"), QStringLiteral("underside")});
         QTest::mouseClick(ui.save, Qt::LeftButton);
 
         QCOMPARE(
             commands.lastSaveTags,
             QStringList({QStringLiteral("inspection"), QStringLiteral("underside")}));
-        QCOMPARE(ui.tags->text(), QStringLiteral("inspection, underside"));
+        QCOMPARE(
+            ui.newPoseTags->tags(),
+            QStringList({QStringLiteral("inspection"), QStringLiteral("underside")}));
+
+        ui.newPoseTags->load({QStringLiteral("hole")});
+        auto* input = qobject_cast<QLineEdit*>(ui.newPoseTags->focusProxy());
+        QVERIFY(input != nullptr);
+        QTest::keyClicks(input, QStringLiteral("ins"));
+        QCOMPARE(input->completer()->completionCount(), 1);
+        QCOMPARE(
+            input->completer()->currentCompletion(),
+            QStringLiteral("inspection"));
     }
 
-    void tagSuggestionsMatchTheCurrentCommaSeparatedPrefix()
+    void tagSuggestionsMatchThePendingPrefix()
     {
         WorkspaceState state;
         makeReady(state);
@@ -376,20 +490,20 @@ private slots:
                     {QStringLiteral("underside")})};
         CameraPanel panel(state, commands);
         const Controls ui = controls(panel);
-        QVERIFY(ui.tags != nullptr);
-        QCompleter* completer = ui.tags->completer();
+        QVERIFY(ui.newPoseTags != nullptr);
+        auto* input = qobject_cast<QLineEdit*>(ui.newPoseTags->focusProxy());
+        QVERIFY(input != nullptr);
+        QCompleter* completer = input->completer();
         QVERIFY(completer != nullptr);
 
-        ui.tags->clear();
-        QTest::keyClicks(ui.tags, QStringLiteral("hole, un"));
+        ui.newPoseTags->load({QStringLiteral("hole")});
+        QTest::keyClicks(input, QStringLiteral("un"));
 
-        QCOMPARE(
-            ui.tags->text().section(QLatin1Char(','), -1).trimmed(),
-            QStringLiteral("un"));
+        QCOMPARE(input->text(), QStringLiteral("un"));
         QCOMPARE(completer->completionCount(), 1);
         QCOMPARE(
             completer->currentCompletion(),
-            QStringLiteral("hole, underside"));
+            QStringLiteral("underside"));
     }
 
     void saveAndCopyScreenshotUsesOneCombinedCommandAndRefreshes()
