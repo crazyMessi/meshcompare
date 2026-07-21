@@ -14,12 +14,15 @@ private slots:
              QStringLiteral("--render-grid"),
              QStringLiteral("comparison.MLP"),
              QStringLiteral("--output-dir"),
-             QStringLiteral("/tmp/rendered")});
+             QStringLiteral("/tmp/rendered"),
+             QStringLiteral("--size"),
+             QStringLiteral("3840x2160")});
 
         QVERIFY(command.ok);
         QVERIFY(command.renderComparisonGrid);
         QCOMPARE(command.inputPaths, QStringList{QStringLiteral("comparison.MLP")});
         QCOMPARE(command.outputDirectory, QStringLiteral("/tmp/rendered"));
+        QCOMPARE(command.outputSize, QSize(3840, 2160));
     }
 
     void normalMeshArgumentsRemainUnchanged()
@@ -52,6 +55,42 @@ private slots:
                 "--render-grid requires exactly one MeshLab project (*.mlp) and --output-dir."));
     }
 
+    void renderGridRejectsInvalidImageSize()
+    {
+        const StartupCommandLine command = parseStartupCommandLine(
+            {QStringLiteral("meshcompare"),
+             QStringLiteral("--render-grid"),
+             QStringLiteral("comparison.mlp"),
+             QStringLiteral("--output-dir"),
+             QStringLiteral("/tmp/rendered"),
+             QStringLiteral("--size"),
+             QStringLiteral("3840-by-2160")});
+
+        QVERIFY(!command.ok);
+        QCOMPARE(
+            command.error,
+            QStringLiteral(
+                "--size must use positive WIDTHxHEIGHT dimensions, at most 16384 per side and 67108864 pixels."));
+    }
+
+    void renderGridRejectsUnreasonablyLargeImageSize()
+    {
+        const StartupCommandLine command = parseStartupCommandLine(
+            {QStringLiteral("meshcompare"),
+             QStringLiteral("--render-grid"),
+             QStringLiteral("comparison.mlp"),
+             QStringLiteral("--output-dir"),
+             QStringLiteral("/tmp/rendered"),
+             QStringLiteral("--size"),
+             QStringLiteral("16384x16384")});
+
+        QVERIFY(!command.ok);
+        QCOMPARE(
+            command.error,
+            QStringLiteral(
+                "--size must use positive WIDTHxHEIGHT dimensions, at most 16384 per side and 67108864 pixels."));
+    }
+
     void helpOptionDoesNotStartTheApplication()
     {
         const StartupCommandLine command = parseStartupCommandLine(
@@ -61,7 +100,8 @@ private slots:
         QVERIFY(command.showHelp);
         QVERIFY(command.inputPaths.isEmpty());
         QVERIFY(startupCommandLineUsage().contains(
-            QStringLiteral("meshcompare --render-grid comparison.mlp --output-dir output")));
+            QStringLiteral(
+                "meshcompare --render-grid comparison.mlp --output-dir output [--size WIDTHxHEIGHT]")));
     }
 
     void pathsThatStartWithDashesRemainInputs()

@@ -92,9 +92,11 @@ int main(int argc, char** argv)
         meshlab::pluginManagerInstance().loadPlugins();
 
         if (startupCommand.renderComparisonGrid) {
-            const GridRenderRequest request{
-                startupCommand.inputPaths.front(),
-                startupCommand.outputDirectory};
+            GridRenderRequest request;
+            request.projectPath = startupCommand.inputPaths.front();
+            request.outputDirectory = startupCommand.outputDirectory;
+            if (startupCommand.outputSize.isValid())
+                request.outputSize = startupCommand.outputSize;
             QString outputPath;
             const OperationResult rendered = renderComparisonGrid(
                 request, &outputPath);

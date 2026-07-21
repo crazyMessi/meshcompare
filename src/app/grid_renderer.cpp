@@ -72,6 +72,11 @@ OperationResult outputPathFor(
         return OperationResult::failure(
             QStringLiteral("Grid render dimensions must be positive."));
     }
+    if (!isSupportedGridRenderSize(request.outputSize)) {
+        return OperationResult::failure(
+            QStringLiteral(
+                "Grid render dimensions must be at most 16384 per side and no more than 67108864 pixels."));
+    }
 
     const QFileInfo projectInfo(request.projectPath);
     const QString outputBaseName = projectInfo.completeBaseName();
@@ -92,6 +97,18 @@ OperationResult outputPathFor(
     return OperationResult::success();
 }
 } // namespace
+
+QImage normalizeGridRenderImage(QImage image, const QSize& outputSize)
+{
+    if (image.size() != outputSize) {
+        image = image.scaled(
+            outputSize,
+            Qt::IgnoreAspectRatio,
+            Qt::SmoothTransformation);
+    }
+    image.setDevicePixelRatio(1.0);
+    return image;
+}
 
 OperationResult renderComparisonGrid(
     const GridRenderRequest& request,
@@ -149,6 +166,9 @@ OperationResult renderComparisonGrid(
         return OperationResult::failure(
             QStringLiteral("Grid rendering produced an empty image."));
     }
+    // The viewport is sized in Qt logical pixels, while the PNG contract is
+    // physical pixels. Normalize high-DPI captures to the requested CLI size.
+    image = normalizeGridRenderImage(std::move(image), request.outputSize);
     if (!image.save(resolvedOutputPath, "PNG")) {
         return OperationResult::failure(
             QStringLiteral("Could not save grid render: %1")

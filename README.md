@@ -75,11 +75,13 @@ the requested output directory:
 
 ```bash
 build/dist/meshcompare.app/Contents/MacOS/meshcompare \
-  --render-grid comparison.mlp --output-dir ./renders
+  --render-grid comparison.mlp --output-dir ./renders --size 3840x2160
 ```
 
 `--render-grid` accepts exactly one `.mlp` input and exits after the PNG is
-written. Run `meshcompare --help` for the full command-line usage.
+written. `--size` is optional, sets the final PNG pixel dimensions, and
+defaults to `2048x1152` (maximum: 16,384 pixels per side and 64 megapixels).
+Run `meshcompare --help` for the full command-line usage.
 
 On macOS, `.mlp` is also registered as a document type, so a project can be
 opened from Finder. The in-app Open dialog and drag-and-drop accept the same
