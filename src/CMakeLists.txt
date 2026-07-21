@@ -42,6 +42,13 @@ target_include_directories(meshcompare-color-service PUBLIC ${MESHCOMPARE_SOURCE
 target_link_libraries(meshcompare-color-service
 	PUBLIC meshcompare-core meshcompare-analysis)
 
+add_library(meshcompare-startup-command-line STATIC
+	app/startup_command_line.cpp
+	app/startup_command_line.h)
+target_include_directories(meshcompare-startup-command-line
+	PUBLIC ${MESHCOMPARE_SOURCE_ROOT})
+target_link_libraries(meshcompare-startup-command-line PUBLIC Qt5::Core)
+
 add_library(meshcompare-meshlab-infrastructure STATIC
 	services/mesh_import_service.cpp
 	services/mesh_import_service.h
@@ -119,6 +126,7 @@ target_link_libraries(meshcompare PRIVATE
 	meshcompare-ui
 	meshcompare-core
 	meshcompare-analysis
+	meshcompare-startup-command-line
 	meshcompare-meshlab-infrastructure
 	meshcompare-meshlab-renderer
 	meshlab-common)
@@ -173,6 +181,10 @@ if(BUILD_TESTING)
 		meshcompare-meshlab-infrastructure meshlab-common)
 	add_meshcompare_test(meshcompare-camera-pose-paths-test camera_pose_paths_test.cpp)
 	target_link_libraries(meshcompare-camera-pose-paths-test PRIVATE meshcompare-ui)
+	add_meshcompare_test(meshcompare-startup-command-line-test startup_command_line_test.cpp)
+	target_link_libraries(
+		meshcompare-startup-command-line-test
+		PRIVATE meshcompare-startup-command-line)
 	add_meshcompare_test(meshcompare-camera-pose-store-test camera_pose_store_test.cpp)
 	target_link_libraries(meshcompare-camera-pose-store-test PRIVATE meshcompare-camera-pose-store)
 	add_meshcompare_test(meshcompare-renderer-adapter-contract-test renderer_adapter_contract_test.cpp)

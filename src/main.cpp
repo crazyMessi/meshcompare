@@ -2,6 +2,7 @@
 #include "app/camera_pose_paths.h"
 #include "app/diagnostics_menu.h"
 #include "app/standalone_main_window.h"
+#include "app/startup_command_line.h"
 #include "app/workspace_controller.h"
 #include "core/workspace_state.h"
 #include "infrastructure/meshlab/meshlab_mesh_loader.h"
@@ -55,6 +56,22 @@ QString analysisMetricName(SurfaceComparisonMetric metric)
 
 int main(int argc, char** argv)
 {
+    QStringList arguments;
+    arguments.reserve(argc);
+    for (int index = 0; index < argc; ++index)
+        arguments.append(QString::fromLocal8Bit(argv[index]));
+    const StartupCommandLine startupCommand =
+        parseStartupCommandLine(arguments);
+    if (!startupCommand.ok) {
+        qCritical().noquote() << startupCommand.error;
+        qInfo().noquote() << startupCommandLineUsage();
+        return EXIT_FAILURE;
+    }
+    if (startupCommand.showHelp) {
+        qInfo().noquote() << startupCommandLineUsage();
+        return EXIT_SUCCESS;
+    }
+
     MeshLabApplication app(argc, argv);
     FileOpenEventBridge fileOpenBridge(app);
     QCoreApplication::setOrganizationName("VCG");
@@ -100,9 +117,9 @@ int main(int argc, char** argv)
                 QStringLiteral("Camera pose migration was skipped: %1")
                     .arg(cameraMigration.error));
         }
-        QStringList startupMeshes;
-        for (int index = 1; index < argc; ++index)
-            startupMeshes.append(QString::fromLocal8Bit(argv[index]));
+        const QStringList startupMeshes = startupCommand.inputPaths;
+        bool applyGridToStartupImport =
+            startupCommand.startInComparisonGrid;
         // Construct the viewport owner first so the controller can join analysis,
         // disconnect callbacks, and clear the renderer while the host still lives.
         StandaloneMainWindow window(state);
@@ -137,9 +154,23 @@ int main(int argc, char** argv)
              &diagnosticsMenu,
              &diagnosticsLog,
              &reportLoggingFailure,
-             &pendingStartupNotice](
+             &pendingStartupNotice,
+             &applyGridToStartupImport](
                 const QStringList& paths) {
+                const bool shouldApplyGrid = applyGridToStartupImport;
+                applyGridToStartupImport = false;
                 WorkspaceImportOutcome outcome = controller.importMeshes(paths);
+                if (outcome.result.ok && shouldApplyGrid) {
+                    const OperationResult gridResult = controller.setLayoutMode(
+                        SceneLayoutMode::ComparisonGrid);
+                    if (!gridResult.ok) {
+                        outcome.result = OperationResult::failure(
+                            QStringLiteral(
+                                "The project was imported, but Comparison Grid could not be opened: %1")
+                                .arg(gridResult.error));
+                        diagnosticsMenu.setRecentError(gridResult.error);
+                    }
+                }
                 mergeStartupNotice(outcome, pendingStartupNotice);
                 pendingStartupNotice.clear();
                 QStringList displayNames;
