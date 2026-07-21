@@ -69,15 +69,17 @@ layers, names, order, and transforms into a single overlapping viewport:
 open build/dist/meshcompare.app --args comparison.mlp
 ```
 
-Add `--grid` to open that same project directly in the linked comparison-grid
-view, with one viewport per layer:
+Use the batch CLI to render that same project as a linked comparison grid
+without opening the application window. It writes `<project>.grid.png` into
+the requested output directory:
 
 ```bash
-build/dist/meshcompare.app/Contents/MacOS/meshcompare --grid comparison.mlp
+build/dist/meshcompare.app/Contents/MacOS/meshcompare \
+  --render-grid comparison.mlp --output-dir ./renders
 ```
 
-`--grid` accepts exactly one `.mlp` input. Run `meshcompare --help` for the
-full command-line usage.
+`--render-grid` accepts exactly one `.mlp` input and exits after the PNG is
+written. Run `meshcompare --help` for the full command-line usage.
 
 On macOS, `.mlp` is also registered as a document type, so a project can be
 opened from Finder. The in-app Open dialog and drag-and-drop accept the same

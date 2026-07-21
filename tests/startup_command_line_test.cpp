@@ -7,16 +7,19 @@ class StartupCommandLineTest : public QObject
     Q_OBJECT
 
 private slots:
-    void gridOptionStartsOneProjectInComparisonGrid()
+    void renderGridOptionCapturesOneProjectAndAnOutputDirectory()
     {
         const StartupCommandLine command = parseStartupCommandLine(
             {QStringLiteral("meshcompare"),
-             QStringLiteral("--grid"),
-             QStringLiteral("comparison.MLP")});
+             QStringLiteral("--render-grid"),
+             QStringLiteral("comparison.MLP"),
+             QStringLiteral("--output-dir"),
+             QStringLiteral("/tmp/rendered")});
 
         QVERIFY(command.ok);
-        QVERIFY(command.startInComparisonGrid);
+        QVERIFY(command.renderComparisonGrid);
         QCOMPARE(command.inputPaths, QStringList{QStringLiteral("comparison.MLP")});
+        QCOMPARE(command.outputDirectory, QStringLiteral("/tmp/rendered"));
     }
 
     void normalMeshArgumentsRemainUnchanged()
@@ -27,25 +30,26 @@ private slots:
              QStringLiteral("candidate.obj")});
 
         QVERIFY(command.ok);
-        QVERIFY(!command.startInComparisonGrid);
+        QVERIFY(!command.renderComparisonGrid);
         const QStringList expectedPaths{
             QStringLiteral("reference_gt.obj"),
             QStringLiteral("candidate.obj")};
         QCOMPARE(command.inputPaths, expectedPaths);
     }
 
-    void gridOptionRejectsAnythingOtherThanOneProject()
+    void renderGridRequiresOneProjectAndAnOutputDirectory()
     {
         const StartupCommandLine command = parseStartupCommandLine(
             {QStringLiteral("meshcompare"),
-             QStringLiteral("--grid"),
+             QStringLiteral("--render-grid"),
              QStringLiteral("reference.obj"),
              QStringLiteral("candidate.obj")});
 
         QVERIFY(!command.ok);
         QCOMPARE(
             command.error,
-            QStringLiteral("--grid requires exactly one MeshLab project (*.mlp)."));
+            QStringLiteral(
+                "--render-grid requires exactly one MeshLab project (*.mlp) and --output-dir."));
     }
 
     void helpOptionDoesNotStartTheApplication()
@@ -57,7 +61,7 @@ private slots:
         QVERIFY(command.showHelp);
         QVERIFY(command.inputPaths.isEmpty());
         QVERIFY(startupCommandLineUsage().contains(
-            QStringLiteral("meshcompare --grid comparison.mlp")));
+            QStringLiteral("meshcompare --render-grid comparison.mlp --output-dir output")));
     }
 
     void pathsThatStartWithDashesRemainInputs()

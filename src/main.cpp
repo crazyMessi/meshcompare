@@ -1,6 +1,7 @@
 #include "app/application_startup.h"
 #include "app/camera_pose_paths.h"
 #include "app/diagnostics_menu.h"
+#include "app/grid_renderer.h"
 #include "app/standalone_main_window.h"
 #include "app/startup_command_line.h"
 #include "app/workspace_controller.h"
@@ -73,7 +74,6 @@ int main(int argc, char** argv)
     }
 
     MeshLabApplication app(argc, argv);
-    FileOpenEventBridge fileOpenBridge(app);
     QCoreApplication::setOrganizationName("VCG");
     QCoreApplication::setApplicationName("MeshCompare");
     QCoreApplication::setApplicationVersion(
@@ -90,6 +90,26 @@ int main(int argc, char** argv)
 
     try {
         meshlab::pluginManagerInstance().loadPlugins();
+
+        if (startupCommand.renderComparisonGrid) {
+            const GridRenderRequest request{
+                startupCommand.inputPaths.front(),
+                startupCommand.outputDirectory};
+            QString outputPath;
+            const OperationResult rendered = renderComparisonGrid(
+                request, &outputPath);
+            const OperationResult ended = diagnosticsLog.recordSessionEnd();
+            if (!ended.ok)
+                qWarning() << ended.error;
+            if (!rendered.ok) {
+                qCritical().noquote() << rendered.error;
+                return EXIT_FAILURE;
+            }
+            qInfo().noquote() << outputPath;
+            return EXIT_SUCCESS;
+        }
+
+        FileOpenEventBridge fileOpenBridge(app);
 
         WorkspaceState state;
         MeshLabMeshLoader loader;
@@ -118,8 +138,6 @@ int main(int argc, char** argv)
                     .arg(cameraMigration.error));
         }
         const QStringList startupMeshes = startupCommand.inputPaths;
-        bool applyGridToStartupImport =
-            startupCommand.startInComparisonGrid;
         // Construct the viewport owner first so the controller can join analysis,
         // disconnect callbacks, and clear the renderer while the host still lives.
         StandaloneMainWindow window(state);
@@ -154,23 +172,9 @@ int main(int argc, char** argv)
              &diagnosticsMenu,
              &diagnosticsLog,
              &reportLoggingFailure,
-             &pendingStartupNotice,
-             &applyGridToStartupImport](
+             &pendingStartupNotice](
                 const QStringList& paths) {
-                const bool shouldApplyGrid = applyGridToStartupImport;
-                applyGridToStartupImport = false;
                 WorkspaceImportOutcome outcome = controller.importMeshes(paths);
-                if (outcome.result.ok && shouldApplyGrid) {
-                    const OperationResult gridResult = controller.setLayoutMode(
-                        SceneLayoutMode::ComparisonGrid);
-                    if (!gridResult.ok) {
-                        outcome.result = OperationResult::failure(
-                            QStringLiteral(
-                                "The project was imported, but Comparison Grid could not be opened: %1")
-                                .arg(gridResult.error));
-                        diagnosticsMenu.setRecentError(gridResult.error);
-                    }
-                }
                 mergeStartupNotice(outcome, pendingStartupNotice);
                 pendingStartupNotice.clear();
                 QStringList displayNames;
@@ -347,6 +351,13 @@ int main(int argc, char** argv)
     catch (const MLException& exception) {
         const OperationResult failure = OperationResult::failure(
             QString::fromLocal8Bit(exception.what()));
+        if (startupCommand.renderComparisonGrid) {
+            qCritical().noquote() << failure.error;
+            const OperationResult ended = diagnosticsLog.recordSessionEnd();
+            if (!ended.ok)
+                qWarning() << ended.error;
+            return EXIT_FAILURE;
+        }
         OperationResult displayedFailure = failure;
         const OperationResult logged =
             diagnosticsLog.recordFatalRendererError(failure.error);

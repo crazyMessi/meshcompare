@@ -119,6 +119,18 @@ target_link_libraries(meshcompare-meshlab-renderer
 target_include_directories(meshcompare-meshlab-renderer
 	PUBLIC ${MESHCOMPARE_SOURCE_ROOT})
 
+add_library(meshcompare-grid-render STATIC
+	app/grid_renderer.cpp
+	app/grid_renderer.h)
+target_link_libraries(meshcompare-grid-render
+	PUBLIC
+		meshcompare-core
+		meshcompare-meshlab-infrastructure
+		meshcompare-meshlab-renderer
+		Qt5::Widgets)
+target_include_directories(meshcompare-grid-render
+	PUBLIC ${MESHCOMPARE_SOURCE_ROOT})
+
 add_executable(meshcompare MACOSX_BUNDLE main.cpp)
 target_compile_definitions(meshcompare
 	PRIVATE MESHCOMPARE_VERSION="${PROJECT_VERSION}")
@@ -127,6 +139,7 @@ target_link_libraries(meshcompare PRIVATE
 	meshcompare-core
 	meshcompare-analysis
 	meshcompare-startup-command-line
+	meshcompare-grid-render
 	meshcompare-meshlab-infrastructure
 	meshcompare-meshlab-renderer
 	meshlab-common)
@@ -185,6 +198,10 @@ if(BUILD_TESTING)
 	target_link_libraries(
 		meshcompare-startup-command-line-test
 		PRIVATE meshcompare-startup-command-line)
+	add_meshcompare_test(meshcompare-grid-renderer-test grid_renderer_test.cpp)
+	target_link_libraries(
+		meshcompare-grid-renderer-test
+		PRIVATE meshcompare-grid-render)
 	add_meshcompare_test(meshcompare-camera-pose-store-test camera_pose_store_test.cpp)
 	target_link_libraries(meshcompare-camera-pose-store-test PRIVATE meshcompare-camera-pose-store)
 	add_meshcompare_test(meshcompare-renderer-adapter-contract-test renderer_adapter_contract_test.cpp)

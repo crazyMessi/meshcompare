@@ -7,8 +7,9 @@ struct StartupCommandLine
 {
     bool ok = true;
     bool showHelp = false;
-    bool startInComparisonGrid = false;
+    bool renderComparisonGrid = false;
     QStringList inputPaths;
+    QString outputDirectory;
     QString error;
 };
 

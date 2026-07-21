@@ -580,24 +580,7 @@ void MeshLabViewport::paintEvent(QPaintEvent* event)
         return;
     }
 
-    updateRenderSettings();
-    glClearColor(1.0f, 1.0f, 1.0f, 0.0f);
-    glEnable(GL_DEPTH_TEST);
-    glDepthMask(GL_TRUE);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    setView();
-    drawGradient();
-    drawLight();
-
-    glPushMatrix();
-    trackball_.GetView();
-    trackball_.Apply();
-    drawAssignedMesh();
-    glPopMatrix();
-
-    if (renderSettings_.startupShowTrackball)
-        trackball_.DrawPostApply();
+    drawScene();
 
     // Match GLArea's double-click space: the mesh depth buffer is complete,
     // while glPopMatrix above has restored the modelview from before the
@@ -630,6 +613,28 @@ void MeshLabViewport::paintEvent(QPaintEvent* event)
 
     if (cameraRecentered)
         notifyCameraChanged();
+}
+
+void MeshLabViewport::drawScene()
+{
+    updateRenderSettings();
+    glClearColor(1.0f, 1.0f, 1.0f, 0.0f);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    setView();
+    drawGradient();
+    drawLight();
+
+    glPushMatrix();
+    trackball_.GetView();
+    trackball_.Apply();
+    drawAssignedMesh();
+    glPopMatrix();
+
+    if (renderSettings_.startupShowTrackball)
+        trackball_.DrawPostApply();
 }
 
 void MeshLabViewport::updateRenderSettings()
@@ -1002,12 +1007,24 @@ OperationResult MeshLabViewport::captureImage(QImage& image)
             QStringLiteral("The viewport is not ready for image capture."));
     }
 
-    repaint();
+    makeCurrent();
+    if (QGLContext::currentContext() != context()) {
+        return OperationResult::failure(
+            QStringLiteral("The viewport could not make its OpenGL context current for image capture."));
+    }
+    // Batch rendering uses WA_DontShowOnScreen, so no native paint event is
+    // delivered. Draw the OpenGL scene directly before reading its framebuffer.
+    drawScene();
+    glFlush();
     QImage captured = grabFrameBuffer(false);
     if (captured.isNull()) {
         return OperationResult::failure(
             QStringLiteral("The viewport returned an empty framebuffer image."));
     }
+    captured.setDevicePixelRatio(devicePixelRatioF());
+    QPainter overlayPainter(&captured);
+    drawViewportOverlay(overlayPainter);
+    overlayPainter.end();
     image = std::move(captured);
     return OperationResult::success();
 }

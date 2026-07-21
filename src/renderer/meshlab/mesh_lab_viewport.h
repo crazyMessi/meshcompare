@@ -59,6 +59,7 @@ protected:
 private:
     void updateRenderSettings();
     void setView();
+    void drawScene();
     void drawGradient();
     void drawLight();
     void drawAssignedMesh();

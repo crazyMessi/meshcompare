@@ -21,8 +21,15 @@ StartupCommandLine parseStartupCommandLine(const QStringList& arguments)
             optionsEnded = true;
             continue;
         }
-        if (!optionsEnded && argument == QStringLiteral("--grid")) {
-            command.startInComparisonGrid = true;
+        if (!optionsEnded && argument == QStringLiteral("--render-grid")) {
+            command.renderComparisonGrid = true;
+            if (index + 1 < arguments.size())
+                command.inputPaths.append(arguments.at(++index));
+            continue;
+        }
+        if (!optionsEnded && argument == QStringLiteral("--output-dir")) {
+            if (index + 1 < arguments.size())
+                command.outputDirectory = arguments.at(++index);
             continue;
         }
         if (!optionsEnded &&
@@ -35,17 +42,24 @@ StartupCommandLine parseStartupCommandLine(const QStringList& arguments)
     }
 
     if (command.showHelp) {
-        command.startInComparisonGrid = false;
+        command.renderComparisonGrid = false;
         command.inputPaths.clear();
+        command.outputDirectory.clear();
         return command;
     }
 
-    if (command.startInComparisonGrid &&
+    if (command.renderComparisonGrid &&
         (command.inputPaths.size() != 1 ||
-         !isMeshLabProject(command.inputPaths.front()))) {
+         !isMeshLabProject(command.inputPaths.front()) ||
+         command.outputDirectory.isEmpty())) {
         command.ok = false;
         command.error =
-            QStringLiteral("--grid requires exactly one MeshLab project (*.mlp).");
+            QStringLiteral(
+                "--render-grid requires exactly one MeshLab project (*.mlp) and --output-dir.");
+    }
+    else if (!command.renderComparisonGrid && !command.outputDirectory.isEmpty()) {
+        command.ok = false;
+        command.error = QStringLiteral("--output-dir requires --render-grid.");
     }
     return command;
 }
@@ -55,8 +69,9 @@ QString startupCommandLineUsage()
     return QStringLiteral(
         "Usage:\n"
         "  meshcompare [mesh ...]\n"
-        "  meshcompare --grid comparison.mlp\n"
+        "  meshcompare --render-grid comparison.mlp --output-dir output\n"
         "\n"
-        "--grid  Open one MeshLab project in the linked comparison grid.\n"
-        "--help   Show this help text.\n");
+        "--render-grid  Render one MeshLab project to a PNG without opening a window.\n"
+        "--output-dir   Directory that receives <project>.grid.png.\n"
+        "--help         Show this help text.\n");
 }
