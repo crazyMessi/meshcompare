@@ -98,6 +98,29 @@ int main(int argc, char** argv)
             if (startupCommand.outputSize.isValid())
                 request.outputSize = startupCommand.outputSize;
             request.camera = startupCommand.camera;
+            if (!startupCommand.cameraPoseUuid.isEmpty()) {
+                const CameraPosePaths cameraPaths = resolveCameraPosePaths(
+                    applicationDataRoot,
+                    QStandardPaths::writableLocation(
+                        QStandardPaths::GenericDataLocation));
+                CameraPoseStore cameraStore(
+                    cameraPaths.storagePath, cameraPaths.legacyPath);
+                const OperationResult migration = cameraStore.migrateLegacyIfNeeded();
+                if (!migration.ok) {
+                    qCritical().noquote() << migration.error;
+                    return EXIT_FAILURE;
+                }
+                CameraPose savedPose;
+                const OperationResult loadedPose = cameraStore.load(
+                    startupCommand.cameraPoseUuid,
+                    startupCommand.cameraPoseViewId,
+                    &savedPose);
+                if (!loadedPose.ok) {
+                    qCritical().noquote() << loadedPose.error;
+                    return EXIT_FAILURE;
+                }
+                request.initialCameraViewStateXml = savedPose.viewStateXml;
+            }
             QString outputPath;
             const OperationResult rendered = renderComparisonGrid(
                 request, &outputPath);

@@ -135,6 +135,44 @@ private slots:
             QStringLiteral("--camera and --look-at must be provided together."));
     }
 
+    void renderGridAcceptsSavedCameraPose()
+    {
+        const StartupCommandLine command = parseStartupCommandLine(
+            {QStringLiteral("meshcompare"),
+             QStringLiteral("--render-grid"),
+             QStringLiteral("comparison.mlp"),
+             QStringLiteral("--output-dir"),
+             QStringLiteral("/tmp/rendered"),
+             QStringLiteral("--camera-pose"),
+             QStringLiteral("workspace-42:view_003")});
+
+        QVERIFY(command.ok);
+        QCOMPARE(command.cameraPoseUuid, QStringLiteral("workspace-42"));
+        QCOMPARE(command.cameraPoseViewId, QStringLiteral("view_003"));
+    }
+
+    void renderGridRejectsSavedPoseCombinedWithExplicitCamera()
+    {
+        const StartupCommandLine command = parseStartupCommandLine(
+            {QStringLiteral("meshcompare"),
+             QStringLiteral("--render-grid"),
+             QStringLiteral("comparison.mlp"),
+             QStringLiteral("--output-dir"),
+             QStringLiteral("/tmp/rendered"),
+             QStringLiteral("--camera-pose"),
+             QStringLiteral("workspace-42:view_003"),
+             QStringLiteral("--camera"),
+             QStringLiteral("1,2,3"),
+             QStringLiteral("--look-at"),
+             QStringLiteral("0,0,0")});
+
+        QVERIFY(!command.ok);
+        QCOMPARE(
+            command.error,
+            QStringLiteral(
+                "--camera-pose cannot be combined with --camera, --look-at, --up, or --fov."));
+    }
+
     void renderGridReportsAnInvalidFieldOfView()
     {
         const StartupCommandLine command = parseStartupCommandLine(

@@ -79,11 +79,22 @@ build/dist/meshcompare.app/Contents/MacOS/meshcompare \
   --camera 2,2,2 --look-at 0,0,0 --up 0,0,1 --fov 45
 ```
 
+To reuse a pose saved from the application's Camera panel, pass its workspace
+UID and saved view ID instead of explicit camera coordinates:
+
+```bash
+build/dist/meshcompare.app/Contents/MacOS/meshcompare \
+  --render-grid comparison.mlp --output-dir ./renders --size 3840x2160 \
+  --camera-pose workspace-uuid:view_001
+```
+
 `--render-grid` accepts exactly one `.mlp` input and exits after the PNG is
 written. `--size` is optional, sets the final PNG pixel dimensions, and
 defaults to `2048x1152` (maximum: 16,384 pixels per side and 64 megapixels).
 `--camera` and `--look-at` optionally set a shared world-space view for every
 grid cell; `--up` defaults to `0,1,0`, and `--fov` defaults to 60 degrees.
+`--camera-pose` restores the complete saved MeshLab view and cannot be combined
+with the explicit camera options.
 Run `meshcompare --help` for the full command-line usage.
 
 On macOS, `.mlp` is also registered as a document type, so a project can be

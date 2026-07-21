@@ -15,6 +15,8 @@ struct StartupCommandLine
     QString outputDirectory;
     QSize outputSize;
     GridRenderCamera camera;
+    QString cameraPoseUuid;
+    QString cameraPoseViewId;
     QString error;
 };
 

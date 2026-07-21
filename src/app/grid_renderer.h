@@ -14,6 +14,7 @@ struct GridRenderRequest
     QString outputDirectory;
     QSize outputSize = defaultGridRenderSize();
     GridRenderCamera camera;
+    QString initialCameraViewStateXml;
 };
 
 QImage normalizeGridRenderImage(QImage image, const QSize& outputSize);

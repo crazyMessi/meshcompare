@@ -66,6 +66,24 @@ bool parseFieldOfView(const QString& value, double* fieldOfViewDegrees)
     *fieldOfViewDegrees = parsed;
     return true;
 }
+
+bool parseCameraPoseReference(
+    const QString& value,
+    QString* uuid,
+    QString* viewId)
+{
+    const int separator = value.indexOf(QLatin1Char(':'));
+    if (separator <= 0 || separator >= value.size() - 1)
+        return false;
+
+    const QString parsedUuid = value.left(separator).trimmed();
+    const QString parsedViewId = value.mid(separator + 1).trimmed();
+    if (parsedUuid.isEmpty() || parsedViewId.isEmpty())
+        return false;
+    *uuid = parsedUuid;
+    *viewId = parsedViewId;
+    return true;
+}
 } // namespace
 
 StartupCommandLine parseStartupCommandLine(const QStringList& arguments)
@@ -77,8 +95,10 @@ StartupCommandLine parseStartupCommandLine(const QStringList& arguments)
     bool lookAtSpecified = false;
     bool customUpSpecified = false;
     bool customFieldOfViewSpecified = false;
+    bool cameraPoseSpecified = false;
     bool invalidCameraCoordinates = false;
     bool invalidFieldOfView = false;
+    bool invalidCameraPoseReference = false;
     for (int index = 1; index < arguments.size(); ++index) {
         const QString argument = arguments.at(index);
         if (!optionsEnded && argument == QStringLiteral("--")) {
@@ -137,6 +157,17 @@ StartupCommandLine parseStartupCommandLine(const QStringList& arguments)
             }
             continue;
         }
+        if (!optionsEnded && argument == QStringLiteral("--camera-pose")) {
+            cameraPoseSpecified = true;
+            if (index + 1 >= arguments.size() ||
+                !parseCameraPoseReference(
+                    arguments.at(++index),
+                    &command.cameraPoseUuid,
+                    &command.cameraPoseViewId)) {
+                invalidCameraPoseReference = true;
+            }
+            continue;
+        }
         if (!optionsEnded &&
             (argument == QStringLiteral("--help") ||
              argument == QStringLiteral("-h"))) {
@@ -152,6 +183,8 @@ StartupCommandLine parseStartupCommandLine(const QStringList& arguments)
         command.outputDirectory.clear();
         command.outputSize = QSize();
         command.camera = GridRenderCamera{};
+        command.cameraPoseUuid.clear();
+        command.cameraPoseViewId.clear();
         return command;
     }
 
@@ -176,6 +209,11 @@ StartupCommandLine parseStartupCommandLine(const QStringList& arguments)
         command.error = QStringLiteral("--fov requires a finite number of degrees.");
         return command;
     }
+    if (invalidCameraPoseReference) {
+        command.ok = false;
+        command.error = QStringLiteral("--camera-pose requires a UID:view_id value.");
+        return command;
+    }
     if (cameraSpecified != lookAtSpecified) {
         command.ok = false;
         command.error =
@@ -194,6 +232,12 @@ StartupCommandLine parseStartupCommandLine(const QStringList& arguments)
             "Camera position, target, up vector, and FOV must define a valid perspective view.");
         return command;
     }
+    if (cameraPoseSpecified && hasCameraOptions) {
+        command.ok = false;
+        command.error = QStringLiteral(
+            "--camera-pose cannot be combined with --camera, --look-at, --up, or --fov.");
+        return command;
+    }
 
     if (command.renderComparisonGrid &&
         (command.inputPaths.size() != 1 ||
@@ -206,7 +250,7 @@ StartupCommandLine parseStartupCommandLine(const QStringList& arguments)
     }
     else if (!command.renderComparisonGrid &&
              (!command.outputDirectory.isEmpty() || command.outputSize.isValid() ||
-              hasCameraOptions)) {
+              hasCameraOptions || cameraPoseSpecified)) {
         command.ok = false;
         command.error =
             QStringLiteral("--output-dir, --size, and camera options require --render-grid.");
@@ -219,7 +263,7 @@ QString startupCommandLineUsage()
     return QStringLiteral(
         "Usage:\n"
         "  meshcompare [mesh ...]\n"
-        "  meshcompare --render-grid comparison.mlp --output-dir output [--size WIDTHxHEIGHT] [--camera X,Y,Z --look-at X,Y,Z [--up X,Y,Z] [--fov DEGREES]]\n"
+        "  meshcompare --render-grid comparison.mlp --output-dir output [--size WIDTHxHEIGHT] [--camera X,Y,Z --look-at X,Y,Z [--up X,Y,Z] [--fov DEGREES] | --camera-pose UID:view_id]\n"
         "\n"
         "--render-grid  Render one MeshLab project to a PNG without opening a window.\n"
         "--output-dir   Directory that receives <project>.grid.png.\n"
@@ -228,5 +272,6 @@ QString startupCommandLineUsage()
         "--look-at      Point viewed by --camera.\n"
         "--up           Camera up vector; defaults to 0,1,0.\n"
         "--fov          Perspective field of view in degrees; defaults to 60.\n"
+        "--camera-pose  Reuse a saved camera pose, addressed as UID:view_id.\n"
         "--help         Show this help text.\n");
 }

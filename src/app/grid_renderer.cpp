@@ -28,6 +28,7 @@ SceneDescriptor gridSceneFor(
     const QVector<MeshEntry>& entries,
     MeshId referenceId,
     const GridRenderCamera& camera,
+    const QString& initialCameraViewStateXml,
     const QSize& outputSize)
 {
     SceneDescriptor scene;
@@ -45,7 +46,10 @@ SceneDescriptor gridSceneFor(
              {},
              entry.visible});
     }
-    if (camera.enabled) {
+    if (!initialCameraViewStateXml.isEmpty()) {
+        scene.initialCamera = {initialCameraViewStateXml};
+    }
+    else if (camera.enabled) {
         Shotm shot;
         shot.Intrinsics.cameraType = vcg::Camera<Scalarm>::PERSPECTIVE;
         shot.Intrinsics.PixelSizeMm[0] = 0.036916077f;
@@ -199,6 +203,7 @@ OperationResult renderComparisonGrid(
         staged.entries,
         reference.referenceId,
         request.camera,
+        request.initialCameraViewStateXml,
         request.outputSize);
     QWidget viewportHost;
     // QGLWidget needs a shown parent to initialize its OpenGL drawable. This
