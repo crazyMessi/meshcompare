@@ -4,6 +4,8 @@
 #include <QString>
 #include <QStringList>
 
+#include "app/grid_render_camera.h"
+
 struct StartupCommandLine
 {
     bool ok = true;
@@ -12,6 +14,7 @@ struct StartupCommandLine
     QStringList inputPaths;
     QString outputDirectory;
     QSize outputSize;
+    GridRenderCamera camera;
     QString error;
 };
 

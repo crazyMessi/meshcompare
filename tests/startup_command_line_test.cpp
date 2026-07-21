@@ -91,6 +91,71 @@ private slots:
                 "--size must use positive WIDTHxHEIGHT dimensions, at most 16384 per side and 67108864 pixels."));
     }
 
+    void renderGridAcceptsCameraPositionAndTarget()
+    {
+        const StartupCommandLine command = parseStartupCommandLine(
+            {QStringLiteral("meshcompare"),
+             QStringLiteral("--render-grid"),
+             QStringLiteral("comparison.mlp"),
+             QStringLiteral("--output-dir"),
+             QStringLiteral("/tmp/rendered"),
+             QStringLiteral("--camera"),
+             QStringLiteral("1.5,2,3"),
+             QStringLiteral("--look-at"),
+             QStringLiteral("0,0,0"),
+             QStringLiteral("--up"),
+             QStringLiteral("0,0,1"),
+             QStringLiteral("--fov"),
+             QStringLiteral("45")});
+
+        QVERIFY(command.ok);
+        QVERIFY(command.camera.enabled);
+        QCOMPARE(command.camera.position.x, 1.5);
+        QCOMPARE(command.camera.position.y, 2.0);
+        QCOMPARE(command.camera.position.z, 3.0);
+        QCOMPARE(command.camera.target.x, 0.0);
+        QCOMPARE(command.camera.up.z, 1.0);
+        QCOMPARE(command.camera.fieldOfViewDegrees, 45.0);
+    }
+
+    void renderGridRequiresCameraAndTargetTogether()
+    {
+        const StartupCommandLine command = parseStartupCommandLine(
+            {QStringLiteral("meshcompare"),
+             QStringLiteral("--render-grid"),
+             QStringLiteral("comparison.mlp"),
+             QStringLiteral("--output-dir"),
+             QStringLiteral("/tmp/rendered"),
+             QStringLiteral("--camera"),
+             QStringLiteral("1,2,3")});
+
+        QVERIFY(!command.ok);
+        QCOMPARE(
+            command.error,
+            QStringLiteral("--camera and --look-at must be provided together."));
+    }
+
+    void renderGridReportsAnInvalidFieldOfView()
+    {
+        const StartupCommandLine command = parseStartupCommandLine(
+            {QStringLiteral("meshcompare"),
+             QStringLiteral("--render-grid"),
+             QStringLiteral("comparison.mlp"),
+             QStringLiteral("--output-dir"),
+             QStringLiteral("/tmp/rendered"),
+             QStringLiteral("--camera"),
+             QStringLiteral("1,2,3"),
+             QStringLiteral("--look-at"),
+             QStringLiteral("0,0,0"),
+             QStringLiteral("--fov"),
+             QStringLiteral("not-a-number")});
+
+        QVERIFY(!command.ok);
+        QCOMPARE(
+            command.error,
+            QStringLiteral("--fov requires a finite number of degrees."));
+    }
+
     void helpOptionDoesNotStartTheApplication()
     {
         const StartupCommandLine command = parseStartupCommandLine(

@@ -1,180 +1,38 @@
 #include "viewport_grid.h"
 
-#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <utility>
 #include <vector>
 
 #include <QEvent>
+#include <QGridLayout>
 #include <QPainter>
-#include <QRectF>
 #include <QScopedValueRollback>
 #include <QSet>
 #include <QSize>
-#include <QSplitter>
 #include <QStringList>
 #include <QVBoxLayout>
 #include <QWidget>
 
 namespace
 {
-constexpr int splitterHandleWidth = 2;
+constexpr int gridSpacing = 2;
 
-struct LayoutNode
+struct GridDimensions
 {
-    explicit LayoutNode(QRectF bounds) : bounds(std::move(bounds)) {}
-
-    bool isLeaf() const { return first == nullptr && second == nullptr; }
-
-    QRectF bounds;
-    Qt::Orientation orientation = Qt::Horizontal;
-    int viewportIndex = -1;
-    std::unique_ptr<LayoutNode> first;
-    std::unique_ptr<LayoutNode> second;
+    int columns = 1;
+    int rows = 1;
 };
 
-double area(const LayoutNode& node)
+GridDimensions gridDimensionsFor(int viewportCount)
 {
-    return node.bounds.width() * node.bounds.height();
+    const int columns = qMax(
+        1,
+        static_cast<int>(std::ceil(std::sqrt(static_cast<double>(viewportCount)))));
+    return {columns, (viewportCount + columns - 1) / columns};
 }
 
-bool comesBefore(const LayoutNode& left, const LayoutNode& right)
-{
-    if (left.bounds.top() != right.bounds.top())
-        return left.bounds.top() < right.bounds.top();
-    return left.bounds.left() < right.bounds.left();
-}
-
-void split(LayoutNode& node)
-{
-    node.orientation = node.bounds.width() >= node.bounds.height()
-                           ? Qt::Horizontal
-                           : Qt::Vertical;
-    if (node.orientation == Qt::Horizontal) {
-        const qreal availableWidth =
-            std::max<qreal>(0.0, node.bounds.width() - splitterHandleWidth);
-        const qreal firstWidth = std::floor(availableWidth / 2.0);
-        const qreal secondWidth = availableWidth - firstWidth;
-        node.first.reset(new LayoutNode(QRectF(
-            node.bounds.left(),
-            node.bounds.top(),
-            firstWidth,
-            node.bounds.height())));
-        node.second.reset(new LayoutNode(QRectF(
-            node.bounds.left() + firstWidth + splitterHandleWidth,
-            node.bounds.top(),
-            secondWidth,
-            node.bounds.height())));
-        return;
-    }
-
-    const qreal availableHeight =
-        std::max<qreal>(0.0, node.bounds.height() - splitterHandleWidth);
-    const qreal firstHeight = std::floor(availableHeight / 2.0);
-    const qreal secondHeight = availableHeight - firstHeight;
-    node.first.reset(new LayoutNode(QRectF(
-        node.bounds.left(),
-        node.bounds.top(),
-        node.bounds.width(),
-        firstHeight)));
-    node.second.reset(new LayoutNode(QRectF(
-        node.bounds.left(),
-        node.bounds.top() + firstHeight + splitterHandleWidth,
-        node.bounds.width(),
-        secondHeight)));
-}
-
-std::unique_ptr<LayoutNode> createLayoutPlan(int viewportCount, const QSize& hostSize)
-{
-    const qreal width = hostSize.width() > 0 ? hostSize.width() : 1600.0;
-    const qreal height = hostSize.height() > 0 ? hostSize.height() : 900.0;
-    std::unique_ptr<LayoutNode> root(
-        new LayoutNode(QRectF(0.0, 0.0, width, height)));
-    std::vector<LayoutNode*> leaves{root.get()};
-
-    for (int index = 1; index < viewportCount; ++index) {
-        auto selected = leaves.begin();
-        for (auto candidate = leaves.begin() + 1; candidate != leaves.end(); ++candidate) {
-            const double candidateArea = area(**candidate);
-            const double selectedArea = area(**selected);
-            if (candidateArea > selectedArea ||
-                (candidateArea == selectedArea && comesBefore(**candidate, **selected))) {
-                selected = candidate;
-            }
-        }
-
-        LayoutNode* leaf = *selected;
-        split(*leaf);
-        *selected = leaf->first.get();
-        leaves.push_back(leaf->second.get());
-    }
-
-    std::sort(
-        leaves.begin(),
-        leaves.end(),
-        [](const LayoutNode* left, const LayoutNode* right) {
-            return comesBefore(*left, *right);
-        });
-    for (int index = 0; index < static_cast<int>(leaves.size()); ++index)
-        leaves[static_cast<std::size_t>(index)]->viewportIndex = index;
-
-    return root;
-}
-
-void configureSplitter(QSplitter& splitter, Qt::Orientation orientation)
-{
-    splitter.setOrientation(orientation);
-    splitter.setChildrenCollapsible(false);
-    splitter.setHandleWidth(splitterHandleWidth);
-    splitter.setOpaqueResize(true);
-}
-
-QWidget* buildLayoutBranch(
-    const LayoutNode& node,
-    std::vector<QWidget*>& viewportHosts);
-
-void populateSplitter(
-    QSplitter& splitter,
-    const LayoutNode& layout,
-    std::vector<QWidget*>& viewportHosts)
-{
-    configureSplitter(splitter, layout.orientation);
-    splitter.addWidget(buildLayoutBranch(*layout.first, viewportHosts));
-    splitter.addWidget(buildLayoutBranch(*layout.second, viewportHosts));
-    splitter.setStretchFactor(0, 1);
-    splitter.setStretchFactor(1, 1);
-}
-
-QWidget* buildLayoutBranch(
-    const LayoutNode& node,
-    std::vector<QWidget*>& viewportHosts)
-{
-    if (node.isLeaf()) {
-        auto* host = new QWidget;
-        host->setObjectName(
-            QStringLiteral("meshcompareViewportLeaf%1").arg(node.viewportIndex + 1));
-        viewportHosts[static_cast<std::size_t>(node.viewportIndex)] = host;
-        return host;
-    }
-
-    auto* splitter = new QSplitter;
-    populateSplitter(*splitter, node, viewportHosts);
-    return splitter;
-}
-
-void equalizeSplitterTree(QWidget* widget)
-{
-    auto* splitter = qobject_cast<QSplitter*>(widget);
-    if (splitter == nullptr)
-        return;
-
-    QList<int> equalSizes;
-    equalSizes << 1 << 1;
-    splitter->setSizes(equalSizes);
-    for (int index = 0; index < splitter->count(); ++index)
-        equalizeSplitterTree(splitter->widget(index));
-}
 } // namespace
 
 ViewportGrid::ViewportGrid(
@@ -232,10 +90,17 @@ OperationResult ViewportGrid::create(
     }
 
     host_ = host;
-    std::unique_ptr<LayoutNode> layoutPlan =
-        createLayoutPlan(viewportCount, host->size());
-    auto* rootSplitter = new QSplitter(host);
-    container_ = rootSplitter;
+    auto* gridContainer = new QWidget(host);
+    auto* gridLayout = new QGridLayout(gridContainer);
+    gridLayout->setContentsMargins(0, 0, 0, 0);
+    gridLayout->setSpacing(gridSpacing);
+    const GridDimensions dimensions = gridDimensionsFor(viewportCount);
+    for (int row = 0; row < dimensions.rows; ++row)
+        gridLayout->setRowStretch(row, 1);
+    for (int column = 0; column < dimensions.columns; ++column)
+        gridLayout->setColumnStretch(column, 1);
+
+    container_ = gridContainer;
     container_->setObjectName(QStringLiteral("meshcompareViewportGrid"));
     container_->hide();
     fillHost();
@@ -243,14 +108,15 @@ OperationResult ViewportGrid::create(
 
     std::vector<QWidget*> viewportHosts(
         static_cast<std::size_t>(viewportCount), nullptr);
-    if (viewportCount == 1) {
-        auto* singleHost = new QWidget;
-        singleHost->setObjectName(QStringLiteral("meshcompareViewportLeaf1"));
-        rootSplitter->addWidget(singleHost);
-        viewportHosts.front() = singleHost;
-    }
-    else {
-        populateSplitter(*rootSplitter, *layoutPlan, viewportHosts);
+    for (int index = 0; index < viewportCount; ++index) {
+        auto* viewportHost = new QWidget(gridContainer);
+        viewportHost->setObjectName(
+            QStringLiteral("meshcompareViewportLeaf%1").arg(index + 1));
+        viewportHosts[static_cast<std::size_t>(index)] = viewportHost;
+        gridLayout->addWidget(
+            viewportHost,
+            index / dimensions.columns,
+            index % dimensions.columns);
     }
 
     for (int index = 0; index < viewportCount; ++index) {
@@ -344,9 +210,6 @@ OperationResult ViewportGrid::create(
     refreshColorLegends();
     if (overlayMode_)
         refreshOverlayLabels();
-    if (viewportCount > 1)
-        equalizeSplitterTree(rootSplitter);
-
     return OperationResult::success();
 }
 

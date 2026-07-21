@@ -97,6 +97,7 @@ int main(int argc, char** argv)
             request.outputDirectory = startupCommand.outputDirectory;
             if (startupCommand.outputSize.isValid())
                 request.outputSize = startupCommand.outputSize;
+            request.camera = startupCommand.camera;
             QString outputPath;
             const OperationResult rendered = renderComparisonGrid(
                 request, &outputPath);

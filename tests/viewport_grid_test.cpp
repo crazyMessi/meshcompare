@@ -845,6 +845,48 @@ private slots:
                     factory.viewport(0).widget()->width() -
                     factory.viewport(1).widget()->width()) <= 1);
     }
+
+    void sixViewportsReflowIntoAnEvenThreeByTwoGrid()
+    {
+        QWidget host;
+        host.resize(1200, 900);
+        host.show();
+        TestRenderScene renderScene;
+        GridFakeViewportFactory factory;
+        RecordingCallbacks callbacks;
+        ViewportGrid grid(factory, callbacks);
+
+        QVERIFY(grid.create(
+                    &host,
+                    scene(6),
+                    renderScene.dependencies(),
+                    101)
+                    .ok);
+        grid.showCommitted();
+        QCoreApplication::processEvents();
+
+        QCOMPARE(factory.creationCount(), 6);
+        const QSize firstSize = factory.viewport(0).widget()->size();
+        for (int index = 1; index < 6; ++index) {
+            const QSize size = factory.viewport(index).widget()->size();
+            QVERIFY(qAbs(size.width() - firstSize.width()) <= 1);
+            QVERIFY(qAbs(size.height() - firstSize.height()) <= 1);
+        }
+
+        const QPoint first = factory.viewport(0).widget()->mapTo(&host, QPoint());
+        const QPoint second = factory.viewport(1).widget()->mapTo(&host, QPoint());
+        const QPoint third = factory.viewport(2).widget()->mapTo(&host, QPoint());
+        const QPoint fourth = factory.viewport(3).widget()->mapTo(&host, QPoint());
+        const QPoint fifth = factory.viewport(4).widget()->mapTo(&host, QPoint());
+        const QPoint sixth = factory.viewport(5).widget()->mapTo(&host, QPoint());
+        QCOMPARE(first.y(), second.y());
+        QCOMPARE(first.y(), third.y());
+        QCOMPARE(fourth.y(), fifth.y());
+        QCOMPARE(fourth.y(), sixth.y());
+        QVERIFY(first.x() < second.x() && second.x() < third.x());
+        QVERIFY(fourth.x() < fifth.x() && fifth.x() < sixth.x());
+        QVERIFY(first.y() < fourth.y());
+    }
 };
 
 QTEST_MAIN(ViewportGridTest)

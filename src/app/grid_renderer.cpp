@@ -2,12 +2,18 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QDomDocument>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFileInfo>
 #include <QImage>
 #include <QThread>
 #include <QWidget>
+
+#include <common/ml_document/base_types.h>
+#include <wrap/qt/shot_qt.h>
+
+#include <cmath>
 
 #include "core/reference_resolver.h"
 #include "infrastructure/meshlab/meshlab_mesh_loader.h"
@@ -20,7 +26,9 @@ constexpr int ViewportReadyTimeoutMs = 10000;
 
 SceneDescriptor gridSceneFor(
     const QVector<MeshEntry>& entries,
-    MeshId referenceId)
+    MeshId referenceId,
+    const GridRenderCamera& camera,
+    const QSize& outputSize)
 {
     SceneDescriptor scene;
     scene.generation = 1;
@@ -36,6 +44,47 @@ SceneDescriptor gridSceneFor(
              entry.presentation,
              {},
              entry.visible});
+    }
+    if (camera.enabled) {
+        Shotm shot;
+        shot.Intrinsics.cameraType = vcg::Camera<Scalarm>::PERSPECTIVE;
+        shot.Intrinsics.PixelSizeMm[0] = 0.036916077f;
+        shot.Intrinsics.PixelSizeMm[1] = 0.036916077f;
+        shot.Intrinsics.ViewportPx[0] = outputSize.width();
+        shot.Intrinsics.ViewportPx[1] = outputSize.height();
+        shot.Intrinsics.CenterPx[0] = outputSize.width() / 2;
+        shot.Intrinsics.CenterPx[1] = outputSize.height() / 2;
+        const double viewportHeightMm =
+            shot.Intrinsics.PixelSizeMm[1] * outputSize.height();
+        shot.Intrinsics.FocalMm = static_cast<Scalarm>(
+            viewportHeightMm /
+            (2.0 * std::tan(camera.fieldOfViewDegrees * 3.14159265358979323846 / 360.0)));
+        shot.SetViewPoint(Point3m(
+            static_cast<Scalarm>(camera.position.x),
+            static_cast<Scalarm>(camera.position.y),
+            static_cast<Scalarm>(camera.position.z)));
+        shot.LookAt(
+            Point3m(
+                static_cast<Scalarm>(camera.target.x),
+                static_cast<Scalarm>(camera.target.y),
+                static_cast<Scalarm>(camera.target.z)),
+            Point3m(
+                static_cast<Scalarm>(camera.up.x),
+                static_cast<Scalarm>(camera.up.y),
+                static_cast<Scalarm>(camera.up.z)));
+
+        QDomDocument document(QStringLiteral("ViewState"));
+        QDomElement root = document.createElement(QStringLiteral("project"));
+        document.appendChild(root);
+        root.appendChild(WriteShotToQDomNode(shot, document));
+        QDomElement settings = document.createElement(QStringLiteral("ViewSettings"));
+        const GridRenderCameraClipPlanes clipPlanes =
+            gridRenderCameraClipPlanes(camera);
+        settings.setAttribute(QStringLiteral("TrackScale"), 1.0);
+        settings.setAttribute(QStringLiteral("NearPlane"), clipPlanes.nearPlane);
+        settings.setAttribute(QStringLiteral("FarPlane"), clipPlanes.farPlane);
+        root.appendChild(settings);
+        scene.initialCamera = {document.toString()};
     }
     return scene;
 }
@@ -77,6 +126,10 @@ OperationResult outputPathFor(
             QStringLiteral(
                 "Grid render dimensions must be at most 16384 per side and no more than 67108864 pixels."));
     }
+    if (!isValidGridRenderCamera(request.camera)) {
+        return OperationResult::failure(
+            QStringLiteral("Grid render camera parameters do not define a valid perspective view."));
+    }
 
     const QFileInfo projectInfo(request.projectPath);
     const QString outputBaseName = projectInfo.completeBaseName();
@@ -110,6 +163,17 @@ QImage normalizeGridRenderImage(QImage image, const QSize& outputSize)
     return image;
 }
 
+QSize gridRenderHostSizeForPixelOutput(
+    const QSize& outputSize,
+    qreal devicePixelRatio)
+{
+    if (!std::isfinite(devicePixelRatio) || devicePixelRatio <= 0.0)
+        return {};
+    return QSize(
+        qMax(1, static_cast<int>(std::ceil(outputSize.width() / devicePixelRatio))),
+        qMax(1, static_cast<int>(std::ceil(outputSize.height() / devicePixelRatio))));
+}
+
 OperationResult renderComparisonGrid(
     const GridRenderRequest& request,
     QString* outputPath)
@@ -132,13 +196,24 @@ OperationResult renderComparisonGrid(
 
     const ReferenceResolution reference = resolveReference(staged.entries);
     const SceneDescriptor scene = gridSceneFor(
-        staged.entries, reference.referenceId);
+        staged.entries,
+        reference.referenceId,
+        request.camera,
+        request.outputSize);
     QWidget viewportHost;
     // QGLWidget needs a shown parent to initialize its OpenGL drawable. This
     // keeps the native host off-screen; capture explicitly draws each frame.
     viewportHost.setAttribute(Qt::WA_DontShowOnScreen);
-    viewportHost.resize(request.outputSize);
+    viewportHost.resize(1, 1);
     viewportHost.show();
+    QCoreApplication::processEvents();
+    const QSize hostSize = gridRenderHostSizeForPixelOutput(
+        request.outputSize, viewportHost.devicePixelRatioF());
+    if (hostSize.isEmpty()) {
+        return OperationResult::failure(
+            QStringLiteral("The grid renderer could not determine a valid display scale."));
+    }
+    viewportHost.resize(hostSize);
     QCoreApplication::processEvents();
 
     MeshLabRendererAdapter renderer;

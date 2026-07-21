@@ -127,7 +127,8 @@ target_link_libraries(meshcompare-grid-render
 		meshcompare-core
 		meshcompare-meshlab-infrastructure
 		meshcompare-meshlab-renderer
-		Qt5::Widgets)
+		Qt5::Widgets
+		Qt5::Xml)
 target_include_directories(meshcompare-grid-render
 	PUBLIC ${MESHCOMPARE_SOURCE_ROOT})
 
