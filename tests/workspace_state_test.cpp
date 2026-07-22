@@ -444,6 +444,9 @@ private slots:
         strayAnalytical.uniformColor = QColor(Qt::blue);
         QVERIFY(!state.validateColorUpdates({{2, strayAnalytical, 0.9, true}}).ok);
         QVERIFY(!state.validateColorUpdates({{2, precision, 1.01, true}}).ok);
+        QVERIFY(!state.validateColorUpdates({{2, precision, -0.01, true}}).ok);
+        QVERIFY(state.validateColorUpdates({{3, normal, -1.0, true}}).ok);
+        QVERIFY(!state.validateColorUpdates({{3, normal, -1.01, true}}).ok);
     }
 
     void vertexColorUpdateValidatesAndCommitsAtomically()

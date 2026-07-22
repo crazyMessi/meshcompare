@@ -349,10 +349,14 @@ OperationResult WorkspaceState::validateColorUpdates(
             break;
         case ColorMode::PrecisionResult:
         case ColorMode::NormalAgreementResult: {
+            const double minimumScore =
+                presentation.mode == ColorMode::NormalAgreementResult
+                ? -1.0
+                : 0.0;
             const bool hasFaceColors = !presentation.faceColors.isEmpty();
             const bool hasVertexColors = !presentation.vertexColors.isEmpty();
             if (presentation.uniformColor.isValid() || !update.hasScore ||
-                update.score < 0.0 || update.score > 1.0 ||
+                update.score < minimumScore || update.score > 1.0 ||
                 hasFaceColors == hasVertexColors ||
                 !isEmptyLegend(presentation.colorLegend) ||
                 !isEmptySummary(update.analysisSummary)) {

@@ -143,6 +143,30 @@ private slots:
         QCOMPARE(outcome.comparison.vertexDistances.size(), 100);
     }
 
+    void distanceToReferenceKeepsSmallDistancesOutsideLargeEdges()
+    {
+        SurfaceMeshSnapshot source;
+        source.vertices.append(SurfacePoint3D{0.2, -0.2, 0.0});
+        SurfaceMeshSnapshot reference;
+        constexpr double large = 1.0e20;
+        reference.vertices = {
+            SurfacePoint3D{-large, 0.0, 0.0},
+            SurfacePoint3D{large, 0.0, 0.0},
+            SurfacePoint3D{0.0, large, 0.0},
+        };
+        reference.faces.append({0, 1, 2});
+
+        const SurfaceComparisonOutcome outcome = compareSampledSurfaces(
+            source,
+            reference,
+            SurfaceComparisonMetric::DistanceToReference,
+            SurfaceComparisonOptions{});
+
+        QVERIFY2(outcome.result.ok, qPrintable(outcome.result.error));
+        QCOMPARE(outcome.comparison.vertexDistances.size(), 1);
+        QVERIFY(qAbs(outcome.comparison.vertexDistances.front() - 0.2) < 1e-12);
+    }
+
     void distanceVertexColorsMatchMatplotlibViridisWithSqrtClamping()
     {
         const QVector<double> distances = {
@@ -382,7 +406,8 @@ private slots:
         QVERIFY(absolute.result.ok);
         QVERIFY(directional.result.ok);
         QCOMPARE(absolute.comparison.globalScore, 1.0);
-        QCOMPARE(directional.comparison.globalScore, 0.0);
+        QCOMPARE(directional.comparison.globalScore, -1.0);
+        QCOMPARE(directional.comparison.faceScores, QVector<double>({-1.0}));
     }
 
     void repeatabilityAndGoldenDetectSeedOrDrawOrderChanges()
@@ -404,8 +429,8 @@ private slots:
         QVERIFY(second.result.ok);
         QCOMPARE(first.comparison.sampleCount, 20);
         QCOMPARE(first.comparison.coloredFaceCount, 2);
-        QCOMPARE(first.comparison.globalScore, 0.55);
-        QCOMPARE(first.comparison.faceScores, QVector<double>({1.0, 0.0}));
+        QCOMPARE(first.comparison.globalScore, 0.1);
+        QCOMPARE(first.comparison.faceScores, QVector<double>({1.0, -1.0}));
         QCOMPARE(second.comparison.sampleCount, first.comparison.sampleCount);
         QCOMPARE(second.comparison.coloredFaceCount, first.comparison.coloredFaceCount);
         QCOMPARE(second.comparison.globalScore, first.comparison.globalScore);
@@ -440,39 +465,53 @@ private slots:
         QCOMPARE(outcome.comparison.faceScores, QVector<double>({expectedFaceScore}));
     }
 
-    void precisionGoldenBindsIndependentReferenceSeedAndSamplePositions()
+    void precisionQueriesExactReferenceTrianglesInsteadOfReferenceSamples()
     {
+        SurfaceMeshSnapshot triangle;
+        triangle.vertices = {
+            SurfacePoint3D{0.1, 0.2, 0.3},
+            SurfacePoint3D{1.1, 0.4, 0.7},
+            SurfacePoint3D{0.2, 1.3, 1.1},
+        };
+        triangle.faces.append({0, 1, 2});
         SurfaceComparisonOptions options;
         options.sampleCount = 20;
-        options.distanceThreshold = 0.05f;
+        options.distanceThreshold = 1.0e-5f;
         options.randomSeed = 17;
 
         const SurfaceComparisonOutcome outcome = compareSampledSurfaces(
-            triangleAtZ(0.0f),
-            triangleAtZ(0.0f),
+            triangle,
+            triangle,
             SurfaceComparisonMetric::PrecisionAtThreshold,
             options);
 
         QVERIFY(outcome.result.ok);
         QCOMPARE(outcome.comparison.sampleCount, 20);
-        QCOMPARE(outcome.comparison.globalScore, 0.3);
-        QCOMPARE(
-            outcome.comparison.faceScores,
-            QVector<double>({double(Scalarm(6) / Scalarm(20))}));
+        QCOMPARE(outcome.comparison.globalScore, 1.0);
+        QCOMPARE(outcome.comparison.faceScores, QVector<double>({1.0}));
+    }
 
-        SurfaceComparisonOptions legacyDefaults;
-        legacyDefaults.sampleCount = 20;
-        legacyDefaults.distanceThreshold = 0.025f;
-        const SurfaceComparisonOutcome defaultSeedOutcome = compareSampledSurfaces(
-            triangleAtZ(0.0f),
-            triangleAtZ(0.0f),
-            SurfaceComparisonMetric::PrecisionAtThreshold,
-            legacyDefaults);
-        QVERIFY(defaultSeedOutcome.result.ok);
-        QCOMPARE(defaultSeedOutcome.comparison.globalScore, 0.2);
-        QCOMPARE(
-            defaultSeedOutcome.comparison.faceScores,
-            QVector<double>({double(Scalarm(4) / Scalarm(20))}));
+    void normalAgreementUsesTheExactNearestReferenceFaceNormal()
+    {
+        SurfaceMeshSnapshot reference = triangleAtZ(0.0);
+        reference.vertices.append(SurfacePoint3D{100.0, -100.0, -100.0});
+        reference.vertices.append(SurfacePoint3D{100.0, 100.0, -100.0});
+        reference.vertices.append(SurfacePoint3D{100.0, -100.0, 100.0});
+        reference.faces.append({3, 4, 5});
+        SurfaceComparisonOptions options;
+        options.sampleCount = 16;
+        options.randomSeed = 17;
+        options.useAbsoluteNormalDot = false;
+
+        const SurfaceComparisonOutcome outcome = compareSampledSurfaces(
+            triangleAtZ(0.0),
+            reference,
+            SurfaceComparisonMetric::NormalAgreement,
+            options);
+
+        QVERIFY2(outcome.result.ok, qPrintable(outcome.result.error));
+        QCOMPARE(outcome.comparison.globalScore, 1.0);
+        QCOMPARE(outcome.comparison.faceScores, QVector<double>({1.0}));
     }
 
     void precisionThresholdIsInclusive()
@@ -575,7 +614,7 @@ private slots:
         QCOMPARE(outcome.comparison.globalScore, 1.0);
         QCOMPARE(outcome.comparison.faceScores.size(), 2);
         QCOMPARE(outcome.comparison.faceScores.at(0), 1.0);
-        QCOMPARE(outcome.comparison.faceScores.at(1), 0.0);
+        QCOMPARE(outcome.comparison.faceScores.at(1), -1.0);
     }
 
     void colorRampHasExactLegacyAnchors()
@@ -593,6 +632,17 @@ private slots:
                      QColor(128, 255, 0, 255),
                      QColor(0, 255, 0, 255),
                  }));
+    }
+
+    void signedNormalColorRampMapsNegativeAgreementToRed()
+    {
+        QCOMPARE(
+            surfaceScoreColors({-1.0, 0.0, 1.0}, -1.0),
+            QVector<QColor>({
+                QColor(255, 0, 0, 255),
+                QColor(255, 255, 0, 255),
+                QColor(0, 255, 0, 255),
+            }));
     }
 
     void rejectsInvalidOptionsAndSnapshots()
@@ -665,6 +715,15 @@ private slots:
         QCOMPARE(outcome.result.error,
                  QStringLiteral("The reference layer has no positive-area triangles."));
 
+        outcome = compareSampledSurfaces(
+            zeroArea,
+            zeroArea,
+            SurfaceComparisonMetric::NormalAgreement,
+            options);
+        QVERIFY(!outcome.result.ok);
+        QCOMPARE(outcome.result.error,
+                 QStringLiteral("The reference layer has no positive-area triangles."));
+
         SurfaceMeshSnapshot invalidIndex = triangle;
         invalidIndex.faces[0][2] = 3;
         outcome = compareSampledSurfaces(
@@ -706,6 +765,42 @@ private slots:
                 "Surface mesh snapshot vertices exceed the supported scalar range."));
     }
 
+    void largeReferenceFacesRemainAvailableToExactQueries()
+    {
+        if (!std::is_same<Scalarm, float>::value)
+            QSKIP("Requires a single-scalar build that can overflow face normals.");
+
+        SurfaceMeshSnapshot reference = triangleAtZ(1.0);
+        const double large =
+            double(std::numeric_limits<Scalarm>::max()) * 0.75;
+        reference.vertices.append(SurfacePoint3D{large, -large, 0.0});
+        reference.vertices.append(SurfacePoint3D{-large, -large, 0.0});
+        reference.vertices.append(SurfacePoint3D{0.0, large, 0.0});
+        reference.faces.append({3, 4, 5});
+        SurfaceComparisonOptions options;
+        options.sampleCount = 16;
+        options.distanceThreshold = 0.01f;
+        options.useAbsoluteNormalDot = false;
+
+        const SurfaceComparisonOutcome precision = compareSampledSurfaces(
+            triangleAtZ(0.0, true),
+            reference,
+            SurfaceComparisonMetric::PrecisionAtThreshold,
+            options);
+        const SurfaceComparisonOutcome normal = compareSampledSurfaces(
+            triangleAtZ(0.0, true),
+            reference,
+            SurfaceComparisonMetric::NormalAgreement,
+            options);
+
+        QVERIFY2(precision.result.ok, qPrintable(precision.result.error));
+        QVERIFY2(normal.result.ok, qPrintable(normal.result.error));
+        QCOMPARE(precision.comparison.globalScore, 1.0);
+        QCOMPARE(precision.comparison.faceScores, QVector<double>({1.0}));
+        QCOMPARE(normal.comparison.globalScore, 1.0);
+        QCOMPARE(normal.comparison.faceScores, QVector<double>({1.0}));
+    }
+
     void cancellationDuringSourceSamplingReturnsEmptyFailure()
     {
         SurfaceComparisonOptions options = quickOptions();
@@ -716,27 +811,95 @@ private slots:
             SurfaceComparisonMetric::NormalAgreement,
             options,
             [](int percent, const QString& message) {
-                return !(percent == 27 && message == QStringLiteral("Sampling source surface..."));
+                return !(percent == 54 && message == QStringLiteral("Sampling source surface..."));
             });
 
         verifyCancelled(outcome);
     }
 
-    void cancellationDuringReferenceSamplingReturnsEmptyFailure()
+    void cancellationBeforeReferenceIndexBuildReturnsEmptyFailure()
     {
         SurfaceComparisonOptions options = quickOptions();
-        options.sampleCount = 9000;
+        options.sampleCount = 1;
         const SurfaceComparisonOutcome outcome = compareSampledSurfaces(
             triangleAtZ(0.0f),
             triangleAtZ(0.0f),
             SurfaceComparisonMetric::NormalAgreement,
             options,
             [](int percent, const QString& message) {
-                return !(percent == 57
-                         && message == QStringLiteral("Sampling reference surface..."));
+                return !(percent == 60
+                         && message == QStringLiteral(
+                             "Building reference triangle index..."));
             });
 
         verifyCancelled(outcome);
+    }
+
+    void cancellationDuringReferenceIndexBuildReturnsEmptyFailure()
+    {
+        SurfaceMeshSnapshot reference = triangleAtZ(0.0);
+        reference.faces.fill(std::array<int, 3>{0, 1, 2}, 9000);
+        SurfaceComparisonOptions options = quickOptions();
+        options.sampleCount = 1;
+        bool indexBuildStarted = false;
+        int buildCancellationChecks = 0;
+
+        const SurfaceComparisonOutcome outcome = compareSampledSurfaces(
+            triangleAtZ(0.0),
+            reference,
+            SurfaceComparisonMetric::NormalAgreement,
+            options,
+            [&indexBuildStarted, &buildCancellationChecks](
+                int percent,
+                const QString& message) {
+                if (percent == 60 &&
+                    message == QStringLiteral(
+                        "Building reference triangle index...")) {
+                    indexBuildStarted = true;
+                    buildCancellationChecks = 0;
+                }
+                return true;
+            },
+            [&indexBuildStarted, &buildCancellationChecks] {
+                return indexBuildStarted &&
+                    ++buildCancellationChecks >= 18010;
+            });
+
+        verifyCancelled(outcome);
+        QVERIFY(buildCancellationChecks >= 18010);
+    }
+
+    void cancellationWithinReferenceTriangleQueryReturnsEmptyFailure()
+    {
+        SurfaceMeshSnapshot reference = triangleAtZ(1.0);
+        reference.faces.fill(std::array<int, 3>{0, 1, 2}, 16);
+        SurfaceComparisonOptions options = quickOptions();
+        options.sampleCount = 1;
+        bool scoringStarted = false;
+        int queryCancellationChecks = 0;
+
+        const SurfaceComparisonOutcome outcome = compareSampledSurfaces(
+            triangleAtZ(0.0),
+            reference,
+            SurfaceComparisonMetric::PrecisionAtThreshold,
+            options,
+            [&scoringStarted, &queryCancellationChecks](
+                int percent,
+                const QString& message) {
+                if (percent == 65 &&
+                    message.contains(QStringLiteral(
+                        "source-to-reference precision"))) {
+                    scoringStarted = true;
+                    queryCancellationChecks = 0;
+                }
+                return true;
+            },
+            [&scoringStarted, &queryCancellationChecks] {
+                return scoringStarted && ++queryCancellationChecks >= 3;
+            });
+
+        verifyCancelled(outcome);
+        QVERIFY(queryCancellationChecks >= 3);
     }
 
     void cancellationDuringScoringReturnsEmptyFailure()
@@ -820,7 +983,7 @@ private slots:
                            .arg(options.sampleCount)));
     }
 
-    void successfulProgressMatchesLegacyAnalysisSequence()
+    void successfulNormalProgressUsesAnExactReferenceIndex()
     {
         SurfaceComparisonOptions options = quickOptions();
         options.sampleCount = 1;
@@ -839,9 +1002,8 @@ private slots:
         QVERIFY(outcome.result.ok);
         const QVector<QPair<int, QString>> expected = {
             {0, QStringLiteral("Sampling source surface...")},
-            {30, QStringLiteral("Sampling source surface...")},
-            {60, QStringLiteral("Sampling reference surface...")},
-            {60, QStringLiteral("Building reference sample KD-tree...")},
+            {60, QStringLiteral("Sampling source surface...")},
+            {60, QStringLiteral("Building reference triangle index...")},
             {65, QStringLiteral("Computing source-to-reference normal agreement...")},
             {85, QStringLiteral("Computing source-to-reference normal agreement...")},
             {95, QStringLiteral("Completing source face analysis colors...")},
@@ -849,7 +1011,7 @@ private slots:
         QCOMPARE(progress, expected);
     }
 
-    void successfulPrecisionProgressMatchesLegacyAnalysisSequence()
+    void successfulPrecisionProgressUsesAnExactReferenceIndex()
     {
         SurfaceComparisonOptions options = quickOptions();
         options.sampleCount = 1;
@@ -868,9 +1030,8 @@ private slots:
         QVERIFY(outcome.result.ok);
         const QVector<QPair<int, QString>> expected = {
             {0, QStringLiteral("Sampling source surface...")},
-            {30, QStringLiteral("Sampling source surface...")},
-            {60, QStringLiteral("Sampling reference surface...")},
-            {60, QStringLiteral("Building reference sample KD-tree...")},
+            {60, QStringLiteral("Sampling source surface...")},
+            {60, QStringLiteral("Building reference triangle index...")},
             {65, QStringLiteral("Computing source-to-reference precision...")},
             {85, QStringLiteral("Computing source-to-reference precision...")},
             {95, QStringLiteral("Completing source face analysis colors...")},

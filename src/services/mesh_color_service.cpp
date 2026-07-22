@@ -362,17 +362,22 @@ private:
                         outcome.comparison.doubleLayerStatistics);
             }
             else {
+                const double minimumScore =
+                    request_.metric == SurfaceComparisonMetric::NormalAgreement &&
+                        !request_.options.useAbsoluteNormalDot
+                    ? -1.0
+                    : 0.0;
                 bool validScores =
                     outcome.comparison.faceScores.size() ==
                         target.faceCount &&
                     outcome.comparison.coloredFaceCount ==
                         target.faceCount &&
                     std::isfinite(outcome.comparison.globalScore) &&
-                    outcome.comparison.globalScore >= 0.0 &&
+                    outcome.comparison.globalScore >= minimumScore &&
                     outcome.comparison.globalScore <= 1.0;
                 for (double faceScore : outcome.comparison.faceScores) {
                     if (!std::isfinite(faceScore) ||
-                        faceScore < 0.0 || faceScore > 1.0) {
+                        faceScore < minimumScore || faceScore > 1.0) {
                         validScores = false;
                         break;
                     }
@@ -387,8 +392,9 @@ private:
                     return;
                 }
                 result.globalScore = outcome.comparison.globalScore;
-                result.faceColors =
-                    surfaceScoreColors(outcome.comparison.faceScores);
+                result.faceColors = surfaceScoreColors(
+                    outcome.comparison.faceScores,
+                    minimumScore);
             }
             staged.append(std::move(result));
         }

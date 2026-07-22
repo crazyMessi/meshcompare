@@ -111,7 +111,9 @@ SurfaceComparisonOutcome compareSampledSurfaces(
     AnalysisProgress progress = {},
     AnalysisCancellation cancellationRequested = {});
 
-QVector<QColor> surfaceScoreColors(const QVector<double>& faceScores);
+QVector<QColor> surfaceScoreColors(
+    const QVector<double>& faceScores,
+    double minimumScore = 0.0);
 QVector<QColor> distanceToVertexColors(
     const QVector<double>& vertexDistances,
     double maxDistance = 0.04,

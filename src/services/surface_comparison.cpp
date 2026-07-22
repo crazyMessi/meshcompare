@@ -10,17 +10,18 @@
 #include <cmath>
 #include <limits>
 #include <random>
+#include <utility>
 #include <vector>
 
 namespace {
 
-constexpr std::uint32_t kReferenceSeedXor = 0xd36e244du;
 constexpr char kFaceColorMessage[] = "Completing source face analysis colors...";
 
 struct WorkingMesh {
     std::vector<Point3m> vertices;
     std::vector<std::array<int, 3>> faces;
     bool hasPositiveArea = false;
+    bool hasQueryTriangle = false;
 };
 
 struct SurfaceSample {
@@ -39,15 +40,9 @@ SurfacePoint3D subtract(
         left[2] - right[2]};
 }
 
-SurfacePoint3D addScaled(
-    const SurfacePoint3D& origin,
-    const SurfacePoint3D& direction,
-    double scale)
+SurfacePoint3D surfacePoint(const Point3m& point)
 {
-    return {
-        origin[0] + direction[0] * scale,
-        origin[1] + direction[1] * scale,
-        origin[2] + direction[2] * scale};
+    return {{double(point[0]), double(point[1]), double(point[2])}};
 }
 
 double vectorDot(const SurfacePoint3D& left, const SurfacePoint3D& right)
@@ -58,6 +53,97 @@ double vectorDot(const SurfacePoint3D& left, const SurfacePoint3D& right)
 double squaredLength(const SurfacePoint3D& value)
 {
     return vectorDot(value, value);
+}
+
+bool normalizedTriangleNormal(
+    const SurfacePoint3D& first,
+    const SurfacePoint3D& second,
+    const SurfacePoint3D& third,
+    SurfacePoint3D* normal)
+{
+    double coordinateScale = 0.0;
+    for (int axis = 0; axis < 3; ++axis) {
+        coordinateScale = std::max(
+            coordinateScale,
+            std::max(
+                std::abs(first[axis]),
+                std::max(std::abs(second[axis]), std::abs(third[axis]))));
+    }
+    if (!std::isfinite(coordinateScale) || coordinateScale <= 0.0)
+        return false;
+
+    SurfacePoint3D firstToSecond;
+    SurfacePoint3D firstToThird;
+    double firstEdgeScale = 0.0;
+    double secondEdgeScale = 0.0;
+    for (int axis = 0; axis < 3; ++axis) {
+        firstToSecond[axis] =
+            second[axis] / coordinateScale - first[axis] / coordinateScale;
+        firstToThird[axis] =
+            third[axis] / coordinateScale - first[axis] / coordinateScale;
+        firstEdgeScale = std::max(
+            firstEdgeScale, std::abs(firstToSecond[axis]));
+        secondEdgeScale = std::max(
+            secondEdgeScale, std::abs(firstToThird[axis]));
+    }
+    if (firstEdgeScale <= 0.0 || secondEdgeScale <= 0.0)
+        return false;
+    for (int axis = 0; axis < 3; ++axis) {
+        firstToSecond[axis] /= firstEdgeScale;
+        firstToThird[axis] /= secondEdgeScale;
+    }
+
+    const SurfacePoint3D cross{{
+        firstToSecond[1] * firstToThird[2]
+            - firstToSecond[2] * firstToThird[1],
+        firstToSecond[2] * firstToThird[0]
+            - firstToSecond[0] * firstToThird[2],
+        firstToSecond[0] * firstToThird[1]
+            - firstToSecond[1] * firstToThird[0]}};
+    const double length = std::sqrt(squaredLength(cross));
+    if (!std::isfinite(length) || length <= 0.0)
+        return false;
+    for (int axis = 0; axis < 3; ++axis)
+        (*normal)[axis] = cross[axis] / length;
+    return true;
+}
+
+double pointLineSquaredDistance(
+    const SurfacePoint3D& point,
+    const SurfacePoint3D& first,
+    const SurfacePoint3D& second)
+{
+    SurfacePoint3D firstToPoint = subtract(point, first);
+    SurfacePoint3D firstToSecond = subtract(second, first);
+    double pointScale = 0.0;
+    double edgeScale = 0.0;
+    for (int axis = 0; axis < 3; ++axis) {
+        pointScale = std::max(pointScale, std::abs(firstToPoint[axis]));
+        edgeScale = std::max(edgeScale, std::abs(firstToSecond[axis]));
+    }
+    if (!std::isfinite(pointScale) || !std::isfinite(edgeScale) ||
+        edgeScale <= 0.0) {
+        return std::numeric_limits<double>::infinity();
+    }
+    if (pointScale <= 0.0)
+        return 0.0;
+    for (int axis = 0; axis < 3; ++axis) {
+        firstToPoint[axis] /= pointScale;
+        firstToSecond[axis] /= edgeScale;
+    }
+
+    const SurfacePoint3D cross{{
+        firstToPoint[1] * firstToSecond[2]
+            - firstToPoint[2] * firstToSecond[1],
+        firstToPoint[2] * firstToSecond[0]
+            - firstToPoint[0] * firstToSecond[2],
+        firstToPoint[0] * firstToSecond[1]
+            - firstToPoint[1] * firstToSecond[0]}};
+    const double normalizedDistanceSquared =
+        squaredLength(cross) / squaredLength(firstToSecond);
+    const double distance = pointScale * std::sqrt(
+        std::max(0.0, normalizedDistanceSquared));
+    return distance * distance;
 }
 
 double pointTriangleSquaredDistance(
@@ -90,10 +176,7 @@ double pointTriangleSquaredDistance(
         - secondProjection * firstThirdProjection;
     if (firstEdgeRegion <= 0.0 && firstSecondProjection >= 0.0 &&
         secondProjection <= 0.0) {
-        const double edgeFraction =
-            firstSecondProjection / (firstSecondProjection - secondProjection);
-        return squaredLength(
-            subtract(point, addScaled(first, firstToSecond, edgeFraction)));
+        return pointLineSquaredDistance(point, first, second);
     }
 
     const SurfacePoint3D thirdToPoint = subtract(point, third);
@@ -110,10 +193,7 @@ double pointTriangleSquaredDistance(
         - firstSecondProjection * thirdProjection;
     if (secondEdgeRegion <= 0.0 && firstThirdProjection >= 0.0 &&
         thirdProjection <= 0.0) {
-        const double edgeFraction =
-            firstThirdProjection / (firstThirdProjection - thirdProjection);
-        return squaredLength(
-            subtract(point, addScaled(first, firstToThird, edgeFraction)));
+        return pointLineSquaredDistance(point, first, third);
     }
 
     const double oppositeEdgeRegion =
@@ -122,24 +202,14 @@ double pointTriangleSquaredDistance(
     if (oppositeEdgeRegion <= 0.0 &&
         secondThirdProjection - secondProjection >= 0.0 &&
         thirdSecondProjection - thirdProjection >= 0.0) {
-        const SurfacePoint3D secondToThird = subtract(third, second);
-        const double edgeFraction =
-            (secondThirdProjection - secondProjection)
-            / ((secondThirdProjection - secondProjection)
-               + (thirdSecondProjection - thirdProjection));
-        return squaredLength(
-            subtract(point, addScaled(second, secondToThird, edgeFraction)));
+        return pointLineSquaredDistance(point, second, third);
     }
 
-    const double inverseDenominator =
-        1.0 / (firstEdgeRegion + secondEdgeRegion + oppositeEdgeRegion);
-    const double secondWeight = secondEdgeRegion * inverseDenominator;
-    const double thirdWeight = firstEdgeRegion * inverseDenominator;
-    const SurfacePoint3D closest = addScaled(
-        addScaled(first, firstToSecond, secondWeight),
-        firstToThird,
-        thirdWeight);
-    return squaredLength(subtract(point, closest));
+    SurfacePoint3D normal;
+    if (!normalizedTriangleNormal(first, second, third, &normal))
+        return std::numeric_limits<double>::infinity();
+    const double planeDistance = vectorDot(firstToPoint, normal);
+    return planeDistance * planeDistance;
 }
 
 struct TriangleBounds {
@@ -151,6 +221,11 @@ struct TriangleBounds {
         -std::numeric_limits<double>::infinity(),
         -std::numeric_limits<double>::infinity(),
         -std::numeric_limits<double>::infinity()}};
+};
+
+struct ReferenceTriangleHit {
+    double squaredDistance = std::numeric_limits<double>::infinity();
+    int faceIndex = -1;
 };
 
 void includePoint(TriangleBounds* bounds, const SurfacePoint3D& point)
@@ -184,26 +259,26 @@ double pointBoundsSquaredDistance(
 class ReferenceTriangleIndex
 {
 public:
-    explicit ReferenceTriangleIndex(const SurfaceMeshSnapshot& reference)
-        : reference_(reference)
+    explicit ReferenceTriangleIndex(
+        const SurfaceMeshSnapshot& reference,
+        AnalysisCancellation cancellationRequested = {})
+        : reference_(reference),
+          cancellationRequested_(std::move(cancellationRequested))
     {
         triangleIndexes_.reserve(
             static_cast<std::size_t>(reference.faces.size()));
         for (int faceIndex = 0; faceIndex < reference.faces.size(); ++faceIndex) {
+            if (pollCancellation())
+                return;
             const std::array<int, 3>& face = reference.faces[faceIndex];
-            const SurfacePoint3D firstToSecond =
-                subtract(reference.vertices[face[1]], reference.vertices[face[0]]);
-            const SurfacePoint3D firstToThird =
-                subtract(reference.vertices[face[2]], reference.vertices[face[0]]);
-            const SurfacePoint3D cross{{
-                firstToSecond[1] * firstToThird[2]
-                    - firstToSecond[2] * firstToThird[1],
-                firstToSecond[2] * firstToThird[0]
-                    - firstToSecond[0] * firstToThird[2],
-                firstToSecond[0] * firstToThird[1]
-                    - firstToSecond[1] * firstToThird[0]}};
-            if (squaredLength(cross) > 0.0)
+            SurfacePoint3D normal;
+            if (normalizedTriangleNormal(
+                    reference.vertices[face[0]],
+                    reference.vertices[face[1]],
+                    reference.vertices[face[2]],
+                    &normal)) {
                 triangleIndexes_.push_back(faceIndex);
+            }
         }
         nodes_.reserve(triangleIndexes_.size() * 2);
         if (!triangleIndexes_.empty())
@@ -215,11 +290,16 @@ public:
         return root_ < 0;
     }
 
-    double squaredDistance(const SurfacePoint3D& point) const
+    bool cancelled() const
     {
-        double best = std::numeric_limits<double>::infinity();
-        query(root_, point, &best);
-        return best;
+        return cancelled_;
+    }
+
+    ReferenceTriangleHit closest(const SurfacePoint3D& point) const
+    {
+        ReferenceTriangleHit hit;
+        query(root_, point, &hit);
+        return hit;
     }
 
 private:
@@ -253,10 +333,14 @@ private:
 
     int build(int begin, int end)
     {
+        if (pollCancellation())
+            return -1;
         Node node;
         node.begin = begin;
         node.end = end;
         for (int index = begin; index < end; ++index) {
+            if (pollCancellation())
+                return -1;
             const TriangleBounds triangle =
                 faceBounds(triangleIndexes_[std::size_t(index)]);
             includePoint(&node.bounds, triangle.minimum);
@@ -288,8 +372,14 @@ private:
                 return faceCentroidAxis(left, splitAxis)
                     < faceCentroidAxis(right, splitAxis);
             });
+        if (pollCancellation())
+            return -1;
         const int left = build(begin, middle);
+        if (cancelled_)
+            return -1;
         const int right = build(middle, end);
+        if (cancelled_)
+            return -1;
         nodes_[std::size_t(nodeIndex)].left = left;
         nodes_[std::size_t(nodeIndex)].right = right;
         return nodeIndex;
@@ -298,27 +388,34 @@ private:
     void query(
         int nodeIndex,
         const SurfacePoint3D& point,
-        double* bestSquaredDistance) const
+        ReferenceTriangleHit* hit) const
     {
-        if (nodeIndex < 0)
+        if (nodeIndex < 0 || pollCancellation())
             return;
         const Node& node = nodes_[std::size_t(nodeIndex)];
         if (pointBoundsSquaredDistance(point, node.bounds)
-            > *bestSquaredDistance) {
+            > hit->squaredDistance) {
             return;
         }
 
         if (node.left < 0) {
             for (int index = node.begin; index < node.end; ++index) {
+                if (pollCancellation())
+                    return;
+                const int faceIndex =
+                    triangleIndexes_[std::size_t(index)];
                 const std::array<int, 3>& face =
-                    reference_.faces[triangleIndexes_[std::size_t(index)]];
-                *bestSquaredDistance = std::min(
-                    *bestSquaredDistance,
+                    reference_.faces[faceIndex];
+                const double squaredDistance =
                     pointTriangleSquaredDistance(
                         point,
                         reference_.vertices[face[0]],
                         reference_.vertices[face[1]],
-                        reference_.vertices[face[2]]));
+                        reference_.vertices[face[2]]);
+                if (squaredDistance < hit->squaredDistance) {
+                    hit->squaredDistance = squaredDistance;
+                    hit->faceIndex = faceIndex;
+                }
             }
             return;
         }
@@ -328,16 +425,29 @@ private:
         const double rightDistance = pointBoundsSquaredDistance(
             point, nodes_[std::size_t(node.right)].bounds);
         if (leftDistance <= rightDistance) {
-            query(node.left, point, bestSquaredDistance);
-            query(node.right, point, bestSquaredDistance);
+            query(node.left, point, hit);
+            query(node.right, point, hit);
         }
         else {
-            query(node.right, point, bestSquaredDistance);
-            query(node.left, point, bestSquaredDistance);
+            query(node.right, point, hit);
+            query(node.left, point, hit);
         }
     }
 
+    bool pollCancellation() const
+    {
+        if (cancelled_)
+            return true;
+        if (cancellationRequested_ && cancellationRequested_()) {
+            cancelled_ = true;
+            return true;
+        }
+        return false;
+    }
+
     const SurfaceMeshSnapshot& reference_;
+    AnalysisCancellation cancellationRequested_;
+    mutable bool cancelled_ = false;
     std::vector<int> triangleIndexes_;
     std::vector<Node> nodes_;
     int root_ = -1;
@@ -374,30 +484,48 @@ Point3m triangleCentroid(
     return result;
 }
 
-double scoreSurfaceProbe(
+enum class SurfaceProbeStatus {
+    Success,
+    Cancelled,
+    InvalidReference,
+};
+
+SurfaceProbeStatus scoreSurfaceProbe(
     const Point3m& position,
     const Point3m& normal,
-    const std::vector<SurfaceSample>& referenceSamples,
-    vcg::KdTree<Scalarm>& referenceTree,
+    const ReferenceTriangleIndex& referenceIndex,
+    const std::vector<SurfacePoint3D>& referenceFaceNormals,
     SurfaceComparisonMetric metric,
-    const SurfaceComparisonOptions& options)
+    const SurfaceComparisonOptions& options,
+    double* score)
 {
-    unsigned int nearestReferenceIndex = 0;
-    Scalarm nearestSquaredDistance = Scalarm(0);
-    referenceTree.doQueryClosest(
-        position, nearestReferenceIndex, nearestSquaredDistance);
-    const SurfaceSample& referenceSample = referenceSamples[nearestReferenceIndex];
+    const ReferenceTriangleHit hit =
+        referenceIndex.closest(surfacePoint(position));
+    if (referenceIndex.cancelled())
+        return SurfaceProbeStatus::Cancelled;
+    if (hit.faceIndex < 0 || !std::isfinite(hit.squaredDistance)) {
+        return SurfaceProbeStatus::InvalidReference;
+    }
 
     if (metric == SurfaceComparisonMetric::PrecisionAtThreshold) {
         const double distance =
-            std::sqrt(std::max(0.0, double(nearestSquaredDistance)));
-        return distance <= double(options.distanceThreshold) ? 1.0 : 0.0;
+            std::sqrt(std::max(0.0, hit.squaredDistance));
+        *score = distance <= double(options.distanceThreshold) ? 1.0 : 0.0;
+        return SurfaceProbeStatus::Success;
     }
 
+    if (hit.faceIndex >= int(referenceFaceNormals.size()))
+        return SurfaceProbeStatus::InvalidReference;
+    const SurfacePoint3D& referenceNormal =
+        referenceFaceNormals[std::size_t(hit.faceIndex)];
+    const double rawDot = vectorDot(surfacePoint(normal), referenceNormal);
+    if (!std::isfinite(rawDot))
+        return SurfaceProbeStatus::InvalidReference;
     const double dot = std::max(
         -1.0,
-        std::min(1.0, double(pointDot(normal, referenceSample.faceNormal))));
-    return options.useAbsoluteNormalDot ? std::abs(dot) : std::max(0.0, dot);
+        std::min(1.0, rawDot));
+    *score = options.useAbsoluteNormalDot ? std::abs(dot) : dot;
+    return SurfaceProbeStatus::Success;
 }
 
 SurfaceComparisonOutcome failure(const QString& error)
@@ -470,11 +598,52 @@ OperationResult makeWorkingMesh(
         const double area = double(normal.Norm()) * 0.5;
         if (std::isfinite(area) && area > 0.0)
             working->hasPositiveArea = true;
+        SurfacePoint3D queryNormal;
+        if (normalizedTriangleNormal(
+                surfacePoint(working->vertices[size_t(face[0])]),
+                surfacePoint(working->vertices[size_t(face[1])]),
+                surfacePoint(working->vertices[size_t(face[2])]),
+                &queryNormal)) {
+            working->hasQueryTriangle = true;
+        }
     }
 
     if (requirePositiveArea && !working->hasPositiveArea)
         return OperationResult::failure(noPositiveAreaError);
     return OperationResult::success();
+}
+
+struct ReferenceQueryData {
+    SurfaceMeshSnapshot surface;
+    std::vector<SurfacePoint3D> faceNormals;
+};
+
+bool makeReferenceQueryData(
+    const WorkingMesh& mesh,
+    const AnalysisCancellation& cancellationRequested,
+    ReferenceQueryData* data)
+{
+    data->surface.vertices.reserve(int(mesh.vertices.size()));
+    for (const Point3m& vertex : mesh.vertices) {
+        if (isCancellationRequested(cancellationRequested))
+            return false;
+        data->surface.vertices.append(surfacePoint(vertex));
+    }
+    data->surface.faces.reserve(int(mesh.faces.size()));
+    data->faceNormals.reserve(mesh.faces.size());
+    for (const std::array<int, 3>& face : mesh.faces) {
+        if (isCancellationRequested(cancellationRequested))
+            return false;
+        data->surface.faces.append(face);
+        SurfacePoint3D normal{{0.0, 0.0, 0.0}};
+        normalizedTriangleNormal(
+            data->surface.vertices[face[0]],
+            data->surface.vertices[face[1]],
+            data->surface.vertices[face[2]],
+            &normal);
+        data->faceNormals.push_back(normal);
+    }
+    return true;
 }
 
 bool sampleMeshSurface(
@@ -589,7 +758,7 @@ SurfaceComparisonOutcome compareVertexDistancesToReference(
         reference,
         QStringLiteral("The reference layer has no faces."),
         QStringLiteral("The reference layer has no positive-area triangles."),
-        true,
+        false,
         cancellationRequested,
         &validatedReference);
     if (!referenceValidation.ok)
@@ -599,7 +768,11 @@ SurfaceComparisonOutcome compareVertexDistancesToReference(
             progress, 0, "Building reference triangle index...")) {
         return cancelled();
     }
-    ReferenceTriangleIndex referenceIndex(reference);
+    ReferenceTriangleIndex referenceIndex(
+        reference,
+        cancellationRequested);
+    if (referenceIndex.cancelled())
+        return cancelled();
     if (referenceIndex.empty()) {
         return failure(
             QStringLiteral("The reference layer has no positive-area triangles."));
@@ -618,10 +791,12 @@ SurfaceComparisonOutcome compareVertexDistancesToReference(
          ++vertexIndex) {
         if (isCancellationRequested(cancellationRequested))
             return cancelled();
-        const double squaredDistance =
-            referenceIndex.squaredDistance(source.vertices[vertexIndex]);
+        const ReferenceTriangleHit hit =
+            referenceIndex.closest(source.vertices[vertexIndex]);
+        if (referenceIndex.cancelled())
+            return cancelled();
         const double distance =
-            std::sqrt(std::max(0.0, squaredDistance));
+            std::sqrt(std::max(0.0, hit.squaredDistance));
         if (!std::isfinite(distance)) {
             return failure(QStringLiteral(
                 "Distance analysis could not find a finite reference point."));
@@ -866,11 +1041,16 @@ SurfaceComparisonOutcome compareSampledSurfaces(
         reference,
         QStringLiteral("The reference layer has no faces."),
         QStringLiteral("The reference layer has no positive-area triangles."),
-        true,
+        false,
         cancellationRequested,
         &referenceMesh);
     if (!validation.ok)
         return failure(validation.error);
+
+    if (!referenceMesh.hasQueryTriangle) {
+        return failure(
+            QStringLiteral("The reference layer has no positive-area triangles."));
+    }
 
     if (!sourceMesh.hasPositiveArea) {
         SurfaceComparisonResult result;
@@ -902,7 +1082,7 @@ SurfaceComparisonOutcome compareSampledSurfaces(
             options.sampleCount,
             options.randomSeed,
             0,
-            30,
+            60,
             "Sampling source surface...",
             progress,
             cancellationRequested,
@@ -910,36 +1090,25 @@ SurfaceComparisonOutcome compareSampledSurfaces(
         return cancelled();
     }
 
-    std::vector<SurfaceSample> referenceSamples;
-    if (!sampleMeshSurface(
+    if (!reportProgress(progress, 60, "Building reference triangle index..."))
+        return cancelled();
+
+    ReferenceQueryData referenceQuery;
+    if (!makeReferenceQueryData(
             referenceMesh,
-            options.sampleCount,
-            options.randomSeed ^ kReferenceSeedXor,
-            30,
-            60,
-            "Sampling reference surface...",
-            progress,
             cancellationRequested,
-            &referenceSamples)) {
+            &referenceQuery)) {
         return cancelled();
     }
-
-    if (!reportProgress(progress, 60, "Building reference sample KD-tree..."))
+    ReferenceTriangleIndex referenceIndex(
+        referenceQuery.surface,
+        cancellationRequested);
+    if (referenceIndex.cancelled())
         return cancelled();
-
-    std::vector<Point3m> referencePositions;
-    referencePositions.reserve(referenceSamples.size());
-    for (const SurfaceSample& sample : referenceSamples) {
-        if (isCancellationRequested(cancellationRequested))
-            return cancelled();
-        referencePositions.push_back(sample.position);
+    if (referenceIndex.empty()) {
+        return failure(
+            QStringLiteral("The reference layer has no positive-area triangles."));
     }
-    if (isCancellationRequested(cancellationRequested))
-        return cancelled();
-    vcg::VectorConstDataWrapper<std::vector<Point3m>> referenceWrapper(referencePositions);
-    vcg::KdTree<Scalarm> referenceTree(referenceWrapper);
-    if (isCancellationRequested(cancellationRequested))
-        return cancelled();
 
     SurfaceComparisonResult result;
     result.sampleCount = int(sourceSamples.size());
@@ -958,13 +1127,21 @@ SurfaceComparisonOutcome compareSampledSurfaces(
         if (isCancellationRequested(cancellationRequested))
             return cancelled();
         const SurfaceSample& sourceSample = sourceSamples[sampleIndex];
-        const double score = scoreSurfaceProbe(
-            sourceSample.position,
-            sourceSample.faceNormal,
-            referenceSamples,
-            referenceTree,
-            metric,
-            options);
+        double score = 0.0;
+        const SurfaceProbeStatus probeStatus = scoreSurfaceProbe(
+                sourceSample.position,
+                sourceSample.faceNormal,
+                referenceIndex,
+                referenceQuery.faceNormals,
+                metric,
+                options,
+                &score);
+        if (probeStatus == SurfaceProbeStatus::Cancelled)
+            return cancelled();
+        if (probeStatus == SurfaceProbeStatus::InvalidReference) {
+            return failure(QStringLiteral(
+                "Analysis could not find a finite reference triangle."));
+        }
 
         faceScoreSums[size_t(sourceSample.faceIndex)] += Scalarm(score);
         ++faceSampleCounts[size_t(sourceSample.faceIndex)];
@@ -999,13 +1176,22 @@ SurfaceComparisonOutcome compareSampledSurfaces(
             }
             else {
                 faceNormal /= normalLength;
-                result.faceScores[faceIndex] = scoreSurfaceProbe(
-                    triangleCentroid(p0, p1, p2),
-                    faceNormal,
-                    referenceSamples,
-                    referenceTree,
-                    metric,
-                    options);
+                double score = 0.0;
+                const SurfaceProbeStatus probeStatus = scoreSurfaceProbe(
+                        triangleCentroid(p0, p1, p2),
+                        faceNormal,
+                        referenceIndex,
+                        referenceQuery.faceNormals,
+                        metric,
+                        options,
+                        &score);
+                if (probeStatus == SurfaceProbeStatus::Cancelled)
+                    return cancelled();
+                if (probeStatus == SurfaceProbeStatus::InvalidReference) {
+                    return failure(QStringLiteral(
+                        "Analysis could not find a finite reference triangle."));
+                }
+                result.faceScores[faceIndex] = score;
             }
         }
         ++result.coloredFaceCount;
@@ -1077,13 +1263,20 @@ OperationResult validateSurfaceComparisonOptions(
     return OperationResult::success();
 }
 
-QVector<QColor> surfaceScoreColors(const QVector<double>& faceScores)
+QVector<QColor> surfaceScoreColors(
+    const QVector<double>& faceScores,
+    double minimumScore)
 {
     QVector<QColor> colors;
     colors.reserve(faceScores.size());
     for (double score : faceScores) {
-        colors.push_back(score < 0.0 ? QColor(128, 128, 128, 255)
-                                     : redYellowGreen(score));
+        if (!std::isfinite(score) || score < minimumScore ||
+            !std::isfinite(minimumScore) || minimumScore >= 1.0) {
+            colors.push_back(QColor(128, 128, 128, 255));
+            continue;
+        }
+        colors.push_back(
+            redYellowGreen((score - minimumScore) / (1.0 - minimumScore)));
     }
     return colors;
 }

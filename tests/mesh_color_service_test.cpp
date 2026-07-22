@@ -959,12 +959,13 @@ private slots:
         FakeRendererAdapter renderer;
         commitFakeScene(renderer, state, resources);
         FakeSurfaceComparer comparer;
-        comparer.enqueueSuccess(0.9);
-        comparer.enqueueSuccess(0.8);
+        comparer.enqueueSuccess(-1.0, {-1.0});
+        comparer.enqueueSuccess(0.0, {0.0});
         MeshColorService service(resources, comparer, state, renderer);
         QSignalSpy finished(&service, &MeshColorService::analysisFinished);
         AnalysisRequest value = request(state);
         value.metric = SurfaceComparisonMetric::NormalAgreement;
+        value.options.useAbsoluteNormalDot = false;
 
         QVERIFY(service.startAnalysis(value).ok);
         const AnalysisBatchResult result = takeBatch(finished);
@@ -979,6 +980,14 @@ private slots:
                 renderer.presentation(id).mode,
                 ColorMode::NormalAgreementResult);
         }
+        QCOMPARE(state.mesh(2)->score, -1.0);
+        QCOMPARE(
+            state.mesh(2)->presentation.faceColors,
+            QVector<QColor>({QColor(255, 0, 0, 255)}));
+        QCOMPARE(state.mesh(3)->score, 0.0);
+        QCOMPARE(
+            state.mesh(3)->presentation.faceColors,
+            QVector<QColor>({QColor(255, 255, 0, 255)}));
     }
 
     void oldQueuedCompletionCannotFinishANewerActiveBatch()
