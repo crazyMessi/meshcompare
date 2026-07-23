@@ -178,12 +178,21 @@ Analysis runs in a bounded, cancellable background work queue. Results for all t
 
 The camera panel lists the saved poses associated with the current workspace UID and supports:
 
-- Saving the complete current camera state.
-- Saving the current camera state while copying a Retina-resolution screenshot
-  of the complete 3D viewport area to the system clipboard.
+- Saving the complete current camera state with exactly one local,
+  Retina-resolution PNG screenshot of the complete 3D viewport area.
+- Saving that same one-to-one pose and screenshot pair while also copying the
+  screenshot to the system clipboard.
 - Applying a selected saved pose.
 - Deleting a selected saved pose.
 - Automatically applying the latest pose after mesh import.
+- Opening the folder that contains the selected pose's screenshot.
+
+Screenshots live below the application's local-data directory, grouped first
+by workspace UID and then by the pose's normalized tag combination. The JSON
+pose record owns the image's unique relative path. Updating tags moves that
+single image to the new classification; deleting a pose deletes its image.
+Legacy poses without screenshots remain readable but are not presented as
+having a local image.
 
 Canonical UUID candidates from the Reference take priority. If the Reference
 has no UUID, the application checks candidates from the remaining meshes in

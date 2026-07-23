@@ -22,6 +22,7 @@ struct OperationResult;
 struct CameraPanelServices
 {
     std::function<bool(const QImage&)> copyImageToClipboard;
+    std::function<bool(const QString&)> openLocalFolder;
 };
 
 class CameraPanel final : public QFrame
@@ -52,6 +53,7 @@ private:
     OperationResult commitUidInput(bool refreshAfterCommit);
     void applySelectedPose();
     void updateSelectedPoseTags();
+    void openSelectedScreenshotFolder();
     void deleteSelectedPose();
     void updateActionState();
     void reportFailure(const OperationResult& result);
@@ -69,6 +71,7 @@ private:
     QPushButton* saveAndCopyScreenshotButton_ = nullptr;
     QPushButton* applyButton_ = nullptr;
     QPushButton* updateTagsButton_ = nullptr;
+    QPushButton* openScreenshotFolderButton_ = nullptr;
     QPushButton* deleteButton_ = nullptr;
     QString workspaceUuid_;
     QString tagHistoryUuid_;

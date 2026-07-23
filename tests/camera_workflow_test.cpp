@@ -27,6 +27,13 @@ CameraPose pose(const QString& value)
     return {value};
 }
 
+QImage screenshot()
+{
+    QImage image(4, 3, QImage::Format_RGB32);
+    image.fill(QColor(48, 96, 144));
+    return image;
+}
+
 MeshEntry entry(
     MeshId id,
     const QString& name,
@@ -225,6 +232,7 @@ private slots:
              entry(2, QStringLiteral("candidate.obj"))}));
         FakeRendererAdapter renderer;
         renderer.setCamera(pose(QStringLiteral("manual-camera")));
+        renderer.setCaptureImage(screenshot());
         FakeSurfaceComparer comparer;
         FakeCameraPoseStore store;
         WorkspaceController controller(state, importer, renderer, comparer, store);
@@ -368,12 +376,18 @@ private slots:
         store.resetObservations();
 
         renderer.setCamera(pose(QStringLiteral("captured-current")));
+        QImage expectedScreenshot(4, 3, QImage::Format_RGB32);
+        expectedScreenshot.fill(QColor(40, 88, 150));
+        renderer.setCaptureImage(expectedScreenshot);
         QString savedViewId;
         const OperationResult saved = controller.saveCurrentCameraPose(&savedViewId);
 
         QVERIFY2(saved.ok, qPrintable(saved.error));
         QCOMPARE(savedViewId, QStringLiteral("view_001"));
+        QCOMPARE(renderer.captureImageCount(), 1);
+        QCOMPARE(store.saveWithScreenshotCount(), 1);
         QCOMPARE(store.lastSaveUuid(), UuidA);
+        QCOMPARE(store.lastSavedScreenshot(), expectedScreenshot);
         QCOMPARE(store.lastSavedPose().viewStateXml,
                  QStringLiteral("captured-current"));
 
@@ -381,6 +395,7 @@ private slots:
         QVERIFY2(snapshot.result.ok, qPrintable(snapshot.result.error));
         QCOMPARE(snapshot.workspaceUuid, UuidA);
         QCOMPARE(snapshot.poses.size(), 2);
+        QVERIFY(!snapshot.poses.back().screenshotPath.isEmpty());
         QCOMPARE(store.lastListUuid(), UuidA);
         for (const CameraPoseSummary& summary : snapshot.poses)
             QVERIFY(summary.viewId != QStringLiteral("view_B"));
@@ -426,10 +441,17 @@ private slots:
         QCOMPARE(savedViewId, QStringLiteral("view_001"));
         QCOMPARE(renderer.captureImageCount(), 1);
         QCOMPARE(screenshot, expected);
+        QCOMPARE(store.saveWithScreenshotCount(), 1);
         QCOMPARE(store.lastSaveUuid(), UuidA);
+        QCOMPARE(store.lastSavedScreenshot(), expected);
         QCOMPARE(
             store.lastSavedPose().viewStateXml,
             QStringLiteral("captured-with-screenshot"));
+        const CameraPanelSnapshot snapshot = controller.cameraPanelSnapshot();
+        QCOMPARE(snapshot.poses.size(), 1);
+        QCOMPARE(
+            snapshot.poses.front().screenshotPath,
+            QStringLiteral("/screenshots/%1/view_001.png").arg(UuidA));
     }
 
     void screenshotCaptureFailureDoesNotPersistOrMutateOutputs()
@@ -461,7 +483,7 @@ private slots:
         QVERIFY(!saved.ok);
         QCOMPARE(saved.error, QStringLiteral("framebuffer unavailable"));
         QCOMPARE(renderer.captureImageCount(), 1);
-        QCOMPARE(store.saveCount(), 0);
+        QCOMPARE(store.saveWithScreenshotCount(), 0);
         QCOMPARE(screenshot, unchangedScreenshot);
         QCOMPARE(savedViewId, QStringLiteral("unchanged"));
         QCOMPARE(saveSpy.size(), 1);
@@ -490,6 +512,7 @@ private slots:
             &WorkspaceController::cameraApplyFinished);
 
         renderer.setCamera(pose(QStringLiteral("captured")));
+        renderer.setCaptureImage(screenshot());
         QVERIFY(controller.saveCurrentCameraPose().ok);
         store.failNextLoad(QStringLiteral("saved pose is unreadable"));
         QVERIFY(!controller.applyCameraPose(QStringLiteral("view_001")).ok);
@@ -519,6 +542,7 @@ private slots:
                   QStringLiteral("2026-07-15T01:00:00Z"));
         store.resetObservations();
         renderer.setCamera(pose(QStringLiteral("current")));
+        renderer.setCaptureImage(screenshot());
 
         store.failNextList(QStringLiteral("list failed"));
         const CameraPanelSnapshot snapshot = controller.cameraPanelSnapshot();
@@ -679,6 +703,7 @@ private slots:
                 controller.deleteCameraPose(QStringLiteral("view_001"));
         });
         renderer.setCamera(pose(QStringLiteral("current")));
+        renderer.setCaptureImage(screenshot());
         const OperationResult saved = controller.saveCurrentCameraPose();
 
         QVERIFY2(saved.ok, qPrintable(saved.error));
@@ -703,6 +728,7 @@ private slots:
         WorkspaceController controller(state, importer, renderer, comparer, store);
         QVERIFY(importWorkspace(controller).result.ok);
         renderer.setCamera(pose(QStringLiteral("captured")));
+        renderer.setCaptureImage(screenshot());
         WorkspaceImportOutcome nestedImport;
         store.setSaveObserver([&] {
             nestedImport = importWorkspace(controller);

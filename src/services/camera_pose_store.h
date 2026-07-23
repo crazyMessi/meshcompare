@@ -6,11 +6,14 @@
 #include <QStringList>
 #include <QVector>
 
+class QImage;
+
 struct SavedCameraPose {
 	QString uuid;
 	QString viewId;
 	QString savedAtUtc;
 	QStringList tags;
+	QString screenshotPath;
 	CameraPose pose;
 };
 
@@ -22,11 +25,13 @@ public:
 	// Creates the owned library from its legacy source when needed, then applies
 	// compatible library upgrades such as default pose tags.
 	virtual OperationResult migrateLegacyIfNeeded() = 0;
-	virtual OperationResult save(
+	virtual OperationResult saveWithScreenshot(
 		const QString& uuid,
 		const CameraPose& pose,
+		const QImage& screenshot,
 		QString* viewId = nullptr,
-		const QStringList& tags = {}) = 0;
+		const QStringList& tags = {},
+		QString* screenshotPath = nullptr) = 0;
 	virtual QVector<SavedCameraPose> list(
 		const QString& uuid,
 		OperationResult* result = nullptr) const = 0;
@@ -47,11 +52,13 @@ public:
 	CameraPoseStore(QString storagePath, QString legacyPath);
 
 	OperationResult migrateLegacyIfNeeded() override;
-	OperationResult save(
+	OperationResult saveWithScreenshot(
 		const QString& uuid,
 		const CameraPose& pose,
+		const QImage& screenshot,
 		QString* viewId = nullptr,
-		const QStringList& tags = {}) override;
+		const QStringList& tags = {},
+		QString* screenshotPath = nullptr) override;
 	QVector<SavedCameraPose> list(
 		const QString& uuid,
 		OperationResult* result = nullptr) const override;

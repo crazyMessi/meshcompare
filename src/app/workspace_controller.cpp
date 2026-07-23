@@ -621,7 +621,11 @@ CameraPanelSnapshot WorkspaceController::cameraPanelSnapshot() const
 
     snapshot.poses.reserve(poses.size());
     for (const SavedCameraPose& saved : poses)
-        snapshot.poses.append({saved.viewId, saved.savedAtUtc, saved.tags});
+        snapshot.poses.append(
+            {saved.viewId,
+             saved.savedAtUtc,
+             saved.tags,
+             saved.screenshotPath});
     return snapshot;
 }
 
@@ -686,24 +690,22 @@ OperationResult WorkspaceController::saveCurrentCameraPoseImpl(
 
     QScopedValueRollback<bool> commandGuard(cameraCommandInProgress_, true);
     QImage captured;
-    if (screenshot != nullptr) {
-        const OperationResult imageResult = renderer_.captureImage(captured);
-        if (!imageResult.ok) {
-            publishCameraSaveFinished(imageResult);
-            return imageResult;
-        }
-        if (captured.isNull()) {
-            const OperationResult result = OperationResult::failure(
-                QStringLiteral("The renderer returned an empty screenshot."));
-            publishCameraSaveFinished(result);
-            return result;
-        }
+    const OperationResult imageResult = renderer_.captureImage(captured);
+    if (!imageResult.ok) {
+        publishCameraSaveFinished(imageResult);
+        return imageResult;
+    }
+    if (captured.isNull()) {
+        const OperationResult result = OperationResult::failure(
+            QStringLiteral("The renderer returned an empty screenshot."));
+        publishCameraSaveFinished(result);
+        return result;
     }
 
     const CameraPose pose = renderer_.captureCamera();
     QString committedViewId;
-    const OperationResult saved =
-        cameraStore_.save(workspaceUuid_, pose, &committedViewId, tags);
+    const OperationResult saved = cameraStore_.saveWithScreenshot(
+        workspaceUuid_, pose, captured, &committedViewId, tags);
     if (!saved.ok) {
         publishCameraSaveFinished(saved);
         return saved;

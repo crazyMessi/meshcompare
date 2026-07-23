@@ -8,6 +8,8 @@
 
 #include <QClipboard>
 #include <QDateTime>
+#include <QDesktopServices>
+#include <QFileInfo>
 #include <QFont>
 #include <QGuiApplication>
 #include <QHBoxLayout>
@@ -20,11 +22,13 @@
 #include <QSignalBlocker>
 #include <QVBoxLayout>
 #include <QVariant>
+#include <QUrl>
 
 namespace
 {
 constexpr int PoseViewIdRole = Qt::UserRole;
 constexpr int PoseTagsRole = Qt::UserRole + 1;
+constexpr int PoseScreenshotPathRole = Qt::UserRole + 2;
 
 QDateTime parseSavedAtUtc(const QString& value)
 {
@@ -77,6 +81,11 @@ CameraPanel::CameraPanel(
             return true;
         };
     }
+    if (!services_.openLocalFolder) {
+        services_.openLocalFolder = [](const QString& path) {
+            return QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+        };
+    }
 
     setObjectName(QStringLiteral("cameraPanel"));
     setWindowModality(Qt::NonModal);
@@ -117,16 +126,18 @@ CameraPanel::CameraPanel(
     newPoseTagRow->addWidget(newPoseTagEditor_, 1);
     root->addLayout(newPoseTagRow);
 
-    saveButton_ = new QPushButton(tr("Save Current Pose"), this);
+    saveButton_ = new QPushButton(tr("Save Pose & Screenshot"), this);
     saveButton_->setObjectName(QStringLiteral("saveCameraPoseButton"));
+    saveButton_->setToolTip(
+        tr("Save the current pose with one locally stored screenshot"));
     root->addWidget(saveButton_);
 
     saveAndCopyScreenshotButton_ =
-        new QPushButton(tr("Save Pose & Copy Screenshot"), this);
+        new QPushButton(tr("Save Pose, Screenshot & Copy"), this);
     saveAndCopyScreenshotButton_->setObjectName(
         QStringLiteral("saveCameraPoseAndCopyScreenshotButton"));
     saveAndCopyScreenshotButton_->setToolTip(
-        tr("Save the current pose and copy the complete 3D viewport area"));
+        tr("Save the pose with one local screenshot and also copy it"));
     root->addWidget(saveAndCopyScreenshotButton_);
 
     poseList_ = new QListWidget(this);
@@ -150,12 +161,20 @@ CameraPanel::CameraPanel(
     updateTagsButton_->setObjectName(QStringLiteral("updateCameraPoseTagsButton"));
     root->addWidget(updateTagsButton_);
 
+    openScreenshotFolderButton_ =
+        new QPushButton(tr("Open Screenshot Folder"), this);
+    openScreenshotFolderButton_->setObjectName(
+        QStringLiteral("openCameraScreenshotFolderButton"));
+    openScreenshotFolderButton_->setToolTip(
+        tr("Open the folder containing the selected pose's screenshot"));
+
     auto* actions = new QHBoxLayout;
     deleteButton_ = new QPushButton(tr("Delete"), this);
     deleteButton_->setObjectName(QStringLiteral("deleteCameraPoseButton"));
     applyButton_ = new QPushButton(tr("Apply"), this);
     applyButton_->setObjectName(QStringLiteral("applyCameraPoseButton"));
     actions->addWidget(deleteButton_);
+    actions->addWidget(openScreenshotFolderButton_);
     actions->addStretch(1);
     actions->addWidget(applyButton_);
     root->addLayout(actions);
@@ -238,6 +257,11 @@ CameraPanel::CameraPanel(
         &QPushButton::clicked,
         this,
         &CameraPanel::updateSelectedPoseTags);
+    connect(
+        openScreenshotFolderButton_,
+        &QPushButton::clicked,
+        this,
+        &CameraPanel::openSelectedScreenshotFolder);
     connect(
         deleteButton_,
         &QPushButton::clicked,
@@ -327,6 +351,7 @@ void CameraPanel::refreshFromState()
         auto* item = new QListWidgetItem(label, poseList_);
         item->setData(PoseViewIdRole, pose.viewId);
         item->setData(PoseTagsRole, poseTags);
+        item->setData(PoseScreenshotPathRole, pose.screenshotPath);
     }
     refreshSelectedTagEditor();
     updateActionState();
@@ -461,6 +486,24 @@ void CameraPanel::updateSelectedPoseTags()
     }
 }
 
+void CameraPanel::openSelectedScreenshotFolder()
+{
+    const QListWidgetItem* item = poseList_->currentItem();
+    const QString screenshotPath = item == nullptr
+        ? QString()
+        : item->data(PoseScreenshotPathRole).toString();
+    if (screenshotPath.isEmpty()) {
+        reportFailure(OperationResult::failure(
+            tr("The selected camera pose has no local screenshot.")));
+        return;
+    }
+    const QString folderPath = QFileInfo(screenshotPath).absolutePath();
+    if (folderPath.isEmpty() || !services_.openLocalFolder(folderPath)) {
+        reportFailure(OperationResult::failure(
+            tr("The screenshot folder could not be opened.")));
+    }
+}
+
 void CameraPanel::deleteSelectedPose()
 {
     // Never retain a QListWidgetItem pointer across the semantic command.
@@ -487,6 +530,10 @@ void CameraPanel::updateActionState()
         !workspaceUuid_.isEmpty() &&
         enteredUid.compare(workspaceUuid_, Qt::CaseInsensitive) == 0;
     const bool hasSelection = !selectedViewId().isEmpty();
+    const QListWidgetItem* selectedItem = poseList_->currentItem();
+    const bool hasScreenshot =
+        selectedItem != nullptr
+        && !selectedItem->data(PoseScreenshotPathRole).toString().isEmpty();
     saveButton_->setEnabled(ready && hasUidInput);
     saveAndCopyScreenshotButton_->setEnabled(ready && hasUidInput);
     applyButton_->setEnabled(ready && inputMatchesSnapshot && hasSelection);
@@ -496,6 +543,8 @@ void CameraPanel::updateActionState()
     selectedPoseTagEditor_->setEnabled(
         ready && inputMatchesSnapshot && hasSelection);
     updateTagsButton_->setEnabled(ready && inputMatchesSnapshot && hasSelection);
+    openScreenshotFolderButton_->setEnabled(
+        ready && inputMatchesSnapshot && hasSelection && hasScreenshot);
     deleteButton_->setEnabled(ready && inputMatchesSnapshot && hasSelection);
 }
 

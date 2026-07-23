@@ -40,12 +40,14 @@ void makeReady(WorkspaceState& state)
 CameraPoseSummary summary(
     const QString& viewId,
     const QString& savedAtUtc,
-    const QStringList& tags = {})
+    const QStringList& tags = {},
+    const QString& screenshotPath = {})
 {
     CameraPoseSummary result;
     result.viewId = viewId;
     result.savedAtUtc = savedAtUtc;
     result.tags = tags;
+    result.screenshotPath = screenshotPath;
     return result;
 }
 
@@ -162,6 +164,7 @@ struct Controls {
     TagEditor* newPoseTags = nullptr;
     TagEditor* selectedPoseTags = nullptr;
     QPushButton* updateTags = nullptr;
+    QPushButton* openScreenshotFolder = nullptr;
     QPushButton* remove = nullptr;
 };
 
@@ -186,6 +189,8 @@ Controls controls(CameraPanel& panel)
         QStringLiteral("selectedPoseTagEditor"));
     result.updateTags = panel.findChild<QPushButton*>(
         QStringLiteral("updateCameraPoseTagsButton"));
+    result.openScreenshotFolder = panel.findChild<QPushButton*>(
+        QStringLiteral("openCameraScreenshotFolderButton"));
     result.remove = panel.findChild<QPushButton*>(
         QStringLiteral("deleteCameraPoseButton"));
     return result;
@@ -197,6 +202,37 @@ class CameraPanelTest : public QObject
     Q_OBJECT
 
 private slots:
+    void selectedPoseCanOpenItsScreenshotFolder()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral(
+            "123e4567-e89b-12d3-a456-426614174000");
+        commands.snapshot.poses = {summary(
+            QStringLiteral("view_001"),
+            QStringLiteral("2026-07-21T12:00:00Z"),
+            {QStringLiteral("inspection")},
+            QStringLiteral("/tmp/camera-shots/inspection/view_001.png"))};
+        QString openedFolder;
+        CameraPanelServices services;
+        services.openLocalFolder = [&openedFolder](const QString& path) {
+            openedFolder = path;
+            return true;
+        };
+        CameraPanel panel(state, commands, nullptr, std::move(services));
+        const Controls ui = controls(panel);
+
+        QVERIFY(ui.openScreenshotFolder != nullptr);
+        QVERIFY(!ui.openScreenshotFolder->isEnabled());
+        ui.poses->setCurrentRow(0);
+        QVERIFY(ui.openScreenshotFolder->isEnabled());
+
+        QTest::mouseClick(ui.openScreenshotFolder, Qt::LeftButton);
+
+        QCOMPARE(openedFolder, QStringLiteral("/tmp/camera-shots/inspection"));
+    }
+
     void selectingAPoseDoesNotOverwriteTheNewPoseTagDraft()
     {
         WorkspaceState state;
@@ -333,11 +369,15 @@ private slots:
             ui.poses->item(0)->data(Qt::UserRole).toString(),
             QStringLiteral("view_001"));
         QVERIFY(ui.save != nullptr);
-        QCOMPARE(ui.save->text(), QStringLiteral("Save Current Pose"));
+        QCOMPARE(ui.save->text(), QStringLiteral("Save Pose & Screenshot"));
         QVERIFY(ui.saveAndCopyScreenshot != nullptr);
         QCOMPARE(
             ui.saveAndCopyScreenshot->text(),
-            QStringLiteral("Save Pose & Copy Screenshot"));
+            QStringLiteral("Save Pose, Screenshot & Copy"));
+        QVERIFY(ui.openScreenshotFolder != nullptr);
+        QCOMPARE(
+            ui.openScreenshotFolder->text(),
+            QStringLiteral("Open Screenshot Folder"));
         QVERIFY(ui.apply != nullptr);
         QCOMPARE(ui.apply->text(), QStringLiteral("Apply"));
         QVERIFY(ui.remove != nullptr);
@@ -345,6 +385,7 @@ private slots:
         QVERIFY(ui.save->isEnabled());
         QVERIFY(ui.saveAndCopyScreenshot->isEnabled());
         QVERIFY(!ui.apply->isEnabled());
+        QVERIFY(!ui.openScreenshotFolder->isEnabled());
         QVERIFY(!ui.remove->isEnabled());
         QCOMPARE(commands.snapshotCalls, 1);
     }
@@ -365,11 +406,13 @@ private slots:
         QVERIFY(ui.poses != nullptr);
         QVERIFY(ui.apply != nullptr);
         QVERIFY(ui.remove != nullptr);
+        QVERIFY(ui.openScreenshotFolder != nullptr);
 
         ui.poses->setCurrentRow(1);
 
         QVERIFY(ui.apply->isEnabled());
         QVERIFY(ui.remove->isEnabled());
+        QVERIFY(!ui.openScreenshotFolder->isEnabled());
         QTest::mouseClick(ui.apply, Qt::LeftButton);
         QCOMPARE(commands.applyViewIds, QStringList({QStringLiteral("view_002")}));
     }

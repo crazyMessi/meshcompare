@@ -4,6 +4,7 @@
 #include <utility>
 
 #include <QDateTime>
+#include <QImage>
 #include <QStringList>
 #include <QVector>
 
@@ -20,7 +21,12 @@ public:
         const QStringList& tags = {})
     {
         records_.append(
-            {CameraPoseStore::normalizeUuid(uuid), viewId, savedAtUtc, tags, pose});
+            {CameraPoseStore::normalizeUuid(uuid),
+             viewId,
+             savedAtUtc,
+             tags,
+             {},
+             pose});
     }
 
     OperationResult migrateLegacyIfNeeded() override
@@ -28,33 +34,41 @@ public:
         return OperationResult::success();
     }
 
-    OperationResult save(
+    OperationResult saveWithScreenshot(
         const QString& uuid,
         const CameraPose& pose,
+        const QImage& screenshot,
         QString* viewId = nullptr,
-        const QStringList& tags = {}) override
+        const QStringList& tags = {},
+        QString* screenshotPath = nullptr) override
     {
-        ++saveCount_;
+        ++saveWithScreenshotCount_;
         lastSaveUuid_ = uuid;
         lastSavedPose_ = pose;
-        appendTrace(QStringLiteral("store-save"));
+        lastSavedScreenshot_ = screenshot;
+        appendTrace(QStringLiteral("store-save-with-screenshot"));
         if (saveObserver_)
             saveObserver_();
-        if (!nextSaveError_.isEmpty()) {
-            const QString error = takeError(nextSaveError_);
-            return OperationResult::failure(error);
-        }
+        if (!nextSaveError_.isEmpty())
+            return OperationResult::failure(takeError(nextSaveError_));
+        if (screenshot.isNull())
+            return OperationResult::failure(QStringLiteral("Screenshot is empty."));
 
         const QString generated = QStringLiteral("view_%1").arg(
             ++nextViewNumber_, 3, 10, QLatin1Char('0'));
+        const QString generatedPath = QStringLiteral("/screenshots/%1/%2.png")
+            .arg(CameraPoseStore::normalizeUuid(uuid), generated);
         records_.append(
             {CameraPoseStore::normalizeUuid(uuid),
              generated,
              QStringLiteral("2026-07-15T00:00:00Z"),
              tags,
+             generatedPath,
              pose});
         if (viewId != nullptr)
             *viewId = generated;
+        if (screenshotPath != nullptr)
+            *screenshotPath = generatedPath;
         return OperationResult::success();
     }
 
@@ -181,7 +195,7 @@ public:
         removeObserver_ = std::move(observer);
     }
 
-    int saveCount() const { return saveCount_; }
+    int saveWithScreenshotCount() const { return saveWithScreenshotCount_; }
     int listCount() const { return listCount_; }
     int loadCount() const { return loadCount_; }
     int removeCount() const { return removeCount_; }
@@ -196,10 +210,11 @@ public:
     QString lastSetTagsViewId() const { return lastSetTagsViewId_; }
     QStringList lastSetTags() const { return lastSetTags_; }
     CameraPose lastSavedPose() const { return lastSavedPose_; }
+    QImage lastSavedScreenshot() const { return lastSavedScreenshot_; }
 
     void resetObservations()
     {
-        saveCount_ = 0;
+        saveWithScreenshotCount_ = 0;
         listCount_ = 0;
         loadCount_ = 0;
         removeCount_ = 0;
@@ -214,6 +229,7 @@ public:
         lastSetTagsViewId_.clear();
         lastSetTags_.clear();
         lastSavedPose_ = {};
+        lastSavedScreenshot_ = {};
     }
 
 private:
@@ -251,8 +267,9 @@ private:
     QString lastSetTagsViewId_;
     QStringList lastSetTags_;
     CameraPose lastSavedPose_;
+    QImage lastSavedScreenshot_;
     int nextViewNumber_ = 0;
-    int saveCount_ = 0;
+    int saveWithScreenshotCount_ = 0;
     mutable int listCount_ = 0;
     mutable int loadCount_ = 0;
     int removeCount_ = 0;

@@ -124,6 +124,13 @@ The camera pose library is:
 ~/Library/Application Support/VCG/MeshCompare/meshlab_lizd_camera_poses.json
 ```
 
+Every newly saved camera pose has exactly one PNG screenshot. Screenshots are
+stored beneath `camera_pose_screenshots/`, first by workspace UID and then by
+the pose's tag combination (`untagged` when no tags are assigned). The pose
+record keeps the unique screenshot path, so updating tags moves the image and
+deleting a pose deletes its image. Select a pose and use **Open Screenshot
+Folder** in the Camera panel to open its containing folder.
+
 On first launch, when this file does not yet exist, Mesh Compare copies an
 existing legacy library from the customized MeshLab data directory. It prefers
 an existing `MeshLab_64bit_fp` library and otherwise uses `MeshLab_64bit_dp`.

@@ -25,7 +25,7 @@ add_library(meshcompare-camera-pose-store STATIC
 target_include_directories(meshcompare-camera-pose-store PUBLIC ${MESHCOMPARE_SOURCE_ROOT})
 target_link_libraries(meshcompare-camera-pose-store
 	PUBLIC meshcompare-core
-	PRIVATE Qt5::Core Qt5::Xml)
+	PRIVATE Qt5::Core Qt5::Gui Qt5::Xml)
 
 add_library(meshcompare-analysis STATIC
 	services/surface_comparison.cpp

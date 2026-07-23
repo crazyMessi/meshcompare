@@ -4,6 +4,7 @@
 
 #include <QDateTime>
 #include <QDir>
+#include <QDirIterator>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
@@ -85,6 +86,30 @@ CameraPose pose(const QString& xml)
 	return CameraPose{xml};
 }
 
+QImage screenshot()
+{
+	QImage image(3, 2, QImage::Format_RGB32);
+	image.fill(QColor(48, 96, 144));
+	return image;
+}
+
+OperationResult savePose(
+	CameraPoseStore& store,
+	const QString& uuid,
+	const CameraPose& cameraPose,
+	QString* viewId = nullptr,
+	const QStringList& tags = {},
+	QString* screenshotPath = nullptr)
+{
+	return store.saveWithScreenshot(
+		uuid,
+		cameraPose,
+		screenshot(),
+		viewId,
+		tags,
+		screenshotPath);
+}
+
 QJsonObject poseObject(
 	const QString& viewId,
 	const QString& xml,
@@ -161,6 +186,12 @@ private slots:
 	void missingLibraryIsAnEmptySuccess();
 	void invalidUuidAndEmptyStoragePathFailWithoutMutatingOutputs();
 	void saveCreatesNestedSchema2Library();
+	void screenshotSaveCreatesOneTaggedImageMappedToThePose();
+	void screenshotWriteFailureDoesNotCreateAPoseOrMutateOutputs();
+	void updatingTagsMovesTheUniqueScreenshotToItsNewClassification();
+	void defaultTagMigrationMovesTheUniqueScreenshotWithItsPose();
+	void deletingAPoseDeletesItsUniqueScreenshot();
+	void screenshotMutationRejectsSymbolicLinkTraversal();
 	void poseTagsCanBeAssignedAndLegacyPosesReceiveHoleTag();
 	void migrationCopiesLegacyOnlyWhenCurrentIsAbsent();
 	void deletionIsAtomicAndScopedToUuid();
@@ -253,7 +284,8 @@ void CameraPoseStoreTest::invalidUuidAndEmptyStoragePathFailWithoutMutatingOutpu
 	QVERIFY(dir.isValid());
 	CameraPoseStore store(dir.filePath(QStringLiteral("poses.json")), QString());
 	QString viewId = QStringLiteral("unchanged");
-	QVERIFY(!store.save(QString(), pose(QStringLiteral("<camera/>")), &viewId).ok);
+	QVERIFY(!savePose(
+		store, QString(), pose(QStringLiteral("<camera/>")), &viewId).ok);
 	QCOMPARE(viewId, QStringLiteral("unchanged"));
 
 	OperationResult listResult = OperationResult::success();
@@ -266,7 +298,8 @@ void CameraPoseStoreTest::invalidUuidAndEmptyStoragePathFailWithoutMutatingOutpu
 	QCOMPARE(destination.viewStateXml, QStringLiteral("unchanged"));
 
 	CameraPoseStore emptyPathStore{QString(), QString()};
-	QVERIFY(!emptyPathStore.save(UuidA, pose(QStringLiteral("<camera/>"))).ok);
+	QVERIFY(!savePose(
+		emptyPathStore, UuidA, pose(QStringLiteral("<camera/>"))).ok);
 	QVERIFY(!emptyPathStore.migrateLegacyIfNeeded().ok);
 	listResult = OperationResult::success();
 	QVERIFY(emptyPathStore.listAll(&listResult).isEmpty());
@@ -280,7 +313,8 @@ void CameraPoseStoreTest::saveCreatesNestedSchema2Library()
 	const QString current = dir.filePath(QStringLiteral("deep/current/poses.json"));
 	CameraPoseStore store(current, QString());
 	QString viewId = QStringLiteral("stale");
-	QVERIFY(store.save(
+	QVERIFY(savePose(
+		store,
 		UuidA,
 		pose(QStringLiteral("<camera>one</camera>")),
 		&viewId,
@@ -299,6 +333,240 @@ void CameraPoseStoreTest::saveCreatesNestedSchema2Library()
 	QCOMPARE(
 		poses.value(UuidA).toArray().at(0).toObject().value(QStringLiteral("tags")).toArray(),
 		QJsonArray({QStringLiteral("inspection"), QStringLiteral("hole")}));
+}
+
+void CameraPoseStoreTest::screenshotSaveCreatesOneTaggedImageMappedToThePose()
+{
+	QTemporaryDir dir;
+	QVERIFY(dir.isValid());
+	const QString current = dir.filePath(QStringLiteral("poses.json"));
+	CameraPoseStore store(current, QString());
+	QImage screenshot(5, 3, QImage::Format_RGB32);
+	screenshot.fill(QColor(24, 96, 180));
+	QString viewId = QStringLiteral("stale");
+	QString screenshotPath = QStringLiteral("stale");
+
+	const OperationResult saved = store.saveWithScreenshot(
+		UuidA,
+		pose(QStringLiteral("<camera>one</camera>")),
+		screenshot,
+		&viewId,
+		{QStringLiteral("inspection"), QStringLiteral("underside")},
+		&screenshotPath);
+
+	QVERIFY2(saved.ok, qPrintable(saved.error));
+	QCOMPARE(viewId, QStringLiteral("view_001"));
+	QVERIFY(QFileInfo(screenshotPath).isFile());
+	QVERIFY(QFileInfo(screenshotPath).absolutePath().contains(
+		QStringLiteral("inspection")));
+	QVERIFY(QFileInfo(screenshotPath).absolutePath().contains(
+		QStringLiteral("underside")));
+	QCOMPARE(QImage(screenshotPath), screenshot);
+
+	const QVector<SavedCameraPose> poses = store.list(UuidA);
+	QCOMPARE(poses.size(), 1);
+	QCOMPARE(poses.front().viewId, viewId);
+	QCOMPARE(poses.front().screenshotPath, screenshotPath);
+
+	const QJsonObject persisted = readRoot(current)
+		.value(QStringLiteral("poses")).toObject()
+		.value(UuidA).toArray().at(0).toObject();
+	const QString relativePath =
+		persisted.value(QStringLiteral("screenshot_path")).toString();
+	QVERIFY(!relativePath.isEmpty());
+	QVERIFY(QFileInfo(relativePath).isRelative());
+
+	QDirIterator images(
+		dir.path(),
+		{QStringLiteral("*.png")},
+		QDir::Files,
+		QDirIterator::Subdirectories);
+	int imageCount = 0;
+	while (images.hasNext()) {
+		images.next();
+		++imageCount;
+	}
+	QCOMPARE(imageCount, 1);
+}
+
+void CameraPoseStoreTest::screenshotWriteFailureDoesNotCreateAPoseOrMutateOutputs()
+{
+	QTemporaryDir dir;
+	QVERIFY(dir.isValid());
+	const QString current = dir.filePath(QStringLiteral("poses.json"));
+	QVERIFY(writeBytes(
+		dir.filePath(QStringLiteral("camera_pose_screenshots")),
+		QByteArray("blocks the screenshot directory")));
+	CameraPoseStore store(current, QString());
+	QImage screenshot(2, 2, QImage::Format_RGB32);
+	screenshot.fill(Qt::blue);
+	QString viewId = QStringLiteral("unchanged");
+	QString screenshotPath = QStringLiteral("unchanged");
+
+	const OperationResult saved = store.saveWithScreenshot(
+		UuidA,
+		pose(QStringLiteral("<camera/>")),
+		screenshot,
+		&viewId,
+		{QStringLiteral("inspection")},
+		&screenshotPath);
+
+	QVERIFY(!saved.ok);
+	QCOMPARE(viewId, QStringLiteral("unchanged"));
+	QCOMPARE(screenshotPath, QStringLiteral("unchanged"));
+	QVERIFY(store.list(UuidA).isEmpty());
+	QVERIFY(!QFileInfo::exists(current));
+}
+
+void CameraPoseStoreTest::updatingTagsMovesTheUniqueScreenshotToItsNewClassification()
+{
+	QTemporaryDir dir;
+	QVERIFY(dir.isValid());
+	CameraPoseStore store(
+		dir.filePath(QStringLiteral("poses.json")), QString());
+	QImage screenshot(4, 2, QImage::Format_RGB32);
+	screenshot.fill(QColor(88, 154, 62));
+	QString viewId;
+	QString originalPath;
+	QVERIFY(store.saveWithScreenshot(
+		UuidA,
+		pose(QStringLiteral("<camera/>")),
+		screenshot,
+		&viewId,
+		{QStringLiteral("inspection")},
+		&originalPath).ok);
+
+	const OperationResult updated = store.setTags(
+		UuidA,
+		viewId,
+		{QStringLiteral("final"), QStringLiteral("underside")});
+
+	QVERIFY2(updated.ok, qPrintable(updated.error));
+	const QVector<SavedCameraPose> poses = store.list(UuidA);
+	QCOMPARE(poses.size(), 1);
+	QVERIFY(poses.front().screenshotPath != originalPath);
+	QVERIFY(!QFileInfo::exists(originalPath));
+	QVERIFY(QFileInfo(poses.front().screenshotPath).isFile());
+	QVERIFY(QFileInfo(poses.front().screenshotPath).absolutePath().contains(
+		QStringLiteral("final")));
+	QVERIFY(QFileInfo(poses.front().screenshotPath).absolutePath().contains(
+		QStringLiteral("underside")));
+	QCOMPARE(QImage(poses.front().screenshotPath), screenshot);
+
+	QDirIterator images(
+		dir.path(),
+		{QStringLiteral("*.png")},
+		QDir::Files,
+		QDirIterator::Subdirectories);
+	int imageCount = 0;
+	while (images.hasNext()) {
+		images.next();
+		++imageCount;
+	}
+	QCOMPARE(imageCount, 1);
+}
+
+void CameraPoseStoreTest::defaultTagMigrationMovesTheUniqueScreenshotWithItsPose()
+{
+	QTemporaryDir dir;
+	QVERIFY(dir.isValid());
+	CameraPoseStore store(
+		dir.filePath(QStringLiteral("poses.json")), QString());
+	QImage screenshot(4, 2, QImage::Format_RGB32);
+	screenshot.fill(QColor(116, 82, 170));
+	QString originalPath;
+	QVERIFY(store.saveWithScreenshot(
+		UuidA,
+		pose(QStringLiteral("<camera/>")),
+		screenshot,
+		nullptr,
+		{QStringLiteral("inspection")},
+		&originalPath).ok);
+
+	const OperationResult migrated = store.migrateLegacyIfNeeded();
+
+	QVERIFY2(migrated.ok, qPrintable(migrated.error));
+	const QVector<SavedCameraPose> poses = store.list(UuidA);
+	QCOMPARE(poses.size(), 1);
+	QCOMPARE(
+		poses.front().tags,
+		QStringList({QStringLiteral("inspection"), QStringLiteral("hole")}));
+	QVERIFY(poses.front().screenshotPath != originalPath);
+	QVERIFY(!QFileInfo::exists(originalPath));
+	QVERIFY(QFileInfo(poses.front().screenshotPath).isFile());
+	QVERIFY(QFileInfo(poses.front().screenshotPath).absolutePath().contains(
+		QStringLiteral("hole")));
+	QCOMPARE(QImage(poses.front().screenshotPath), screenshot);
+}
+
+void CameraPoseStoreTest::deletingAPoseDeletesItsUniqueScreenshot()
+{
+	QTemporaryDir dir;
+	QVERIFY(dir.isValid());
+	CameraPoseStore store(
+		dir.filePath(QStringLiteral("poses.json")), QString());
+	QImage screenshot(3, 3, QImage::Format_RGB32);
+	screenshot.fill(QColor(160, 72, 44));
+	QString viewId;
+	QString screenshotPath;
+	QVERIFY(store.saveWithScreenshot(
+		UuidA,
+		pose(QStringLiteral("<camera/>")),
+		screenshot,
+		&viewId,
+		{QStringLiteral("inspection")},
+		&screenshotPath).ok);
+	QVERIFY(QFileInfo(screenshotPath).isFile());
+
+	const OperationResult removed = store.remove(UuidA, viewId);
+
+	QVERIFY2(removed.ok, qPrintable(removed.error));
+	QVERIFY(store.list(UuidA).isEmpty());
+	QVERIFY(!QFileInfo::exists(screenshotPath));
+}
+
+void CameraPoseStoreTest::screenshotMutationRejectsSymbolicLinkTraversal()
+{
+#ifdef Q_OS_UNIX
+	QTemporaryDir dir;
+	QTemporaryDir outside;
+	QVERIFY(dir.isValid());
+	QVERIFY(outside.isValid());
+	const QString current = dir.filePath(QStringLiteral("poses.json"));
+	const QString screenshotRoot =
+		dir.filePath(QStringLiteral("camera_pose_screenshots"));
+	QVERIFY(QDir().mkpath(screenshotRoot));
+	const QString linkPath =
+		QDir(screenshotRoot).filePath(QStringLiteral("linked"));
+	const QByteArray encodedTarget = QFile::encodeName(outside.path());
+	const QByteArray encodedLink = QFile::encodeName(linkPath);
+	QVERIFY(::symlink(encodedTarget.constData(), encodedLink.constData()) == 0);
+	const QString outsideImage =
+		outside.filePath(QStringLiteral("view.png"));
+	QVERIFY(writeBytes(outsideImage, QByteArray("not really a png")));
+
+	QJsonObject storedPose =
+		poseObject(QStringLiteral("view_001"), QStringLiteral("<camera/>"));
+	storedPose.insert(
+		QStringLiteral("screenshot_path"),
+		QStringLiteral("camera_pose_screenshots/linked/view.png"));
+	QJsonObject poses;
+	poses.insert(UuidA, QJsonArray({storedPose}));
+	const QByteArray originalLibrary = schema2Bytes(poses);
+	QVERIFY(writeBytes(current, originalLibrary));
+	CameraPoseStore store(current, QString());
+
+	const OperationResult removed =
+		store.remove(UuidA, QStringLiteral("view_001"));
+
+	QVERIFY(!removed.ok);
+	QVERIFY(removed.error.contains(
+		QStringLiteral("symbolic link"), Qt::CaseInsensitive));
+	QCOMPARE(readBytes(current), originalLibrary);
+	QCOMPARE(readBytes(outsideImage), QByteArray("not really a png"));
+#else
+	QSKIP("Symbolic-link traversal requires a POSIX filesystem.");
+#endif
 }
 
 void CameraPoseStoreTest::poseTagsCanBeAssignedAndLegacyPosesReceiveHoleTag()
@@ -373,8 +641,8 @@ void CameraPoseStoreTest::deletionIsAtomicAndScopedToUuid()
 	QVERIFY(dir.isValid());
 	const QString current = dir.filePath(QStringLiteral("poses.json"));
 	CameraPoseStore store(current, QString());
-	QVERIFY(store.save(UuidA, pose(QStringLiteral("a"))).ok);
-	QVERIFY(store.save(UuidB, pose(QStringLiteral("b"))).ok);
+	QVERIFY(savePose(store, UuidA, pose(QStringLiteral("a"))).ok);
+	QVERIFY(savePose(store, UuidB, pose(QStringLiteral("b"))).ok);
 	QVERIFY(store.remove(UuidA, QStringLiteral("view_001")).ok);
 	QCOMPARE(store.list(UuidA).size(), 0);
 	QCOMPARE(store.list(UuidB).size(), 1);
@@ -456,6 +724,13 @@ void CameraPoseStoreTest::malformedLibraryFailsEveryOperationWithoutChangingByte
 	views[0] = invalidPose;
 	poses.insert(UuidA, views);
 	QTest::newRow("non-string-timestamp") << schema2Bytes(poses);
+	invalidPose = poseObject(QStringLiteral("view_001"), QStringLiteral("<x/>"));
+	invalidPose.insert(
+		QStringLiteral("screenshot_path"),
+		QStringLiteral("unrelated.png"));
+	views[0] = invalidPose;
+	poses.insert(UuidA, views);
+	QTest::newRow("screenshot-outside-owned-root") << schema2Bytes(poses);
 
 	views = QJsonArray();
 	views.append(poseObject(QStringLiteral("same"), QStringLiteral("<one/>")));
@@ -491,7 +766,8 @@ void CameraPoseStoreTest::malformedLibraryFailsEveryOperationWithoutChangingByte
 	QCOMPARE(readBytes(current), bytes);
 
 	QString viewId = QStringLiteral("unchanged");
-	QVERIFY(!store.save(UuidA, pose(QStringLiteral("<new/>")), &viewId).ok);
+	QVERIFY(!savePose(
+		store, UuidA, pose(QStringLiteral("<new/>")), &viewId).ok);
 	QCOMPARE(viewId, QStringLiteral("unchanged"));
 	QCOMPARE(readBytes(current), bytes);
 
@@ -636,19 +912,21 @@ void CameraPoseStoreTest::operationOutputsAreAlwaysOverwrittenOnlyAsDocumented()
 	QVERIFY(!store.load(UuidA, QStringLiteral("view_001"), nullptr).ok);
 
 	QString savedViewId = QStringLiteral("unchanged");
-	QVERIFY(!store.save(UuidA, pose(QString()), &savedViewId).ok);
+	QVERIFY(!savePose(store, UuidA, pose(QString()), &savedViewId).ok);
 	QCOMPARE(savedViewId, QStringLiteral("unchanged"));
 	QVERIFY(!QFileInfo::exists(current));
-	QVERIFY(store.save(UuidA, pose(QStringLiteral("<saved/>")), &savedViewId).ok);
+	QVERIFY(savePose(
+		store, UuidA, pose(QStringLiteral("<saved/>")), &savedViewId).ok);
 	QCOMPARE(savedViewId, QStringLiteral("view_001"));
 	QVERIFY(store.load(UuidA, savedViewId, &destination).ok);
 	QCOMPARE(destination.viewStateXml, QStringLiteral("<saved/>"));
 	const QByteArray savedBytes = readBytes(current);
 	savedViewId = QStringLiteral("unchanged-again");
-	QVERIFY(!store.save(UuidA, pose(QString()), &savedViewId).ok);
+	QVERIFY(!savePose(store, UuidA, pose(QString()), &savedViewId).ok);
 	QCOMPARE(savedViewId, QStringLiteral("unchanged-again"));
 	QCOMPARE(readBytes(current), savedBytes);
-	QVERIFY(!store.save(QString(), pose(QStringLiteral("<x/>")), &savedViewId).ok);
+	QVERIFY(!savePose(
+		store, QString(), pose(QStringLiteral("<x/>")), &savedViewId).ok);
 	QCOMPARE(savedViewId, QStringLiteral("unchanged-again"));
 	QCOMPARE(readBytes(current), savedBytes);
 }
@@ -678,7 +956,8 @@ void CameraPoseStoreTest::savePreservesFieldsAndAllocatesMonotonicIds()
 
 	CameraPoseStore store(current, QString());
 	QString savedViewId = QStringLiteral("stale");
-	QVERIFY(store.save(
+	QVERIFY(savePose(
+		store,
 		QStringLiteral("{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}"),
 		pose(QStringLiteral("new")),
 		&savedViewId).ok);
@@ -707,7 +986,8 @@ void CameraPoseStoreTest::savePreservesFieldsAndAllocatesMonotonicIds()
 		QStringLiteral("keep"));
 
 	QVERIFY(store.remove(UuidA, QStringLiteral("view_002")).ok);
-	QVERIFY(store.save(UuidA, pose(QStringLiteral("after-hole")), &savedViewId).ok);
+	QVERIFY(savePose(
+		store, UuidA, pose(QStringLiteral("after-hole")), &savedViewId).ok);
 	QCOMPARE(savedViewId, QStringLiteral("view_012"));
 	QCOMPARE(store.list(UuidB).size(), 1);
 }
@@ -727,7 +1007,7 @@ void CameraPoseStoreTest::saveAllocatesIdsBeyondMachineIntegerRange()
 
 	CameraPoseStore store(current, QString());
 	QString viewId = QStringLiteral("unchanged");
-	QVERIFY(store.save(UuidA, pose(QStringLiteral("next")), &viewId).ok);
+	QVERIFY(savePose(store, UuidA, pose(QStringLiteral("next")), &viewId).ok);
 	QCOMPARE(viewId, QStringLiteral("view_18446744073709551617"));
 }
 
@@ -740,7 +1020,7 @@ void CameraPoseStoreTest::saveWritesUtcMillisecondTimestampAndExactUnicodeXml()
 	const QString xml = QString::fromUtf8("opaque line 1\n相机 & not parsed <line 2");
 	const QDateTime before = QDateTime::currentDateTimeUtc();
 	QString viewId;
-	QVERIFY(store.save(UuidA, pose(xml), &viewId).ok);
+	QVERIFY(savePose(store, UuidA, pose(xml), &viewId).ok);
 	const QDateTime after = QDateTime::currentDateTimeUtc();
 
 	const QVector<SavedCameraPose> saved = store.list(UuidA);
@@ -780,7 +1060,7 @@ void CameraPoseStoreTest::saveDerivesLegacyCompatibleParametersWhenViewStateXmlP
 		"PixelSizeMm=\"0.01 0.02\" ViewportPx=\"800 600\" CenterPx=\"400 300\"/>"
 		"<ViewSettings TrackScale=\"2.5\" NearPlane=\"0.01\" FarPlane=\"1000\"/>"
 		"</project>");
-	QVERIFY(store.save(UuidA, pose(xml)).ok);
+	QVERIFY(savePose(store, UuidA, pose(xml)).ok);
 
 	const QJsonObject parameters = readRoot(current)
 		.value(QStringLiteral("poses")).toObject()
@@ -852,7 +1132,8 @@ void CameraPoseStoreTest::failedInitialAndReplacementWritesLeaveNoPartialLibrary
 	QVERIFY(writeBytes(blocker, QByteArray("regular-file")));
 	const QString impossible = QDir(blocker).filePath(QStringLiteral("poses.json"));
 	CameraPoseStore initialStore(impossible, QString());
-	QVERIFY(!initialStore.save(UuidA, pose(QStringLiteral("new"))).ok);
+	QVERIFY(!savePose(
+		initialStore, UuidA, pose(QStringLiteral("new"))).ok);
 	QVERIFY(!QFileInfo::exists(impossible));
 	QCOMPARE(readBytes(blocker), QByteArray("regular-file"));
 
@@ -876,7 +1157,8 @@ void CameraPoseStoreTest::failedInitialAndReplacementWritesLeaveNoPartialLibrary
 		QSKIP("The current user can bypass directory write permissions.");
 	}
 	QString savedViewId = QStringLiteral("unchanged-after-write-failure");
-	const OperationResult saveResult = replacementStore.save(
+	const OperationResult saveResult = savePose(
+		replacementStore,
 		UuidA,
 		pose(QStringLiteral("replacement")),
 		&savedViewId);

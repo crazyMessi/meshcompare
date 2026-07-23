@@ -12,6 +12,7 @@ struct CameraPoseSummary
     QString viewId;
     QString savedAtUtc;
     QStringList tags;
+    QString screenshotPath;
 };
 
 struct CameraPanelSnapshot
