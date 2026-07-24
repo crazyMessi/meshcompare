@@ -163,6 +163,84 @@ QFrame#coloringPanel QLabel, QFrame#cameraPanel QLabel {
     color: #E5E2DC;
 }
 
+QLabel#cameraPanelTitle {
+    color: #FAF8F3;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+QLabel#cameraPanelSubtitle, QLabel#cameraHintLabel {
+    color: #9D9E98;
+    font-size: 11px;
+}
+
+QLabel#cameraSectionTitle {
+    color: #C9C6C0;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QLabel#cameraFieldLabel {
+    color: #B9B7B1;
+    font-size: 12px;
+}
+
+QFrame#cameraCaptureSection,
+QFrame#cameraLibrarySection,
+QFrame#cameraSelectionSection {
+    background: #242522;
+    border: 1px solid #3A3B37;
+    border-radius: 8px;
+}
+
+QLabel#cameraEmptyStateLabel {
+    color: #858680;
+    background: #20211F;
+    border: 1px dashed #464742;
+    border-radius: 6px;
+}
+
+QPushButton#saveCameraPoseButton {
+    min-height: 34px;
+    color: #FFFFFF;
+    background: #3C64D9;
+    border-color: #4B73EA;
+    font-weight: 600;
+}
+
+QPushButton#saveCameraPoseButton:hover {
+    background: #4B73EA;
+}
+
+QPushButton#saveCameraPoseButton:pressed {
+    background: #3155C2;
+}
+
+QPushButton#saveCameraPoseButton:disabled {
+    color: #8B8C87;
+    background: #333430;
+    border-color: #484944;
+}
+
+QPushButton#saveCameraPoseAndCopyScreenshotButton,
+QPushButton#browseCameraScreenshotsButton,
+QPushButton#updateCameraPoseTagsButton,
+QPushButton#openCameraScreenshotFolderButton,
+QPushButton#applyCameraPoseButton {
+    background: #20211F;
+    border-color: #4A4B46;
+}
+
+QPushButton#deleteCameraPoseButton {
+    color: #E8A696;
+}
+
+QPushButton#deleteCameraPoseButton:hover {
+    color: #FFD1C5;
+    background: #49312D;
+    border-color: #6B4138;
+}
+
 QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QListWidget {
     min-height: 28px;
     color: #F2F0EB;
@@ -171,6 +249,71 @@ QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QListWidget {
     border-radius: 6px;
     padding: 0 8px;
     selection-background-color: #6252D2;
+}
+
+QListWidget#cameraPoseList {
+    padding: 4px;
+    outline: 0;
+}
+
+QListWidget#cameraPoseList::item {
+    min-height: 32px;
+    padding: 0 7px;
+    border-radius: 5px;
+}
+
+QListWidget#cameraPoseList::item:hover {
+    background: #383936;
+}
+
+QListWidget#cameraPoseList::item:selected {
+    color: #FFFFFF;
+    background: #4B4389;
+}
+
+TagEditor {
+    color: #F2F0EB;
+    background: #20211F;
+    border: 1px solid #4A4B46;
+    border-radius: 6px;
+}
+
+TagEditor:disabled {
+    color: #777873;
+    background: #252623;
+    border-color: #3A3B37;
+}
+
+TagEditor QScrollArea#tagEditorScroller,
+TagEditor QWidget#tagEditorViewport,
+TagEditor QWidget#tagEditorContents {
+    background: transparent;
+    border: 0;
+}
+
+TagEditor QLineEdit#tagEditorInput {
+    min-height: 28px;
+    color: #F2F0EB;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    padding: 0 7px;
+}
+
+TagEditor QToolButton#tagChip {
+    min-height: 22px;
+    max-height: 22px;
+    padding: 0 7px;
+    color: #E8E4FF;
+    background: #393452;
+    border: 1px solid #575071;
+    border-radius: 11px;
+}
+
+TagEditor QToolButton#tagChip:hover {
+    color: #FFFFFF;
+    background: #4A4368;
+    border-color: #7565E3;
 }
 
 QFrame#coloringPanel QComboBox {

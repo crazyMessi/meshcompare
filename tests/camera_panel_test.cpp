@@ -4,12 +4,14 @@
 
 #include <QApplication>
 #include <QCompleter>
+#include <QFrame>
 #include <QImage>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPalette>
 #include <QPushButton>
+#include <QSettings>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QWidget>
@@ -168,6 +170,8 @@ struct Controls {
     QPushButton* browseScreenshots = nullptr;
     QPushButton* openScreenshotFolder = nullptr;
     QPushButton* remove = nullptr;
+    QFrame* selectionSection = nullptr;
+    QLabel* emptyState = nullptr;
 };
 
 Controls controls(CameraPanel& panel)
@@ -197,6 +201,10 @@ Controls controls(CameraPanel& panel)
         QStringLiteral("openCameraScreenshotFolderButton"));
     result.remove = panel.findChild<QPushButton*>(
         QStringLiteral("deleteCameraPoseButton"));
+    result.selectionSection = panel.findChild<QFrame*>(
+        QStringLiteral("cameraSelectionSection"));
+    result.emptyState = panel.findChild<QLabel*>(
+        QStringLiteral("cameraEmptyStateLabel"));
     return result;
 }
 } // namespace
@@ -206,6 +214,12 @@ class CameraPanelTest : public QObject
     Q_OBJECT
 
 private slots:
+    void init()
+    {
+        QSettings settings;
+        settings.remove(QStringLiteral("camera/lastCaptureTags"));
+    }
+
     void opensScreenshotBrowserForTheActiveWorkspace()
     {
         QTemporaryDir directory;
@@ -268,7 +282,7 @@ private slots:
         ui.poses->setCurrentRow(0);
         QVERIFY(ui.openScreenshotFolder->isEnabled());
 
-        QTest::mouseClick(ui.openScreenshotFolder, Qt::LeftButton);
+        ui.openScreenshotFolder->click();
 
         QCOMPARE(openedFolder, QStringLiteral("/tmp/camera-shots/inspection"));
     }
@@ -324,7 +338,7 @@ private slots:
                 QStringList({QStringLiteral("reviewed")});
         };
 
-        QTest::mouseClick(ui.updateTags, Qt::LeftButton);
+        ui.updateTags->click();
 
         QCOMPARE(
             ui.newPoseTags->tags(),
@@ -350,7 +364,7 @@ private slots:
         ui.poses->setCurrentRow(0);
         ui.selectedPoseTags->load({QStringLiteral("reviewed")});
 
-        QTest::mouseClick(ui.updateTags, Qt::LeftButton);
+        ui.updateTags->click();
 
         QCOMPARE(
             commands.assignedTags,
@@ -395,7 +409,7 @@ private slots:
         QVERIFY(ui.uuid != nullptr);
         QCOMPARE(
             ui.uuid->text(),
-            QStringLiteral("Workspace UID"));
+            QStringLiteral("Workspace"));
         QVERIFY(ui.uidInput != nullptr);
         QCOMPARE(
             ui.uidInput->text(),
@@ -403,21 +417,21 @@ private slots:
         QVERIFY(ui.poses != nullptr);
         QCOMPARE(ui.poses->count(), 2);
         QVERIFY(ui.poses->item(0)->text().contains(QStringLiteral("view_001")));
-        QVERIFY(ui.poses->item(0)->text().contains(
+        QVERIFY(ui.poses->item(0)->toolTip().contains(
             QStringLiteral("2026-07-14T01:00:00.000Z")));
         QCOMPARE(
             ui.poses->item(0)->data(Qt::UserRole).toString(),
             QStringLiteral("view_001"));
         QVERIFY(ui.save != nullptr);
-        QCOMPARE(ui.save->text(), QStringLiteral("Save Pose & Screenshot"));
+        QCOMPARE(ui.save->text(), QStringLiteral("Save Screenshot"));
         QVERIFY(ui.saveAndCopyScreenshot != nullptr);
         QCOMPARE(
             ui.saveAndCopyScreenshot->text(),
-            QStringLiteral("Save Pose, Screenshot & Copy"));
+            QStringLiteral("Save & Copy"));
         QVERIFY(ui.openScreenshotFolder != nullptr);
         QCOMPARE(
             ui.openScreenshotFolder->text(),
-            QStringLiteral("Open Screenshot Folder"));
+            QStringLiteral("Folder"));
         QVERIFY(ui.apply != nullptr);
         QCOMPARE(ui.apply->text(), QStringLiteral("Apply"));
         QVERIFY(ui.remove != nullptr);
@@ -427,6 +441,11 @@ private slots:
         QVERIFY(!ui.apply->isEnabled());
         QVERIFY(!ui.openScreenshotFolder->isEnabled());
         QVERIFY(!ui.remove->isEnabled());
+        QVERIFY(ui.selectionSection != nullptr);
+        QVERIFY(ui.selectionSection->isHidden());
+        QVERIFY(ui.emptyState != nullptr);
+        QVERIFY(ui.emptyState->isHidden());
+        QVERIFY(panel.sizeHint().width() <= 440);
         QCOMPARE(commands.snapshotCalls, 1);
     }
 
@@ -442,6 +461,8 @@ private slots:
             summary(QStringLiteral("view_001"), QStringLiteral("first")),
             summary(QStringLiteral("view_002"), QStringLiteral("second"))};
         CameraPanel panel(state, commands);
+        panel.show();
+        QApplication::processEvents();
         Controls ui = controls(panel);
         QVERIFY(ui.poses != nullptr);
         QVERIFY(ui.apply != nullptr);
@@ -450,6 +471,7 @@ private slots:
 
         ui.poses->setCurrentRow(1);
 
+        QVERIFY(!ui.selectionSection->isHidden());
         QVERIFY(ui.apply->isEnabled());
         QVERIFY(ui.remove->isEnabled());
         QVERIFY(!ui.openScreenshotFolder->isEnabled());
@@ -484,7 +506,7 @@ private slots:
                 QStringLiteral("inspection"), QStringLiteral("underside")};
         };
 
-        QTest::mouseClick(ui.updateTags, Qt::LeftButton);
+        ui.updateTags->click();
 
         QCOMPARE(commands.taggedViewIds, QStringList({QStringLiteral("view_001")}));
         QCOMPARE(
@@ -498,7 +520,7 @@ private slots:
         QVERIFY(ui.poses->item(0)->text().contains(QStringLiteral("#underside")));
     }
 
-    void latestPoseTagsPrefillAndSaveTheNextPose()
+    void latestTaggedPosePrefillsEvenWhenTheNewestPoseIsUntagged()
     {
         WorkspaceState state;
         makeReady(state);
@@ -506,6 +528,7 @@ private slots:
         commands.snapshot.workspaceUuid = QStringLiteral(
             "123e4567-e89b-12d3-a456-426614174000");
         commands.snapshot.poses = {
+            summary(QStringLiteral("view_003"), QStringLiteral("2026-07-21T13:00:00Z")),
             summary(QStringLiteral("view_002"), QStringLiteral("2026-07-21T12:00:00Z"),
                     {QStringLiteral("inspection"), QStringLiteral("underside")}),
             summary(QStringLiteral("view_001"), QStringLiteral("2026-07-21T11:00:00Z"),
@@ -522,6 +545,114 @@ private slots:
         QCOMPARE(
             commands.lastSaveTags,
             QStringList({QStringLiteral("inspection"), QStringLiteral("underside")}));
+    }
+
+    void successfulSavePersistsTagsAcrossPanelsAndWorkspaces()
+    {
+        bool hasStoredTags = false;
+        QStringList storedTags;
+        auto services = [&hasStoredTags, &storedTags] {
+            CameraPanelServices result;
+            result.loadLastCaptureTags =
+                [&hasStoredTags, &storedTags](QStringList& tags) {
+                    if (!hasStoredTags)
+                        return false;
+                    tags = storedTags;
+                    return true;
+                };
+            result.saveLastCaptureTags =
+                [&hasStoredTags, &storedTags](const QStringList& tags) {
+                    hasStoredTags = true;
+                    storedTags = tags;
+                };
+            return result;
+        };
+
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands firstCommands;
+        firstCommands.snapshot.workspaceUuid = QStringLiteral("workspace-a");
+        firstCommands.snapshot.poses = {summary(
+            QStringLiteral("view_001"),
+            QStringLiteral("2026-07-21T12:00:00Z"),
+            {QStringLiteral("hole")})};
+        {
+            CameraPanel firstPanel(
+                state, firstCommands, nullptr, services());
+            const Controls firstUi = controls(firstPanel);
+            firstUi.newPoseTags->load(
+                {QStringLiteral("inspection"), QStringLiteral("underside")});
+
+            QTest::mouseClick(firstUi.save, Qt::LeftButton);
+
+            QVERIFY(hasStoredTags);
+            QCOMPARE(
+                storedTags,
+                QStringList({
+                    QStringLiteral("inspection"),
+                    QStringLiteral("underside")}));
+        }
+
+        RecordingCameraCommands secondCommands;
+        secondCommands.snapshot.workspaceUuid = QStringLiteral("workspace-b");
+        secondCommands.snapshot.poses = {summary(
+            QStringLiteral("view_001"),
+            QStringLiteral("2026-07-22T12:00:00Z"),
+            {QStringLiteral("edge")})};
+        CameraPanel secondPanel(
+            state, secondCommands, nullptr, services());
+
+        QCOMPARE(
+            controls(secondPanel).newPoseTags->tags(),
+            QStringList({
+                QStringLiteral("inspection"),
+                QStringLiteral("underside")}));
+    }
+
+    void persistedEmptyTagsOverrideOlderTaggedPoses()
+    {
+        QStringList storedTags;
+        CameraPanelServices services;
+        services.loadLastCaptureTags = [&storedTags](QStringList& tags) {
+            tags = storedTags;
+            return true;
+        };
+        services.saveLastCaptureTags = [](const QStringList&) {};
+
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral("workspace-a");
+        commands.snapshot.poses = {summary(
+            QStringLiteral("view_001"),
+            QStringLiteral("2026-07-21T12:00:00Z"),
+            {QStringLiteral("hole")})};
+
+        CameraPanel panel(state, commands, nullptr, std::move(services));
+
+        QVERIFY(controls(panel).newPoseTags->tags().isEmpty());
+    }
+
+    void workspaceRefreshDoesNotOverwriteAnEditedCaptureTag()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral("workspace-a");
+        commands.snapshot.poses = {summary(
+            QStringLiteral("view_001"),
+            QStringLiteral("2026-07-21T12:00:00Z"),
+            {QStringLiteral("hole")})};
+        CameraPanel panel(state, commands);
+        const Controls ui = controls(panel);
+        ui.newPoseTags->load({QStringLiteral("custom-review")});
+
+        commands.snapshot.workspaceUuid = QStringLiteral("workspace-b");
+        panel.refreshFromState();
+
+        QCOMPARE(
+            ui.newPoseTags->tags(),
+            QStringList({QStringLiteral("custom-review")}));
     }
 
     void successfulSaveRemembersTagsWhenTheRefreshDoesNotYetContainThePose()
@@ -725,7 +856,7 @@ private slots:
             commands.snapshot.poses.removeFirst();
         };
 
-        QTest::mouseClick(ui.remove, Qt::LeftButton);
+        ui.remove->click();
 
         QCOMPARE(commands.deleteViewIds, QStringList({QStringLiteral("view_001")}));
         QCOMPARE(commands.snapshotCalls, 3);
@@ -767,14 +898,14 @@ private slots:
         ui.poses->setCurrentRow(0);
         commands.applyResult =
             OperationResult::failure(QStringLiteral("Apply failed."));
-        QTest::mouseClick(ui.apply, Qt::LeftButton);
+        ui.apply->click();
         QCOMPARE(status.count(), 1);
         QCOMPARE(status.takeFirst().at(0).toString(), QStringLiteral("Apply failed."));
         QCOMPARE(commands.snapshotCalls, 1);
 
         commands.deleteResult =
             OperationResult::failure(QStringLiteral("Delete failed."));
-        QTest::mouseClick(ui.remove, Qt::LeftButton);
+        ui.remove->click();
         QCOMPARE(status.count(), 1);
         QCOMPARE(status.takeFirst().at(0).toString(), QStringLiteral("Delete failed."));
         QCOMPARE(commands.snapshotCalls, 1);
@@ -855,7 +986,7 @@ private slots:
             panel.refreshFromState();
         };
 
-        QTest::mouseClick(ui.apply, Qt::LeftButton);
+        ui.apply->click();
 
         QCOMPARE(commands.applyViewIds, QStringList({QStringLiteral("view_002")}));
         QCOMPARE(ui.poses->count(), 0);

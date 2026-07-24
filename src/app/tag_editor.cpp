@@ -10,7 +10,6 @@
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSizePolicy>
-#include <QStyle>
 #include <QStringListModel>
 #include <QToolButton>
 
@@ -35,20 +34,27 @@ TagEditor::TagEditor(QWidget* parent)
     outerLayout->setContentsMargins(0, 0, 0, 0);
 
     auto* scroller = new QScrollArea(this);
+    scroller->setObjectName(QStringLiteral("tagEditorScroller"));
     scroller->setFrameShape(QFrame::NoFrame);
-    scroller->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroller->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     scroller->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     scroller->setSizeAdjustPolicy(QAbstractScrollArea::AdjustIgnored);
     scroller->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     scroller->setFixedHeight(sizeHint().height());
+    scroller->setAutoFillBackground(false);
+    scroller->viewport()->setObjectName(QStringLiteral("tagEditorViewport"));
+    scroller->viewport()->setAutoFillBackground(false);
     outerLayout->addWidget(scroller);
 
     auto* contents = new QWidget(scroller);
+    contents->setObjectName(QStringLiteral("tagEditorContents"));
+    contents->setAutoFillBackground(false);
     layout_ = new QHBoxLayout(contents);
     layout_->setContentsMargins(0, 0, 0, 0);
     layout_->setSpacing(4);
     layout_->setSizeConstraint(QLayout::SetMinimumSize);
     input_ = new QLineEdit(contents);
+    input_->setObjectName(QStringLiteral("tagEditorInput"));
     input_->setPlaceholderText(tr("Type tags"));
     input_->installEventFilter(this);
     layout_->addWidget(input_, 1);
@@ -93,9 +99,7 @@ QSize TagEditor::sizeHint() const
     const int inputHeight = input_ == nullptr
         ? fontMetrics().height() + 12
         : input_->sizeHint().height();
-    return QSize(
-        220,
-        inputHeight + style()->pixelMetric(QStyle::PM_ScrollBarExtent) + 2);
+    return QSize(220, inputHeight + 2);
 }
 
 QSize TagEditor::minimumSizeHint() const

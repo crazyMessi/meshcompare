@@ -2,6 +2,7 @@
 
 #include <QCompleter>
 #include <QLineEdit>
+#include <QScrollArea>
 #include <QToolButton>
 
 #include "app/tag_editor.h"
@@ -93,6 +94,22 @@ private slots:
             QStringLiteral("long-free-form-label")});
 
         QCOMPARE(editor.sizeHint().width(), initialWidth);
+    }
+
+    void editorDoesNotReserveSpaceForANativeScrollBar()
+    {
+        TagEditor editor;
+        auto* input = qobject_cast<QLineEdit*>(editor.focusProxy());
+        auto* scroller = editor.findChild<QScrollArea*>(
+            QStringLiteral("tagEditorScroller"));
+        QVERIFY(input != nullptr);
+        QVERIFY(scroller != nullptr);
+
+        QCOMPARE(
+            scroller->horizontalScrollBarPolicy(),
+            Qt::ScrollBarAlwaysOff);
+        QVERIFY(!scroller->viewport()->autoFillBackground());
+        QVERIFY(editor.sizeHint().height() <= input->sizeHint().height() + 2);
     }
 };
 
