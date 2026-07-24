@@ -66,12 +66,38 @@ function(meshcompare_configure_macos_bundle target_name)
 	endif()
 
 	if(MESHCOMPARE_DEPLOY_QT)
+		get_filename_component(
+			MESHCOMPARE_QT_PREFIX
+			"${MESHCOMPARE_QT_BIN_DIR}"
+			DIRECTORY)
+		get_filename_component(
+			MESHCOMPARE_QT_OPT_PREFIX
+			"${MESHCOMPARE_QT_PREFIX}"
+			DIRECTORY)
+		get_filename_component(
+			MESHCOMPARE_QT_PACKAGE_ROOT
+			"${MESHCOMPARE_QT_OPT_PREFIX}"
+			DIRECTORY)
+		set(MESHCOMPARE_RUNTIME_LIBRARY_SEARCH_DIRS
+			"${MESHCOMPARE_QT_PREFIX}/lib")
+		if(IS_DIRECTORY "${MESHCOMPARE_QT_PACKAGE_ROOT}/lib")
+			list(APPEND MESHCOMPARE_RUNTIME_LIBRARY_SEARCH_DIRS
+				"${MESHCOMPARE_QT_PACKAGE_ROOT}/lib")
+		endif()
+		list(REMOVE_DUPLICATES MESHCOMPARE_RUNTIME_LIBRARY_SEARCH_DIRS)
+		string(
+			JOIN "|" MESHCOMPARE_RUNTIME_LIBRARY_SEARCH_PATHS
+			${MESHCOMPARE_RUNTIME_LIBRARY_SEARCH_DIRS})
 		list(APPEND bundle_commands
 			COMMAND "${MACDEPLOYQT_EXECUTABLE}"
 				"$<TARGET_BUNDLE_DIR:${target_name}>"
 				-always-overwrite
 				-no-strip
 				"-executable=$<TARGET_BUNDLE_DIR:${target_name}>/Contents/PlugIns/$<TARGET_FILE_NAME:io_base>"
+			COMMAND "${CMAKE_COMMAND}"
+				"-DBUNDLE_PATH=$<TARGET_BUNDLE_DIR:${target_name}>"
+				"-DLIBRARY_SEARCH_PATHS=${MESHCOMPARE_RUNTIME_LIBRARY_SEARCH_PATHS}"
+				-P "${PROJECT_SOURCE_DIR}/cmake/deploy_macos_runtime_dependencies.cmake"
 			COMMAND "${CMAKE_COMMAND}"
 				"-DBUNDLE_PATH=$<TARGET_BUNDLE_DIR:${target_name}>"
 				-P "${PROJECT_SOURCE_DIR}/cmake/sanitize_macos_bundle.cmake"
