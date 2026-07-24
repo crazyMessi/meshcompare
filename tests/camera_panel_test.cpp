@@ -11,6 +11,7 @@
 #include <QPalette>
 #include <QPushButton>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QWidget>
 
 #include "app/camera_commands.h"
@@ -164,6 +165,7 @@ struct Controls {
     TagEditor* newPoseTags = nullptr;
     TagEditor* selectedPoseTags = nullptr;
     QPushButton* updateTags = nullptr;
+    QPushButton* browseScreenshots = nullptr;
     QPushButton* openScreenshotFolder = nullptr;
     QPushButton* remove = nullptr;
 };
@@ -189,6 +191,8 @@ Controls controls(CameraPanel& panel)
         QStringLiteral("selectedPoseTagEditor"));
     result.updateTags = panel.findChild<QPushButton*>(
         QStringLiteral("updateCameraPoseTagsButton"));
+    result.browseScreenshots = panel.findChild<QPushButton*>(
+        QStringLiteral("browseCameraScreenshotsButton"));
     result.openScreenshotFolder = panel.findChild<QPushButton*>(
         QStringLiteral("openCameraScreenshotFolderButton"));
     result.remove = panel.findChild<QPushButton*>(
@@ -202,6 +206,42 @@ class CameraPanelTest : public QObject
     Q_OBJECT
 
 private slots:
+    void opensScreenshotBrowserForTheActiveWorkspace()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString screenshotPath = directory.filePath(QStringLiteral("view_001.png"));
+        QImage screenshot(20, 12, QImage::Format_ARGB32_Premultiplied);
+        screenshot.fill(Qt::green);
+        QVERIFY(screenshot.save(screenshotPath, "PNG"));
+
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral(
+            "123e4567-e89b-12d3-a456-426614174000");
+        commands.snapshot.poses = {summary(
+            QStringLiteral("view_001"),
+            QStringLiteral("2026-07-21T12:00:00Z"),
+            {QStringLiteral("hole")},
+            screenshotPath)};
+        CameraPanel panel(state, commands);
+        const Controls ui = controls(panel);
+
+        QVERIFY(ui.browseScreenshots != nullptr);
+        QTest::mouseClick(ui.browseScreenshots, Qt::LeftButton);
+
+        auto* browser = panel.findChild<QWidget*>(
+            QStringLiteral("screenshotBrowser"));
+        QVERIFY(browser != nullptr);
+        QVERIFY(browser->isVisible());
+        QCOMPARE(browser->windowModality(), Qt::ApplicationModal);
+        auto* gallery = browser->findChild<QListWidget*>(
+            QStringLiteral("screenshotGallery"));
+        QVERIFY(gallery != nullptr);
+        QCOMPARE(gallery->count(), 1);
+    }
+
     void selectedPoseCanOpenItsScreenshotFolder()
     {
         WorkspaceState state;

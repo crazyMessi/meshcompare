@@ -7,16 +7,19 @@
 #include <QImage>
 #include <QString>
 #include <QStringList>
+#include <QVector>
+
+#include "camera_commands.h"
 
 class ICameraCommands;
 class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPushButton;
+class ScreenshotBrowser;
 class TagEditor;
 class QWidget;
 class WorkspaceState;
-struct CameraPanelSnapshot;
 struct OperationResult;
 
 struct CameraPanelServices
@@ -50,9 +53,12 @@ private:
     void rememberKnownTags(const QStringList& tags);
     void rememberTags(const QStringList& tags);
     void rememberTagsForView(const QString& viewId);
+    void clearBrowserPoses();
+    void refreshBrowserPoses(const CameraPanelSnapshot& snapshot);
     OperationResult commitUidInput(bool refreshAfterCommit);
     void applySelectedPose();
     void updateSelectedPoseTags();
+    void openScreenshotBrowser();
     void openSelectedScreenshotFolder();
     void deleteSelectedPose();
     void updateActionState();
@@ -71,13 +77,16 @@ private:
     QPushButton* saveAndCopyScreenshotButton_ = nullptr;
     QPushButton* applyButton_ = nullptr;
     QPushButton* updateTagsButton_ = nullptr;
+    QPushButton* browseScreenshotsButton_ = nullptr;
     QPushButton* openScreenshotFolderButton_ = nullptr;
     QPushButton* deleteButton_ = nullptr;
+    ScreenshotBrowser* screenshotBrowser_ = nullptr;
     QString workspaceUuid_;
     QString tagHistoryUuid_;
     QStringList knownTags_;
     QStringList lastUsedTags_;
     QHash<QString, QStringList> pendingTagUpdates_;
+    QVector<CameraPoseSummary> browserPoses_;
     bool hasLastUsedTags_ = false;
     bool snapshotAvailable_ = false;
 };

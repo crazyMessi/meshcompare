@@ -68,6 +68,8 @@ add_library(meshcompare-ui STATIC
 	app/camera_commands.h
 	app/camera_panel.cpp
 	app/camera_panel.h
+	app/screenshot_browser.cpp
+	app/screenshot_browser.h
 	app/tag_editor.cpp
 	app/tag_editor.h
 	app/camera_pose_paths.cpp
@@ -192,6 +194,11 @@ if(BUILD_TESTING)
 	target_link_libraries(meshcompare-diagnostics-menu-test PRIVATE meshcompare-ui)
 	add_meshcompare_test(meshcompare-camera-panel-test camera_panel_test.cpp)
 	target_link_libraries(meshcompare-camera-panel-test PRIVATE meshcompare-ui)
+	set_tests_properties(
+		meshcompare-camera-panel-test
+		PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+	add_meshcompare_test(meshcompare-screenshot-browser-test screenshot_browser_test.cpp)
+	target_link_libraries(meshcompare-screenshot-browser-test PRIVATE meshcompare-ui)
 	add_meshcompare_test(meshcompare-tag-editor-test tag_editor_test.cpp)
 	target_link_libraries(meshcompare-tag-editor-test PRIVATE meshcompare-ui)
 	add_meshcompare_test(meshcompare-camera-workflow-test camera_workflow_test.cpp)

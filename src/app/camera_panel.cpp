@@ -1,6 +1,7 @@
 #include "camera_panel.h"
 
 #include "camera_commands.h"
+#include "screenshot_browser.h"
 #include "tag_editor.h"
 #include "../core/workspace_state.h"
 
@@ -146,6 +147,13 @@ CameraPanel::CameraPanel(
     poseList_->setMinimumHeight(144);
     root->addWidget(poseList_);
 
+    browseScreenshotsButton_ = new QPushButton(tr("Browse Screenshots"), this);
+    browseScreenshotsButton_->setObjectName(
+        QStringLiteral("browseCameraScreenshotsButton"));
+    browseScreenshotsButton_->setToolTip(
+        tr("Browse this workspace's saved screenshots by tag"));
+    root->addWidget(browseScreenshotsButton_);
+
     auto* selectedPoseTagRow = new QHBoxLayout;
     selectedPoseTagLabel_ = new QLabel(tr("Selected pose tags"), this);
     selectedPoseTagLabel_->setObjectName(QStringLiteral("selectedPoseTagLabel"));
@@ -258,6 +266,11 @@ CameraPanel::CameraPanel(
         this,
         &CameraPanel::updateSelectedPoseTags);
     connect(
+        browseScreenshotsButton_,
+        &QPushButton::clicked,
+        this,
+        &CameraPanel::openScreenshotBrowser);
+    connect(
         openScreenshotFolderButton_,
         &QPushButton::clicked,
         this,
@@ -306,6 +319,7 @@ void CameraPanel::refreshFromState()
     }
 
     if (!snapshotAvailable_) {
+        clearBrowserPoses();
         uuidLabel_->setText(tr("Camera poses are unavailable."));
         uidInput_->setEnabled(false);
         poseList_->setEnabled(false);
@@ -316,6 +330,7 @@ void CameraPanel::refreshFromState()
 
     uidInput_->setEnabled(state_.phase() == WorkspacePhase::Ready);
     if (workspaceUuid_.isEmpty()) {
+        clearBrowserPoses();
         uuidLabel_->setText(
             snapshot.suggestedWorkspaceUid.isEmpty()
                 ? tr("Enter a workspace UID.")
@@ -333,6 +348,7 @@ void CameraPanel::refreshFromState()
             pendingTagUpdates_.erase(pending);
     }
     updateTagSuggestions(snapshot);
+    refreshBrowserPoses(snapshot);
     for (const CameraPoseSummary& pose : snapshot.poses) {
         const auto pending = pendingTagUpdates_.constFind(pose.viewId);
         const QStringList poseTags = pending == pendingTagUpdates_.constEnd()
@@ -449,6 +465,25 @@ void CameraPanel::rememberTagsForView(const QString& viewId)
     }
 }
 
+void CameraPanel::refreshBrowserPoses(const CameraPanelSnapshot& snapshot)
+{
+    browserPoses_ = snapshot.poses;
+    for (CameraPoseSummary& pose : browserPoses_) {
+        const auto pending = pendingTagUpdates_.constFind(pose.viewId);
+        if (pending != pendingTagUpdates_.constEnd())
+            pose.tags = pending.value();
+    }
+    if (screenshotBrowser_ != nullptr)
+        screenshotBrowser_->setPoses(browserPoses_);
+}
+
+void CameraPanel::clearBrowserPoses()
+{
+    browserPoses_.clear();
+    if (screenshotBrowser_ != nullptr)
+        screenshotBrowser_->setPoses(browserPoses_);
+}
+
 void CameraPanel::applySelectedPose()
 {
     // Copy the semantic ID before dispatch. A command is allowed to publish a
@@ -484,6 +519,15 @@ void CameraPanel::updateSelectedPoseTags()
             break;
         }
     }
+}
+
+void CameraPanel::openScreenshotBrowser()
+{
+    if (screenshotBrowser_ == nullptr) {
+        screenshotBrowser_ = new ScreenshotBrowser(this);
+    }
+    screenshotBrowser_->setPoses(browserPoses_);
+    screenshotBrowser_->show();
 }
 
 void CameraPanel::openSelectedScreenshotFolder()
@@ -543,6 +587,8 @@ void CameraPanel::updateActionState()
     selectedPoseTagEditor_->setEnabled(
         ready && inputMatchesSnapshot && hasSelection);
     updateTagsButton_->setEnabled(ready && inputMatchesSnapshot && hasSelection);
+    browseScreenshotsButton_->setEnabled(
+        snapshotAvailable_ && !workspaceUuid_.isEmpty());
     openScreenshotFolderButton_->setEnabled(
         ready && inputMatchesSnapshot && hasSelection && hasScreenshot);
     deleteButton_->setEnabled(ready && inputMatchesSnapshot && hasSelection);
