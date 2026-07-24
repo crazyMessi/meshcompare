@@ -99,6 +99,25 @@ public:
         return matching;
     }
 
+    QVector<SavedCameraPose> listAll(
+        OperationResult* result = nullptr) const override
+    {
+        ++listCount_;
+        lastListUuid_.clear();
+        appendTrace(QStringLiteral("store-list-all"));
+        if (listObserver_)
+            listObserver_();
+        if (!nextListError_.isEmpty()) {
+            const QString error = takeError(nextListError_);
+            if (result != nullptr)
+                *result = OperationResult::failure(error);
+            return {};
+        }
+        if (result != nullptr)
+            *result = OperationResult::success();
+        return records_;
+    }
+
     OperationResult load(
         const QString& uuid,
         const QString& viewId,

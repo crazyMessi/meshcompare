@@ -35,6 +35,8 @@ public:
 	virtual QVector<SavedCameraPose> list(
 		const QString& uuid,
 		OperationResult* result = nullptr) const = 0;
+	virtual QVector<SavedCameraPose> listAll(
+		OperationResult* result = nullptr) const = 0;
 	virtual OperationResult load(
 		const QString& uuid,
 		const QString& viewId,
@@ -72,7 +74,8 @@ public:
 		const QStringList& tags) override;
 	OperationResult remove(const QString& uuid, const QString& viewId) override;
 
-	QVector<SavedCameraPose> listAll(OperationResult* result = nullptr) const;
+	QVector<SavedCameraPose> listAll(
+		OperationResult* result = nullptr) const override;
 
 	static QString normalizeUuid(const QString& value);
 

@@ -625,7 +625,38 @@ CameraPanelSnapshot WorkspaceController::cameraPanelSnapshot() const
             {saved.viewId,
              saved.savedAtUtc,
              saved.tags,
-             saved.screenshotPath});
+             saved.screenshotPath,
+             saved.uuid});
+    return snapshot;
+}
+
+CameraScreenshotLibrarySnapshot
+WorkspaceController::cameraScreenshotLibrarySnapshot() const
+{
+    CameraScreenshotLibrarySnapshot snapshot;
+    if (cameraCommandInProgress_) {
+        snapshot.result = OperationResult::failure(
+            QStringLiteral("A camera-pose command is already in progress."));
+        return snapshot;
+    }
+
+    QScopedValueRollback<bool> commandGuard(cameraCommandInProgress_, true);
+    OperationResult listed;
+    const QVector<SavedCameraPose> poses = cameraStore_.listAll(&listed);
+    if (!listed.ok) {
+        snapshot.result = listed;
+        return snapshot;
+    }
+
+    snapshot.poses.reserve(poses.size());
+    for (const SavedCameraPose& saved : poses) {
+        snapshot.poses.append(
+            {saved.viewId,
+             saved.savedAtUtc,
+             saved.tags,
+             saved.screenshotPath,
+             saved.uuid});
+    }
     return snapshot;
 }
 

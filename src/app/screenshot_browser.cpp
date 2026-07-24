@@ -18,6 +18,7 @@ namespace
 constexpr int ViewIdRole = Qt::UserRole;
 constexpr int ScreenshotPathRole = Qt::UserRole + 1;
 constexpr int TagsRole = Qt::UserRole + 2;
+constexpr int WorkspaceUuidRole = Qt::UserRole + 3;
 constexpr int FilterModeRole = Qt::UserRole;
 constexpr int FilterTagRole = Qt::UserRole + 1;
 
@@ -34,6 +35,17 @@ QString renderTags(const QStringList& tags)
     for (const QString& tag : tags)
         rendered.append(QStringLiteral("#%1").arg(tag));
     return rendered.join(QLatin1Char(' '));
+}
+
+QString poseCaption(const CameraPoseSummary& pose)
+{
+    const QString identity = pose.workspaceUuid.isEmpty()
+        ? pose.viewId
+        : QStringLiteral("%1 · %2")
+              .arg(pose.workspaceUuid.left(8), pose.viewId);
+    return pose.tags.isEmpty()
+        ? identity
+        : QStringLiteral("%1\n%2").arg(identity, renderTags(pose.tags));
 }
 
 bool hasTag(const CameraPoseSummary& pose, const QString& tag)
@@ -112,7 +124,6 @@ ScreenshotBrowser::ScreenshotBrowser(QWidget* parent)
     preview_->setAlignment(Qt::AlignCenter);
     preview_->setWordWrap(true);
     preview_->setMinimumSize(360, 270);
-    preview_->setStyleSheet(QStringLiteral("QLabel { background: palette(base); }"));
     previewColumn->addWidget(preview_, 1);
 
     previewDetails_ = new QLabel(this);
@@ -211,6 +222,13 @@ void ScreenshotBrowser::rebuildGallery()
             continue;
 
         QImageReader reader(pose.screenshotPath);
+        const QSize sourceSize = reader.size();
+        if (sourceSize.isValid()) {
+            QSize thumbnailSize = sourceSize;
+            thumbnailSize.scale(
+                gallery_->iconSize(), Qt::KeepAspectRatio);
+            reader.setScaledSize(thumbnailSize);
+        }
         const QImage image = reader.read();
         if (image.isNull())
             continue;
@@ -219,11 +237,10 @@ void ScreenshotBrowser::rebuildGallery()
         item->setData(ViewIdRole, pose.viewId);
         item->setData(ScreenshotPathRole, pose.screenshotPath);
         item->setData(TagsRole, pose.tags);
+        item->setData(WorkspaceUuidRole, pose.workspaceUuid);
         item->setIcon(QPixmap::fromImage(image.scaled(
             gallery_->iconSize(), Qt::KeepAspectRatio, Qt::SmoothTransformation)));
-        item->setText(pose.tags.isEmpty()
-                ? pose.viewId
-                : tr("%1\n%2").arg(pose.viewId, renderTags(pose.tags)));
+        item->setText(poseCaption(pose));
         item->setToolTip(tr("%1\n%2").arg(pose.viewId, pose.screenshotPath));
     }
 
@@ -257,9 +274,13 @@ void ScreenshotBrowser::updatePreview()
     preview_->setPixmap(QPixmap::fromImage(image.scaled(
         preview_->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation)));
     const QStringList tags = item->data(TagsRole).toStringList();
-    previewDetails_->setText(
-        tags.isEmpty()
-            ? item->data(ViewIdRole).toString()
-            : tr("%1 · %2").arg(
-                  item->data(ViewIdRole).toString(), renderTags(tags)));
+    QStringList details;
+    const QString workspaceUuid =
+        item->data(WorkspaceUuidRole).toString();
+    if (!workspaceUuid.isEmpty())
+        details.append(tr("Workspace %1").arg(workspaceUuid));
+    details.append(item->data(ViewIdRole).toString());
+    if (!tags.isEmpty())
+        details.append(renderTags(tags));
+    previewDetails_->setText(details.join(QStringLiteral(" · ")));
 }

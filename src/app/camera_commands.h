@@ -13,6 +13,7 @@ struct CameraPoseSummary
     QString savedAtUtc;
     QStringList tags;
     QString screenshotPath;
+    QString workspaceUuid;
 };
 
 struct CameraPanelSnapshot
@@ -23,12 +24,23 @@ struct CameraPanelSnapshot
     QVector<CameraPoseSummary> poses;
 };
 
+struct CameraScreenshotLibrarySnapshot
+{
+    OperationResult result;
+    QVector<CameraPoseSummary> poses;
+};
+
 class ICameraCommands
 {
 public:
     virtual ~ICameraCommands() = default;
 
     virtual CameraPanelSnapshot cameraPanelSnapshot() const = 0;
+    virtual CameraScreenshotLibrarySnapshot cameraScreenshotLibrarySnapshot() const
+    {
+        const CameraPanelSnapshot currentWorkspace = cameraPanelSnapshot();
+        return {currentWorkspace.result, currentWorkspace.poses};
+    }
     virtual OperationResult setCameraPoseUid(const QString& uid) = 0;
     virtual OperationResult saveCurrentCameraPose(
         QString* savedViewId = nullptr,

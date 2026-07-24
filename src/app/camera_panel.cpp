@@ -207,7 +207,7 @@ CameraPanel::CameraPanel(
     browseScreenshotsButton_->setObjectName(
         QStringLiteral("browseCameraScreenshotsButton"));
     browseScreenshotsButton_->setToolTip(
-        tr("Browse this workspace's saved screenshots by tag"));
+        tr("Browse all locally saved screenshots by tag"));
     libraryHeader->addWidget(browseScreenshotsButton_);
     libraryLayout->addLayout(libraryHeader);
 
@@ -632,6 +632,13 @@ void CameraPanel::updateSelectedPoseTags()
 
 void CameraPanel::openScreenshotBrowser()
 {
+    const CameraScreenshotLibrarySnapshot library =
+        commands_.cameraScreenshotLibrarySnapshot();
+    if (!library.result.ok) {
+        reportFailure(library.result);
+        return;
+    }
+    browserPoses_ = library.poses;
     if (screenshotBrowser_ == nullptr) {
         screenshotBrowser_ = new ScreenshotBrowser(this);
     }
@@ -699,8 +706,7 @@ void CameraPanel::updateActionState()
     selectedPoseTagEditor_->setEnabled(
         ready && inputMatchesSnapshot && hasSelection);
     updateTagsButton_->setEnabled(ready && inputMatchesSnapshot && hasSelection);
-    browseScreenshotsButton_->setEnabled(
-        snapshotAvailable_ && !workspaceUuid_.isEmpty());
+    browseScreenshotsButton_->setEnabled(snapshotAvailable_);
     openScreenshotFolderButton_->setEnabled(
         ready && inputMatchesSnapshot && hasSelection && hasScreenshot);
     deleteButton_->setEnabled(ready && inputMatchesSnapshot && hasSelection);

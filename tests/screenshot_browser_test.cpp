@@ -9,7 +9,9 @@
 #include <QLabel>
 #include <QTemporaryDir>
 #include <QPixmap>
+#include <QWidget>
 
+#include "app/app_theme.h"
 #include "app/camera_commands.h"
 #include "app/screenshot_browser.h"
 
@@ -104,6 +106,29 @@ private slots:
         filter->setCurrentText(QStringLiteral("hole"));
 
         QCOMPARE(gallery->count(), 2);
+    }
+
+    void usesTheApplicationDarkTheme()
+    {
+        QWidget applicationRoot;
+        applicationRoot.setObjectName(QStringLiteral("workspaceRoot"));
+        applicationRoot.setStyleSheet(meshCompareApplicationStyleSheet());
+
+        ScreenshotBrowser browser(&applicationRoot);
+        browser.ensurePolished();
+
+        const QColor background =
+            browser.palette().color(QPalette::Window);
+        const QColor text =
+            browser.palette().color(QPalette::WindowText);
+        QVERIFY2(
+            background.lightness() < 80,
+            qPrintable(QStringLiteral("Unexpected light background: %1")
+                           .arg(background.name())));
+        QVERIFY2(
+            text.lightness() > 160,
+            qPrintable(QStringLiteral("Unexpected dark text: %1")
+                           .arg(text.name())));
     }
 
     void selectsAScreenshotForPreview()

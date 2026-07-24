@@ -159,6 +159,69 @@ QFrame#coloringPanel, QFrame#cameraPanel {
     border-radius: 10px;
 }
 
+QDialog#screenshotBrowser {
+    background: #242522;
+    color: #F2F0EB;
+}
+
+QDialog#screenshotBrowser QLabel {
+    color: #E5E2DC;
+}
+
+QDialog#screenshotBrowser QComboBox {
+    combobox-popup: 0;
+}
+
+QDialog#screenshotBrowser QComboBox QAbstractItemView {
+    color: #F2F0EB;
+    background: #20211F;
+    border: 1px solid #4A4B46;
+    outline: 0;
+    padding: 4px 0;
+    selection-color: #FFFFFF;
+    selection-background-color: #6252D2;
+}
+
+QListWidget#screenshotGallery {
+    padding: 8px;
+    background: #1D1E1C;
+    border: 1px solid #3A3B37;
+    border-radius: 8px;
+    outline: 0;
+}
+
+QListWidget#screenshotGallery::item {
+    padding: 8px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+}
+
+QListWidget#screenshotGallery::item:hover {
+    background: #30312E;
+    border-color: #4A4B46;
+}
+
+QListWidget#screenshotGallery::item:selected {
+    color: #FFFFFF;
+    background: #393452;
+    border-color: #7565E3;
+}
+
+QLabel#screenshotPreview {
+    color: #858680;
+    background: #1D1E1C;
+    border: 1px solid #3A3B37;
+    border-radius: 8px;
+}
+
+QLabel#screenshotPreviewDetails {
+    color: #AAA9A3;
+}
+
+QLabel#screenshotBrowserEmptyState {
+    color: #858680;
+}
+
 QFrame#coloringPanel QLabel, QFrame#cameraPanel QLabel {
     color: #E5E2DC;
 }

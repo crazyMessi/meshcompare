@@ -414,6 +414,39 @@ private slots:
         QCOMPARE(controller.cameraPanelSnapshot().poses.size(), 1);
     }
 
+    void screenshotLibraryIncludesEveryLocalWorkspace()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(staged(
+            {entry(1, QStringLiteral("reference_gt.obj"), {UuidA}),
+             entry(2, QStringLiteral("candidate.obj"), {UuidB})}));
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        FakeCameraPoseStore store;
+        store.add(
+            UuidA,
+            QStringLiteral("view_A"),
+            pose(QStringLiteral("saved-A")),
+            QStringLiteral("2026-07-15T01:00:00Z"),
+            {QStringLiteral("hole")});
+        store.add(
+            UuidB,
+            QStringLiteral("view_B"),
+            pose(QStringLiteral("saved-B")),
+            QStringLiteral("2026-07-15T02:00:00Z"),
+            {QStringLiteral("hole")});
+        WorkspaceController controller(state, importer, renderer, comparer, store);
+        QVERIFY(importWorkspace(controller).result.ok);
+
+        const CameraScreenshotLibrarySnapshot library =
+            controller.cameraScreenshotLibrarySnapshot();
+
+        QVERIFY2(library.result.ok, qPrintable(library.result.error));
+        QCOMPARE(library.poses.size(), 2);
+        QCOMPARE(library.poses.at(0).viewId, QStringLiteral("view_A"));
+        QCOMPARE(library.poses.at(1).viewId, QStringLiteral("view_B"));
+    }
+
     void saveWithScreenshotCapturesTheViewportAndPersistsTheCurrentPose()
     {
         WorkspaceState state;

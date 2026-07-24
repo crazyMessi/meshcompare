@@ -63,6 +63,12 @@ public:
         return snapshot;
     }
 
+    CameraScreenshotLibrarySnapshot cameraScreenshotLibrarySnapshot() const override
+    {
+        ++screenshotLibraryCalls;
+        return screenshotLibrary;
+    }
+
     OperationResult setCameraPoseUid(const QString& uid) override
     {
         ++setUidCalls;
@@ -133,6 +139,7 @@ public:
     }
 
     CameraPanelSnapshot snapshot;
+    CameraScreenshotLibrarySnapshot screenshotLibrary;
     OperationResult saveResult = OperationResult::success();
     OperationResult saveWithScreenshotResult = OperationResult::success();
     OperationResult setUidResult = OperationResult::success();
@@ -145,6 +152,7 @@ public:
     std::function<void()> setTagsAction;
     std::function<void()> deleteAction;
     mutable int snapshotCalls = 0;
+    mutable int screenshotLibraryCalls = 0;
     int saveCalls = 0;
     int saveWithScreenshotCalls = 0;
     int setUidCalls = 0;
@@ -220,14 +228,18 @@ private slots:
         settings.remove(QStringLiteral("camera/lastCaptureTags"));
     }
 
-    void opensScreenshotBrowserForTheActiveWorkspace()
+    void opensScreenshotBrowserForAllLocalWorkspaces()
     {
         QTemporaryDir directory;
         QVERIFY(directory.isValid());
-        const QString screenshotPath = directory.filePath(QStringLiteral("view_001.png"));
+        const QString currentScreenshotPath =
+            directory.filePath(QStringLiteral("view_current.png"));
+        const QString otherScreenshotPath =
+            directory.filePath(QStringLiteral("view_other.png"));
         QImage screenshot(20, 12, QImage::Format_ARGB32_Premultiplied);
         screenshot.fill(Qt::green);
-        QVERIFY(screenshot.save(screenshotPath, "PNG"));
+        QVERIFY(screenshot.save(currentScreenshotPath, "PNG"));
+        QVERIFY(screenshot.save(otherScreenshotPath, "PNG"));
 
         WorkspaceState state;
         makeReady(state);
@@ -235,16 +247,24 @@ private slots:
         commands.snapshot.workspaceUuid = QStringLiteral(
             "123e4567-e89b-12d3-a456-426614174000");
         commands.snapshot.poses = {summary(
-            QStringLiteral("view_001"),
+            QStringLiteral("view_current"),
             QStringLiteral("2026-07-21T12:00:00Z"),
             {QStringLiteral("hole")},
-            screenshotPath)};
+            currentScreenshotPath)};
+        commands.screenshotLibrary.poses = {
+            commands.snapshot.poses.front(),
+            summary(
+                QStringLiteral("view_other"),
+                QStringLiteral("2026-07-21T13:00:00Z"),
+                {QStringLiteral("hole")},
+                otherScreenshotPath)};
         CameraPanel panel(state, commands);
         const Controls ui = controls(panel);
 
         QVERIFY(ui.browseScreenshots != nullptr);
         QTest::mouseClick(ui.browseScreenshots, Qt::LeftButton);
 
+        QCOMPARE(commands.screenshotLibraryCalls, 1);
         auto* browser = panel.findChild<QWidget*>(
             QStringLiteral("screenshotBrowser"));
         QVERIFY(browser != nullptr);
@@ -253,7 +273,7 @@ private slots:
         auto* gallery = browser->findChild<QListWidget*>(
             QStringLiteral("screenshotGallery"));
         QVERIFY(gallery != nullptr);
-        QCOMPARE(gallery->count(), 1);
+        QCOMPARE(gallery->count(), 2);
     }
 
     void selectedPoseCanOpenItsScreenshotFolder()
