@@ -151,6 +151,40 @@ private slots:
         QCOMPARE(command.cameraPoseViewId, QStringLiteral("view_003"));
     }
 
+    void renderGridAcceptsAnExplicitCameraPoseFile()
+    {
+        const StartupCommandLine command = parseStartupCommandLine(
+            {QStringLiteral("meshcompare"),
+             QStringLiteral("--render-grid"),
+             QStringLiteral("comparison.mlp"),
+             QStringLiteral("--output-dir"),
+             QStringLiteral("/tmp/rendered"),
+             QStringLiteral("--camera-pose"),
+             QStringLiteral("workspace-42:view_003"),
+             QStringLiteral("--camera-pose-file"),
+             QStringLiteral("/tmp/poses.json")});
+
+        QVERIFY(command.ok);
+        QCOMPARE(command.cameraPoseFilePath, QStringLiteral("/tmp/poses.json"));
+    }
+
+    void renderGridRequiresSavedPoseForAnExplicitCameraPoseFile()
+    {
+        const StartupCommandLine command = parseStartupCommandLine(
+            {QStringLiteral("meshcompare"),
+             QStringLiteral("--render-grid"),
+             QStringLiteral("comparison.mlp"),
+             QStringLiteral("--output-dir"),
+             QStringLiteral("/tmp/rendered"),
+             QStringLiteral("--camera-pose-file"),
+             QStringLiteral("/tmp/poses.json")});
+
+        QVERIFY(!command.ok);
+        QCOMPARE(
+            command.error,
+            QStringLiteral("--camera-pose-file requires --camera-pose."));
+    }
+
     void renderGridAcceptsDistanceColoring()
     {
         const StartupCommandLine command = parseStartupCommandLine(

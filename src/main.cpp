@@ -100,16 +100,24 @@ int main(int argc, char** argv)
             request.camera = startupCommand.camera;
             request.coloring = startupCommand.coloring;
             if (!startupCommand.cameraPoseUuid.isEmpty()) {
-                const CameraPosePaths cameraPaths = resolveCameraPosePaths(
-                    applicationDataRoot,
-                    QStandardPaths::writableLocation(
-                        QStandardPaths::GenericDataLocation));
+                CameraPosePaths cameraPaths;
+                if (startupCommand.cameraPoseFilePath.isEmpty()) {
+                    cameraPaths = resolveCameraPosePaths(
+                        applicationDataRoot,
+                        QStandardPaths::writableLocation(
+                            QStandardPaths::GenericDataLocation));
+                }
+                else {
+                    cameraPaths.storagePath = startupCommand.cameraPoseFilePath;
+                }
                 CameraPoseStore cameraStore(
                     cameraPaths.storagePath, cameraPaths.legacyPath);
-                const OperationResult migration = cameraStore.migrateLegacyIfNeeded();
-                if (!migration.ok) {
-                    qCritical().noquote() << migration.error;
-                    return EXIT_FAILURE;
+                if (startupCommand.cameraPoseFilePath.isEmpty()) {
+                    const OperationResult migration = cameraStore.migrateLegacyIfNeeded();
+                    if (!migration.ok) {
+                        qCritical().noquote() << migration.error;
+                        return EXIT_FAILURE;
+                    }
                 }
                 CameraPose savedPose;
                 const OperationResult loadedPose = cameraStore.load(

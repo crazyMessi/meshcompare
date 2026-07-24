@@ -88,6 +88,16 @@ build/dist/meshcompare.app/Contents/MacOS/meshcompare \
   --camera-pose workspace-uuid:view_001
 ```
 
+To use a pose library at an explicit JSON path instead of the app's default
+library, add `--camera-pose-file`:
+
+```bash
+build/dist/meshcompare.app/Contents/MacOS/meshcompare \
+  --render-grid comparison.mlp --output-dir ./renders --size 3840x2160 \
+  --camera-pose workspace-uuid:view_001 \
+  --camera-pose-file /path/to/meshlab_lizd_camera_poses.json
+```
+
 `--render-grid` accepts exactly one `.mlp` input and exits after the PNG is
 written. `--size` is optional, sets the final PNG pixel dimensions, and
 defaults to `2048x1152` (maximum: 16,384 pixels per side and 64 megapixels).

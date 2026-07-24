@@ -18,6 +18,7 @@ struct StartupCommandLine
     GridRenderCamera camera;
     QString cameraPoseUuid;
     QString cameraPoseViewId;
+    QString cameraPoseFilePath;
     GridRenderColoring coloring = GridRenderColoring::None;
     QString error;
 };

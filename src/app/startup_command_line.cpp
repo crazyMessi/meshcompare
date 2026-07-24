@@ -111,6 +111,7 @@ StartupCommandLine parseStartupCommandLine(const QStringList& arguments)
     bool customUpSpecified = false;
     bool customFieldOfViewSpecified = false;
     bool cameraPoseSpecified = false;
+    bool cameraPoseFileSpecified = false;
     bool invalidCameraCoordinates = false;
     bool invalidFieldOfView = false;
     bool invalidCameraPoseReference = false;
@@ -184,6 +185,12 @@ StartupCommandLine parseStartupCommandLine(const QStringList& arguments)
             }
             continue;
         }
+        if (!optionsEnded && argument == QStringLiteral("--camera-pose-file")) {
+            cameraPoseFileSpecified = true;
+            if (index + 1 < arguments.size())
+                command.cameraPoseFilePath = arguments.at(++index);
+            continue;
+        }
         if (!optionsEnded && argument == QStringLiteral("--coloring")) {
             if (index + 1 >= arguments.size() ||
                 !parseGridRenderColoring(arguments.at(++index), &command.coloring)) {
@@ -208,6 +215,7 @@ StartupCommandLine parseStartupCommandLine(const QStringList& arguments)
         command.camera = GridRenderCamera{};
         command.cameraPoseUuid.clear();
         command.cameraPoseViewId.clear();
+        command.cameraPoseFilePath.clear();
         command.coloring = GridRenderColoring::None;
         return command;
     }
@@ -236,6 +244,11 @@ StartupCommandLine parseStartupCommandLine(const QStringList& arguments)
     if (invalidCameraPoseReference) {
         command.ok = false;
         command.error = QStringLiteral("--camera-pose requires a UID:view_id value.");
+        return command;
+    }
+    if (cameraPoseFileSpecified && command.cameraPoseFilePath.isEmpty()) {
+        command.ok = false;
+        command.error = QStringLiteral("--camera-pose-file requires a file path.");
         return command;
     }
     if (invalidColoring) {
@@ -268,6 +281,11 @@ StartupCommandLine parseStartupCommandLine(const QStringList& arguments)
             "--camera-pose cannot be combined with --camera, --look-at, --up, or --fov.");
         return command;
     }
+    if (cameraPoseFileSpecified && !cameraPoseSpecified) {
+        command.ok = false;
+        command.error = QStringLiteral("--camera-pose-file requires --camera-pose.");
+        return command;
+    }
 
     if (command.renderComparisonGrid &&
         (command.inputPaths.size() != 1 ||
@@ -281,6 +299,7 @@ StartupCommandLine parseStartupCommandLine(const QStringList& arguments)
     else if (!command.renderComparisonGrid &&
              (!command.outputDirectory.isEmpty() || command.outputSize.isValid() ||
               hasCameraOptions || cameraPoseSpecified ||
+              cameraPoseFileSpecified ||
               command.coloring != GridRenderColoring::None)) {
         command.ok = false;
         command.error =
@@ -295,7 +314,7 @@ QString startupCommandLineUsage()
     return QStringLiteral(
         "Usage:\n"
         "  meshcompare [mesh ...]\n"
-        "  meshcompare --render-grid comparison.mlp --output-dir output [--size WIDTHxHEIGHT] [--coloring distance|double-layer] [--camera X,Y,Z --look-at X,Y,Z [--up X,Y,Z] [--fov DEGREES] | --camera-pose UID:view_id]\n"
+        "  meshcompare --render-grid comparison.mlp --output-dir output [--size WIDTHxHEIGHT] [--coloring distance|double-layer] [--camera X,Y,Z --look-at X,Y,Z [--up X,Y,Z] [--fov DEGREES] | --camera-pose UID:view_id [--camera-pose-file poses.json]]\n"
         "\n"
         "--render-grid  Render one MeshLab project to a PNG without opening a window.\n"
         "--output-dir   Directory that receives <project>.grid.png.\n"
@@ -305,6 +324,7 @@ QString startupCommandLineUsage()
         "--up           Camera up vector; defaults to 0,1,0.\n"
         "--fov          Perspective field of view in degrees; defaults to 60.\n"
         "--camera-pose  Reuse a saved camera pose, addressed as UID:view_id.\n"
+        "--camera-pose-file  Read saved camera poses from this JSON file instead of the default library.\n"
         "--coloring     Apply existing distance or double-layer analysis colors.\n"
         "--help         Show this help text.\n");
 }
