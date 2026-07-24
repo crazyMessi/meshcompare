@@ -73,8 +73,11 @@ bool canChangeLayerVisibility(
     const bool actionsEnabled =
         state.phase() == WorkspacePhase::Ready ||
         state.phase() == WorkspacePhase::Analyzing;
+    const bool gridVisibilityChangeEnabled =
+        state.layoutMode() != SceneLayoutMode::ComparisonGrid ||
+        state.phase() == WorkspacePhase::Ready;
     return actionsEnabled &&
-           state.layoutMode() == SceneLayoutMode::Overlay &&
+           gridVisibilityChangeEnabled &&
            (!mesh.visible || visibleCount > 1);
 }
 
@@ -235,18 +238,20 @@ void StandaloneMainWindow::refreshWorkspace()
     gridViewButton_->setChecked(
         state_.layoutMode() == SceneLayoutMode::ComparisonGrid);
     const int visibleCount = visibleMeshCount(state_);
-    const bool overlay = state_.layoutMode() == SceneLayoutMode::Overlay;
-    layersButton_->setEnabled(actionsEnabled && overlay);
+    const bool grid = state_.layoutMode() == SceneLayoutMode::ComparisonGrid;
+    const bool layersEnabled =
+        actionsEnabled && (!grid || viewSwitchingEnabled);
+    layersButton_->setEnabled(layersEnabled);
     layersButton_->setText(
-        overlay
+        !state_.meshes().isEmpty()
             ? tr("Layers %1/%2")
                   .arg(visibleCount)
                   .arg(state_.meshes().size())
             : tr("Layers"));
     layersButton_->setToolTip(
-        overlay
-            ? tr("Choose which mesh layers are visible in Overlay")
-            : tr("Layer visibility is available in Overlay view"));
+        grid
+            ? tr("Choose which mesh layers appear in Grid")
+            : tr("Choose which mesh layers are visible in Overlay"));
     meshCountLabel_->setText(tr("%1 meshes").arg(state_.meshes().size()));
     updateWorkspaceStatus();
     if (coloringPanel_ != nullptr)

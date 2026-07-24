@@ -90,23 +90,23 @@ depend only on each mesh, as well as uniform colors.
 
 ### 4.4 Comparison Viewports
 
-The viewport layout follows the customized `meshlab_lizd` comparison behavior
-without depending on its `MainWindow` or `MultiViewer_Container`. It begins with
-one leaf and adds each remaining viewport by selecting the largest current leaf,
+The viewport layout follows a hybrid strategy without depending on
+`meshlab_lizd`'s `MainWindow` or `MultiViewer_Container`. Counts that form a
+balanced complete grid (2, 4, 6, and 8) use equal-size cells with rows and
+columns transposed for portrait hosts. Odd counts (3, 5, and 7) begin with one
+leaf and add each remaining viewport by selecting the largest current leaf,
 then splitting that leaf 50/50 along its longest axis. Equal-area ties are
-resolved by choosing the topmost, then leftmost leaf. The initial splitter
-topology is calculated from the host geometry when a scene is created. This
-longest-side BSP layout fills the complete host for every mesh count from 2
-through 8, including odd counts; it never reserves an empty grid cell.
+resolved by choosing the topmost, then leftmost leaf. Both strategies fill the
+complete host and never reserve an empty grid cell.
 
-The splitter tree is private to the new `ViewportGrid`. Splitters are
-non-collapsible and use 2-pixel handles, matching the visual separation of the
-customized MeshLab comparison view. Viewports retain stable mesh identity, and
-the completed tree receives meshes in left-to-right, top-to-bottom order; the
-legacy split-insertion ordering is not reproduced. Handles remain draggable but
-cannot collapse a pane. Later window resizing preserves the committed topology
-and scales its panes; it does not rebuild viewport widgets, OpenGL contexts, or
-mesh resources. Creating a new scene uses the host's current aspect ratio to
+The odd-count splitter tree is private to the new `ViewportGrid`. Splitters are
+non-collapsible and use 2-pixel handles, matching the 2-pixel spacing in regular
+grids. Viewports retain stable mesh identity, and the completed tree receives
+meshes in left-to-right, top-to-bottom order; the legacy split-insertion
+ordering is not reproduced. Splitter handles remain draggable but cannot
+collapse a pane. Later window resizing preserves the committed topology and
+scales its panes; it does not rebuild viewport widgets, OpenGL contexts, or mesh
+resources. Creating a new scene uses the host's current aspect ratio to
 construct a fresh topology.
 
 Each viewport displays exactly one mesh. All viewports share a camera by default. Rotating, zooming, or panning in any viewport updates every other viewport. Clicking a viewport changes only the selected mesh; it does not unlink the cameras.
@@ -313,9 +313,10 @@ Translates product-level Renderer Adapter commands into MeshLab viewport engine 
 
 #### `ViewportGrid`
 
-Replaces `MultiViewer_Container`. It owns a renderer-private, longest-side BSP
-splitter tree for 2–8 viewports, the active viewport, and camera synchronization.
-It owns no menu or project state and does not link or call the legacy container.
+Replaces `MultiViewer_Container`. It owns a renderer-private complete grid or
+longest-side BSP splitter tree for 1–8 visible viewports, the active viewport,
+and camera synchronization. It owns no menu or project state and does not link
+or call the legacy container.
 
 #### `RenderSceneContext`
 
@@ -383,9 +384,9 @@ Workspace replacement and application shutdown follow a fixed order: stop and jo
 
 ## 9. Testing Strategy
 
-Per the implementation directive for the 2026-07-16 adaptive-layout revision,
-no new automated tests are required and the existing test suite is not run for
-this revision. Verification is limited to successfully building the application.
+Layout tests verify that complete grids remain regular, odd viewport counts
+fill the host without empty cells, and hidden layers do not create Grid
+viewports.
 
 ### 9.1 Unit Tests
 

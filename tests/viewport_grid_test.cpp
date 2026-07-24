@@ -358,6 +358,59 @@ private slots:
         QVERIFY(!factory.viewport(0).selected());
     }
 
+    void gridCreatesViewportsOnlyForVisibleMeshes()
+    {
+        QWidget host;
+        host.resize(1000, 600);
+        TestRenderScene renderScene;
+        GridFakeViewportFactory factory;
+        RecordingCallbacks callbacks;
+        ViewportGrid grid(factory, callbacks);
+        SceneDescriptor descriptor = scene(4);
+        descriptor.meshes[0].visible = false;
+        descriptor.meshes[2].visible = false;
+
+        const OperationResult result = grid.create(
+            &host,
+            descriptor,
+            renderScene.dependencies(),
+            descriptor.referenceId);
+
+        QVERIFY2(result.ok, qPrintable(result.error));
+        QCOMPARE(factory.creationCount(), 2);
+        QCOMPARE(factory.initializationCount(), 2);
+        QCOMPARE(grid.viewportCount(), 2);
+        QCOMPARE(grid.meshIdForViewport(1), descriptor.meshes[1].id);
+        QCOMPARE(grid.meshIdForViewport(2), descriptor.meshes[3].id);
+        QVERIFY(!factory.viewport(0).reference());
+        QVERIFY(!factory.viewport(1).reference());
+    }
+
+    void gridUsesOneViewportForTheLastVisibleMesh()
+    {
+        QWidget host;
+        host.resize(1000, 600);
+        TestRenderScene renderScene;
+        GridFakeViewportFactory factory;
+        RecordingCallbacks callbacks;
+        ViewportGrid grid(factory, callbacks);
+        SceneDescriptor descriptor = scene(4);
+        descriptor.meshes[0].visible = false;
+        descriptor.meshes[1].visible = false;
+        descriptor.meshes[2].visible = false;
+
+        const OperationResult result = grid.create(
+            &host,
+            descriptor,
+            renderScene.dependencies(),
+            descriptor.referenceId);
+
+        QVERIFY2(result.ok, qPrintable(result.error));
+        QCOMPARE(factory.creationCount(), 1);
+        QCOMPARE(grid.viewportCount(), 1);
+        QCOMPARE(grid.meshIdForViewport(1), descriptor.meshes[3].id);
+    }
+
     void overlayCreatesOneViewportBoundToEveryMeshInImportOrder()
     {
         QWidget host;
@@ -886,6 +939,94 @@ private slots:
         QVERIFY(first.x() < second.x() && second.x() < third.x());
         QVERIFY(fourth.x() < fifth.x() && fifth.x() < sixth.x());
         QVERIFY(first.y() < fourth.y());
+    }
+
+    void oddViewportCountsFillTheHostWithoutEmptyGridCells_data()
+    {
+        QTest::addColumn<int>("viewportCount");
+        QTest::newRow("three") << 3;
+        QTest::newRow("five") << 5;
+        QTest::newRow("seven") << 7;
+    }
+
+    void oddViewportCountsFillTheHostWithoutEmptyGridCells()
+    {
+        QFETCH(int, viewportCount);
+        QWidget host;
+        host.resize(1200, 900);
+        host.show();
+        TestRenderScene renderScene;
+        GridFakeViewportFactory factory;
+        RecordingCallbacks callbacks;
+        ViewportGrid grid(factory, callbacks);
+
+        QVERIFY(grid.create(
+                    &host,
+                    scene(viewportCount),
+                    renderScene.dependencies(),
+                    101)
+                    .ok);
+        grid.showCommitted();
+        QCoreApplication::processEvents();
+
+        qint64 occupiedArea = 0;
+        for (int index = 0; index < viewportCount; ++index) {
+            const QSize size = factory.viewport(index).widget()->size();
+            occupiedArea +=
+                static_cast<qint64>(size.width()) * size.height();
+        }
+        const qint64 hostArea =
+            static_cast<qint64>(host.width()) * host.height();
+        QVERIFY2(
+            occupiedArea * 100 >= hostArea * 95,
+            qPrintable(QStringLiteral(
+                "%1 viewports occupy only %2% of the host")
+                           .arg(viewportCount)
+                           .arg(100.0 * occupiedArea / hostArea, 0, 'f', 1)));
+    }
+
+    void regularViewportCountsUseEqualSizedCells_data()
+    {
+        QTest::addColumn<int>("viewportCount");
+        QTest::newRow("four") << 4;
+        QTest::newRow("six") << 6;
+        QTest::newRow("eight") << 8;
+    }
+
+    void regularViewportCountsUseEqualSizedCells()
+    {
+        QFETCH(int, viewportCount);
+        QWidget host;
+        host.resize(1200, 900);
+        host.show();
+        TestRenderScene renderScene;
+        GridFakeViewportFactory factory;
+        RecordingCallbacks callbacks;
+        ViewportGrid grid(factory, callbacks);
+
+        QVERIFY(grid.create(
+                    &host,
+                    scene(viewportCount),
+                    renderScene.dependencies(),
+                    101)
+                    .ok);
+        grid.showCommitted();
+        QCoreApplication::processEvents();
+
+        const QSize firstSize = factory.viewport(0).widget()->size();
+        qint64 occupiedArea = 0;
+        for (int index = 1; index < viewportCount; ++index) {
+            const QSize size = factory.viewport(index).widget()->size();
+            QVERIFY(qAbs(size.width() - firstSize.width()) <= 1);
+            QVERIFY(qAbs(size.height() - firstSize.height()) <= 1);
+            occupiedArea +=
+                static_cast<qint64>(size.width()) * size.height();
+        }
+        occupiedArea +=
+            static_cast<qint64>(firstSize.width()) * firstSize.height();
+        const qint64 hostArea =
+            static_cast<qint64>(host.width()) * host.height();
+        QVERIFY(occupiedArea * 100 >= hostArea * 95);
     }
 };
 

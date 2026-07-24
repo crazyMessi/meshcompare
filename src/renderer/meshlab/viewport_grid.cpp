@@ -1,5 +1,6 @@
 #include "viewport_grid.h"
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <utility>
@@ -8,16 +9,18 @@
 #include <QEvent>
 #include <QGridLayout>
 #include <QPainter>
+#include <QRectF>
 #include <QScopedValueRollback>
 #include <QSet>
 #include <QSize>
+#include <QSplitter>
 #include <QStringList>
 #include <QVBoxLayout>
 #include <QWidget>
 
 namespace
 {
-constexpr int gridSpacing = 2;
+constexpr int paneSpacing = 2;
 
 struct GridDimensions
 {
@@ -25,14 +28,180 @@ struct GridDimensions
     int rows = 1;
 };
 
-GridDimensions gridDimensionsFor(int viewportCount)
+bool canUseRegularGrid(int viewportCount)
 {
-    const int columns = qMax(
-        1,
-        static_cast<int>(std::ceil(std::sqrt(static_cast<double>(viewportCount)))));
-    return {columns, (viewportCount + columns - 1) / columns};
+    return viewportCount == 1 || viewportCount % 2 == 0;
 }
 
+GridDimensions regularGridDimensionsFor(
+    int viewportCount,
+    const QSize& hostSize)
+{
+    if (viewportCount == 1)
+        return {1, 1};
+
+    int columns = viewportCount == 2 ? 2 : viewportCount / 2;
+    int rows = viewportCount / columns;
+    if (hostSize.height() > hostSize.width())
+        std::swap(columns, rows);
+    return {columns, rows};
+}
+
+struct LayoutNode
+{
+    explicit LayoutNode(QRectF bounds) : bounds(std::move(bounds)) {}
+
+    bool isLeaf() const { return first == nullptr && second == nullptr; }
+
+    QRectF bounds;
+    Qt::Orientation orientation = Qt::Horizontal;
+    int viewportIndex = -1;
+    std::unique_ptr<LayoutNode> first;
+    std::unique_ptr<LayoutNode> second;
+};
+
+double area(const LayoutNode& node)
+{
+    return node.bounds.width() * node.bounds.height();
+}
+
+bool comesBefore(const LayoutNode& left, const LayoutNode& right)
+{
+    if (left.bounds.top() != right.bounds.top())
+        return left.bounds.top() < right.bounds.top();
+    return left.bounds.left() < right.bounds.left();
+}
+
+void split(LayoutNode& node)
+{
+    node.orientation = node.bounds.width() >= node.bounds.height()
+                           ? Qt::Horizontal
+                           : Qt::Vertical;
+    if (node.orientation == Qt::Horizontal) {
+        const qreal availableWidth =
+            std::max<qreal>(0.0, node.bounds.width() - paneSpacing);
+        const qreal firstWidth = std::floor(availableWidth / 2.0);
+        const qreal secondWidth = availableWidth - firstWidth;
+        node.first.reset(new LayoutNode(QRectF(
+            node.bounds.left(),
+            node.bounds.top(),
+            firstWidth,
+            node.bounds.height())));
+        node.second.reset(new LayoutNode(QRectF(
+            node.bounds.left() + firstWidth + paneSpacing,
+            node.bounds.top(),
+            secondWidth,
+            node.bounds.height())));
+        return;
+    }
+
+    const qreal availableHeight =
+        std::max<qreal>(0.0, node.bounds.height() - paneSpacing);
+    const qreal firstHeight = std::floor(availableHeight / 2.0);
+    const qreal secondHeight = availableHeight - firstHeight;
+    node.first.reset(new LayoutNode(QRectF(
+        node.bounds.left(),
+        node.bounds.top(),
+        node.bounds.width(),
+        firstHeight)));
+    node.second.reset(new LayoutNode(QRectF(
+        node.bounds.left(),
+        node.bounds.top() + firstHeight + paneSpacing,
+        node.bounds.width(),
+        secondHeight)));
+}
+
+std::unique_ptr<LayoutNode> createLayoutPlan(
+    int viewportCount,
+    const QSize& hostSize)
+{
+    const qreal width = hostSize.width() > 0 ? hostSize.width() : 1600.0;
+    const qreal height = hostSize.height() > 0 ? hostSize.height() : 900.0;
+    std::unique_ptr<LayoutNode> root(
+        new LayoutNode(QRectF(0.0, 0.0, width, height)));
+    std::vector<LayoutNode*> leaves{root.get()};
+
+    for (int index = 1; index < viewportCount; ++index) {
+        auto selected = leaves.begin();
+        for (auto candidate = leaves.begin() + 1; candidate != leaves.end(); ++candidate) {
+            const double candidateArea = area(**candidate);
+            const double selectedArea = area(**selected);
+            if (candidateArea > selectedArea ||
+                (candidateArea == selectedArea &&
+                 comesBefore(**candidate, **selected))) {
+                selected = candidate;
+            }
+        }
+
+        LayoutNode* leaf = *selected;
+        split(*leaf);
+        *selected = leaf->first.get();
+        leaves.push_back(leaf->second.get());
+    }
+
+    std::sort(
+        leaves.begin(),
+        leaves.end(),
+        [](const LayoutNode* left, const LayoutNode* right) {
+            return comesBefore(*left, *right);
+        });
+    for (int index = 0; index < static_cast<int>(leaves.size()); ++index)
+        leaves[static_cast<std::size_t>(index)]->viewportIndex = index;
+
+    return root;
+}
+
+void configureSplitter(QSplitter& splitter, Qt::Orientation orientation)
+{
+    splitter.setOrientation(orientation);
+    splitter.setChildrenCollapsible(false);
+    splitter.setHandleWidth(paneSpacing);
+    splitter.setOpaqueResize(true);
+}
+
+QWidget* buildLayoutBranch(
+    const LayoutNode& node,
+    std::vector<QWidget*>& viewportHosts);
+
+void populateSplitter(
+    QSplitter& splitter,
+    const LayoutNode& layout,
+    std::vector<QWidget*>& viewportHosts)
+{
+    configureSplitter(splitter, layout.orientation);
+    splitter.addWidget(buildLayoutBranch(*layout.first, viewportHosts));
+    splitter.addWidget(buildLayoutBranch(*layout.second, viewportHosts));
+    splitter.setStretchFactor(0, 1);
+    splitter.setStretchFactor(1, 1);
+}
+
+QWidget* buildLayoutBranch(
+    const LayoutNode& node,
+    std::vector<QWidget*>& viewportHosts)
+{
+    if (node.isLeaf()) {
+        auto* host = new QWidget;
+        host->setObjectName(
+            QStringLiteral("meshcompareViewportLeaf%1").arg(node.viewportIndex + 1));
+        viewportHosts[static_cast<std::size_t>(node.viewportIndex)] = host;
+        return host;
+    }
+
+    auto* splitter = new QSplitter;
+    populateSplitter(*splitter, node, viewportHosts);
+    return splitter;
+}
+
+void equalizeSplitterTree(QWidget* widget)
+{
+    auto* splitter = qobject_cast<QSplitter*>(widget);
+    if (splitter == nullptr)
+        return;
+
+    splitter->setSizes({1, 1});
+    for (int index = 0; index < splitter->count(); ++index)
+        equalizeSplitterTree(splitter->widget(index));
+}
 } // namespace
 
 ViewportGrid::ViewportGrid(
@@ -75,7 +244,21 @@ OperationResult ViewportGrid::create(
         meshVisibility_.insert(mesh.id, mesh.visible);
     }
 
-    const int viewportCount = overlayMode_ ? 1 : scene.meshes.size();
+    QVector<int> viewportSceneIndexes;
+    if (overlayMode_) {
+        viewportSceneIndexes.append(0);
+    }
+    else {
+        for (int index = 0; index < scene.meshes.size(); ++index) {
+            if (scene.meshes.at(index).visible)
+                viewportSceneIndexes.append(index);
+        }
+    }
+    if (viewportSceneIndexes.isEmpty()) {
+        return OperationResult::failure(
+            QStringLiteral("A viewport grid requires at least one visible mesh."));
+    }
+    const int viewportCount = viewportSceneIndexes.size();
     QVector<int> modelIds;
     modelIds.reserve(scene.meshes.size());
     for (const SceneMesh& sceneMesh : scene.meshes) {
@@ -90,38 +273,47 @@ OperationResult ViewportGrid::create(
     }
 
     host_ = host;
-    auto* gridContainer = new QWidget(host);
-    auto* gridLayout = new QGridLayout(gridContainer);
-    gridLayout->setContentsMargins(0, 0, 0, 0);
-    gridLayout->setSpacing(gridSpacing);
-    const GridDimensions dimensions = gridDimensionsFor(viewportCount);
-    for (int row = 0; row < dimensions.rows; ++row)
-        gridLayout->setRowStretch(row, 1);
-    for (int column = 0; column < dimensions.columns; ++column)
-        gridLayout->setColumnStretch(column, 1);
-
-    container_ = gridContainer;
+    std::vector<QWidget*> viewportHosts(
+        static_cast<std::size_t>(viewportCount), nullptr);
+    if (canUseRegularGrid(viewportCount)) {
+        auto* gridContainer = new QWidget(host);
+        auto* gridLayout = new QGridLayout(gridContainer);
+        gridLayout->setContentsMargins(0, 0, 0, 0);
+        gridLayout->setSpacing(paneSpacing);
+        const GridDimensions dimensions =
+            regularGridDimensionsFor(viewportCount, host->size());
+        for (int row = 0; row < dimensions.rows; ++row)
+            gridLayout->setRowStretch(row, 1);
+        for (int column = 0; column < dimensions.columns; ++column)
+            gridLayout->setColumnStretch(column, 1);
+        for (int index = 0; index < viewportCount; ++index) {
+            auto* viewportHost = new QWidget(gridContainer);
+            viewportHost->setObjectName(
+                QStringLiteral("meshcompareViewportLeaf%1").arg(index + 1));
+            viewportHosts[static_cast<std::size_t>(index)] = viewportHost;
+            gridLayout->addWidget(
+                viewportHost,
+                index / dimensions.columns,
+                index % dimensions.columns);
+        }
+        container_ = gridContainer;
+    }
+    else {
+        std::unique_ptr<LayoutNode> layoutPlan =
+            createLayoutPlan(viewportCount, host->size());
+        auto* rootSplitter = new QSplitter(host);
+        populateSplitter(*rootSplitter, *layoutPlan, viewportHosts);
+        container_ = rootSplitter;
+    }
     container_->setObjectName(QStringLiteral("meshcompareViewportGrid"));
     container_->hide();
     fillHost();
     host_->installEventFilter(this);
 
-    std::vector<QWidget*> viewportHosts(
-        static_cast<std::size_t>(viewportCount), nullptr);
     for (int index = 0; index < viewportCount; ++index) {
-        auto* viewportHost = new QWidget(gridContainer);
-        viewportHost->setObjectName(
-            QStringLiteral("meshcompareViewportLeaf%1").arg(index + 1));
-        viewportHosts[static_cast<std::size_t>(index)] = viewportHost;
-        gridLayout->addWidget(
-            viewportHost,
-            index / dimensions.columns,
-            index % dimensions.columns);
-    }
-
-    for (int index = 0; index < viewportCount; ++index) {
-        const SceneMesh& sceneMesh = scene.meshes.at(index);
-        const int meshModelId = modelIds.at(index);
+        const int sceneIndex = viewportSceneIndexes.at(index);
+        const SceneMesh& sceneMesh = scene.meshes.at(sceneIndex);
+        const int meshModelId = modelIds.at(sceneIndex);
         QVector<int> additionalMeshModelIds;
         QString viewportLabel = sceneMesh.label;
         bool selected = sceneMesh.id == selectedMeshId;
@@ -210,6 +402,8 @@ OperationResult ViewportGrid::create(
     refreshColorLegends();
     if (overlayMode_)
         refreshOverlayLabels();
+    if (!canUseRegularGrid(viewportCount))
+        equalizeSplitterTree(container_);
     return OperationResult::success();
 }
 

@@ -383,6 +383,58 @@ private slots:
         QVERIFY(!state.mesh(2)->visible);
     }
 
+    void gridVisibilityRebuildsTheSceneAndKeepsTheHiddenReference()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(staged({entry(1), entry(2), entry(3)}));
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        WorkspaceController controller(
+            state, importer, renderer, comparer, cameraStore_);
+        QVERIFY(controller.importMeshes({QStringLiteral("comparison.mlp")})
+                    .result.ok);
+        renderer.setCamera({QStringLiteral("<grid-camera-state/>")});
+        const int previousPrepareCount = renderer.prepareCount();
+        QSignalSpy changedSpy(
+            &controller, &WorkspaceController::workspaceChanged);
+
+        const OperationResult result = controller.setMeshVisible(1, false);
+
+        QVERIFY2(result.ok, qPrintable(result.error));
+        QCOMPARE(renderer.prepareCount(), previousPrepareCount + 1);
+        QCOMPARE(
+            renderer.lastPreparedScene().initialCamera.viewStateXml,
+            QStringLiteral("<grid-camera-state/>"));
+        QVERIFY(!renderer.lastPreparedScene().meshes.at(0).visible);
+        QVERIFY(renderer.lastPreparedScene().meshes.at(0).isReference);
+        QVERIFY(!state.mesh(1)->visible);
+        QCOMPARE(state.referenceId(), MeshId(1));
+        QCOMPARE(renderer.referenceMeshId(), MeshId(1));
+        QCOMPARE(renderer.visibilityUpdateCount(), 0);
+        QCOMPARE(changedSpy.size(), 1);
+    }
+
+    void failedGridVisibilityPreparationPreservesCurrentScene()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(staged({entry(1), entry(2)}));
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        WorkspaceController controller(
+            state, importer, renderer, comparer, cameraStore_);
+        QVERIFY(controller.importMeshes({QStringLiteral("comparison.mlp")})
+                    .result.ok);
+        renderer.failNextPrepare(QStringLiteral("grid visibility preparation failed"));
+
+        const OperationResult result = controller.setMeshVisible(2, false);
+
+        QVERIFY(!result.ok);
+        QCOMPARE(result.error, QStringLiteral("grid visibility preparation failed"));
+        QVERIFY(state.mesh(2)->visible);
+        QVERIFY(renderer.meshVisible(2));
+        QCOMPARE(renderer.committedGeneration(), state.generation());
+    }
+
     void visibilityFailureAndLastVisibleGuardPreserveState()
     {
         WorkspaceState state;

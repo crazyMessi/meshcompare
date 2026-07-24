@@ -362,10 +362,19 @@ OperationResult WorkspaceController::setMeshVisible(MeshId meshId, bool visible)
             QStringLiteral("Layer visibility is unavailable during a camera-pose command."));
     }
     if ((state_.phase() != WorkspacePhase::Ready &&
-         state_.phase() != WorkspacePhase::Analyzing) ||
-        state_.layoutMode() != SceneLayoutMode::Overlay) {
+         state_.phase() != WorkspacePhase::Analyzing)) {
         return OperationResult::failure(
-            QStringLiteral("Layer visibility is available in Overlay view."));
+            QStringLiteral("Layer visibility requires a ready workspace."));
+    }
+    const bool gridMode =
+        state_.layoutMode() == SceneLayoutMode::ComparisonGrid;
+    if (gridMode && state_.phase() != WorkspacePhase::Ready) {
+        return OperationResult::failure(
+            QStringLiteral("Grid layer visibility requires an idle ready workspace."));
+    }
+    if (gridMode && repository_ == nullptr) {
+        return OperationResult::failure(
+            QStringLiteral("Grid layer visibility requires a prepared mesh repository."));
     }
 
     const MeshEntry* target = state_.mesh(meshId);
@@ -385,10 +394,38 @@ OperationResult WorkspaceController::setMeshVisible(MeshId meshId, bool visible)
         }
     }
 
-    const OperationResult rendered =
-        renderer_.setMeshVisible(meshId, visible);
-    if (!rendered.ok)
-        return rendered;
+    if (gridMode) {
+        QVector<MeshEntry> updatedMeshes = state_.meshes();
+        for (MeshEntry& mesh : updatedMeshes) {
+            if (mesh.id == meshId) {
+                mesh.visible = visible;
+                break;
+            }
+        }
+
+        QScopedValueRollback<bool> replacementGuard(replacingWorkspace_, true);
+        const SceneDescriptor scene = makeSceneDescriptor(
+            state_.generation(),
+            updatedMeshes,
+            state_.referenceId(),
+            SceneLayoutMode::ComparisonGrid,
+            renderer_.captureCamera());
+        const OperationResult prepared = renderer_.prepareScene(scene, *repository_);
+        if (!prepared.ok) {
+            renderer_.discardPreparedScene();
+            return prepared;
+        }
+
+        disconnectRendererEvents();
+        renderer_.commitPreparedScene();
+        connectRendererEvents();
+    }
+    else {
+        const OperationResult rendered =
+            renderer_.setMeshVisible(meshId, visible);
+        if (!rendered.ok)
+            return rendered;
+    }
 
     const OperationResult changed = state_.setMeshVisible(meshId, visible);
     Q_ASSERT_X(
@@ -399,6 +436,10 @@ OperationResult WorkspaceController::setMeshVisible(MeshId meshId, bool visible)
         state_.enterFatalError();
         return OperationResult::failure(
             QStringLiteral("The rendered layer visibility could not be committed."));
+    }
+    if (gridMode) {
+        renderer_.setReferenceMesh(state_.referenceId());
+        renderer_.setSelectedMesh(state_.selectedMeshId());
     }
     publishWorkspaceChanged();
     return OperationResult::success();

@@ -318,7 +318,7 @@ private slots:
         QVERIFY(!gridButton->isEnabled());
     }
 
-    void overlayLayersMenuControlsIndividualVisibility()
+    void layersMenuControlsIndividualVisibilityInBothViews()
     {
         WorkspaceState state;
         state.beginLoading();
@@ -367,8 +367,15 @@ private slots:
 
         QVERIFY(state.setLayoutMode(SceneLayoutMode::ComparisonGrid).ok);
         window.refreshWorkspace();
-        QVERIFY(!layersButton->isEnabled());
-        QCOMPARE(layersButton->text(), QStringLiteral("Layers"));
+        QVERIFY(layersButton->isEnabled());
+        QCOMPARE(layersButton->text(), QStringLiteral("Layers 1/2"));
+        layersMenu->popup(QPoint(20, 20));
+        QApplication::processEvents();
+        layersMenu->hide();
+        first = window.findChild<QAction*>(
+            QStringLiteral("meshVisibilityAction_1"));
+        QVERIFY(first != nullptr);
+        QVERIFY(!first->isEnabled());
     }
 
     void layersControlDoesNotReserveViewportWidth()
