@@ -269,7 +269,10 @@ void CameraPoseStoreTest::missingLibraryIsAnEmptySuccess()
 {
 	QTemporaryDir dir;
 	QVERIFY(dir.isValid());
-	CameraPoseStore store(dir.filePath(QStringLiteral("missing/poses.json")), QString());
+	const QString libraryPath =
+		dir.filePath(QStringLiteral("missing/poses.json"));
+	CameraPoseStore store(libraryPath, QString());
+	QCOMPARE(store.libraryPath(), libraryPath);
 	OperationResult result = OperationResult::failure(QStringLiteral("stale"));
 	QVERIFY(store.list(UuidA, &result).isEmpty());
 	QVERIFY(result.ok);

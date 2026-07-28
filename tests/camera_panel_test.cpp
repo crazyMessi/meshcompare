@@ -63,6 +63,11 @@ public:
         return snapshot;
     }
 
+    QString cameraPoseLibraryPath() const override
+    {
+        return libraryPath;
+    }
+
     CameraScreenshotLibrarySnapshot cameraScreenshotLibrarySnapshot() const override
     {
         ++screenshotLibraryCalls;
@@ -140,6 +145,7 @@ public:
 
     CameraPanelSnapshot snapshot;
     CameraScreenshotLibrarySnapshot screenshotLibrary;
+    QString libraryPath;
     OperationResult saveResult = OperationResult::success();
     OperationResult saveWithScreenshotResult = OperationResult::success();
     OperationResult setUidResult = OperationResult::success();
@@ -176,6 +182,7 @@ struct Controls {
     TagEditor* selectedPoseTags = nullptr;
     QPushButton* updateTags = nullptr;
     QPushButton* browseScreenshots = nullptr;
+    QPushButton* openJsonFolder = nullptr;
     QPushButton* openScreenshotFolder = nullptr;
     QPushButton* remove = nullptr;
     QFrame* selectionSection = nullptr;
@@ -205,6 +212,8 @@ Controls controls(CameraPanel& panel)
         QStringLiteral("updateCameraPoseTagsButton"));
     result.browseScreenshots = panel.findChild<QPushButton*>(
         QStringLiteral("browseCameraScreenshotsButton"));
+    result.openJsonFolder = panel.findChild<QPushButton*>(
+        QStringLiteral("openCameraJsonFolderButton"));
     result.openScreenshotFolder = panel.findChild<QPushButton*>(
         QStringLiteral("openCameraScreenshotFolderButton"));
     result.remove = panel.findChild<QPushButton*>(
@@ -307,6 +316,36 @@ private slots:
         QCOMPARE(openedFolder, QStringLiteral("/tmp/camera-shots/inspection"));
     }
 
+    void cameraLibraryButtonOpensTheJsonParentFolder()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.libraryPath =
+            directory.filePath(QStringLiteral("camera/poses.json"));
+        QString openedFolder;
+        CameraPanelServices services;
+        services.openLocalFolder = [&openedFolder](const QString& path) {
+            openedFolder = path;
+            return true;
+        };
+        CameraPanel panel(state, commands, nullptr, std::move(services));
+        const Controls ui = controls(panel);
+
+        QVERIFY(ui.openJsonFolder != nullptr);
+        QCOMPARE(ui.openJsonFolder->text(), QStringLiteral("Open JSON Folder"));
+        QVERIFY(ui.openJsonFolder->isEnabled());
+
+        ui.openJsonFolder->click();
+
+        QCOMPARE(
+            openedFolder,
+            directory.filePath(QStringLiteral("camera")));
+    }
+
     void selectingAPoseDoesNotOverwriteTheNewPoseTagDraft()
     {
         WorkspaceState state;
@@ -403,6 +442,8 @@ private slots:
         WorkspaceState state;
         makeReady(state);
         RecordingCameraCommands commands;
+        commands.libraryPath =
+            QStringLiteral("/tmp/camera-poses/poses.json");
         commands.snapshot.workspaceUuid =
             QStringLiteral("123e4567-e89b-12d3-a456-426614174000");
         commands.snapshot.poses = {
@@ -443,11 +484,17 @@ private slots:
             ui.poses->item(0)->data(Qt::UserRole).toString(),
             QStringLiteral("view_001"));
         QVERIFY(ui.save != nullptr);
-        QCOMPARE(ui.save->text(), QStringLiteral("Save Screenshot"));
+        QCOMPARE(ui.save->text(), QStringLiteral("Save Pose"));
         QVERIFY(ui.saveAndCopyScreenshot != nullptr);
         QCOMPARE(
             ui.saveAndCopyScreenshot->text(),
-            QStringLiteral("Save & Copy"));
+            QStringLiteral("Save Pose & Copy"));
+        QCOMPARE(ui.save->width(), ui.saveAndCopyScreenshot->width());
+        QVERIFY(ui.openJsonFolder != nullptr);
+        QCOMPARE(
+            ui.openJsonFolder->text(),
+            QStringLiteral("Open JSON Folder"));
+        QVERIFY(ui.openJsonFolder->isEnabled());
         QVERIFY(ui.openScreenshotFolder != nullptr);
         QCOMPARE(
             ui.openScreenshotFolder->text(),

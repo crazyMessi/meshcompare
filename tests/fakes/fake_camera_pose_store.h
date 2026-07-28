@@ -13,6 +13,9 @@
 class FakeCameraPoseStore final : public ICameraPoseStore
 {
 public:
+    QString libraryPath() const override { return libraryPath_; }
+    void setLibraryPath(const QString& path) { libraryPath_ = path; }
+
     void add(
         const QString& uuid,
         const QString& viewId,
@@ -266,6 +269,7 @@ private:
     }
 
     QVector<SavedCameraPose> records_;
+    QString libraryPath_;
     mutable QString nextListError_;
     mutable QString nextLoadError_;
     QString nextSaveError_;

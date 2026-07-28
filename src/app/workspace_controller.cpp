@@ -671,6 +671,11 @@ CameraPanelSnapshot WorkspaceController::cameraPanelSnapshot() const
     return snapshot;
 }
 
+QString WorkspaceController::cameraPoseLibraryPath() const
+{
+    return cameraStore_.libraryPath();
+}
+
 CameraScreenshotLibrarySnapshot
 WorkspaceController::cameraScreenshotLibrarySnapshot() const
 {

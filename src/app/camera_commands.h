@@ -36,6 +36,7 @@ public:
     virtual ~ICameraCommands() = default;
 
     virtual CameraPanelSnapshot cameraPanelSnapshot() const = 0;
+    virtual QString cameraPoseLibraryPath() const { return {}; }
     virtual CameraScreenshotLibrarySnapshot cameraScreenshotLibrarySnapshot() const
     {
         const CameraPanelSnapshot currentWorkspace = cameraPanelSnapshot();

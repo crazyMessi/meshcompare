@@ -22,6 +22,7 @@ class ICameraPoseStore
 public:
 	virtual ~ICameraPoseStore() = default;
 
+	virtual QString libraryPath() const { return {}; }
 	// Creates the owned library from its legacy source when needed, then applies
 	// compatible library upgrades such as default pose tags.
 	virtual OperationResult migrateLegacyIfNeeded() = 0;
@@ -53,6 +54,7 @@ class CameraPoseStore final : public ICameraPoseStore
 public:
 	CameraPoseStore(QString storagePath, QString legacyPath);
 
+	QString libraryPath() const override;
 	OperationResult migrateLegacyIfNeeded() override;
 	OperationResult saveWithScreenshot(
 		const QString& uuid,

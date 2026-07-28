@@ -838,6 +838,11 @@ CameraPoseStore::CameraPoseStore(QString storagePath, QString legacyPath)
 {
 }
 
+QString CameraPoseStore::libraryPath() const
+{
+	return storagePath_;
+}
+
 OperationResult CameraPoseStore::migrateLegacyIfNeeded()
 {
 	if (storagePath_.isEmpty())

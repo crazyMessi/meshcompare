@@ -62,6 +62,7 @@ public:
         const QColor& color) override;
     OperationResult clearColoring() override;
     CameraPanelSnapshot cameraPanelSnapshot() const override;
+    QString cameraPoseLibraryPath() const override;
     CameraScreenshotLibrarySnapshot cameraScreenshotLibrarySnapshot() const override;
     OperationResult setCameraPoseUid(const QString& uid) override;
     OperationResult saveCurrentCameraPose(

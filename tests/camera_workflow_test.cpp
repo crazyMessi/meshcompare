@@ -423,6 +423,7 @@ private slots:
         FakeRendererAdapter renderer;
         FakeSurfaceComparer comparer;
         FakeCameraPoseStore store;
+        store.setLibraryPath(QStringLiteral("/tmp/all-camera-poses.json"));
         store.add(
             UuidA,
             QStringLiteral("view_A"),
@@ -442,6 +443,9 @@ private slots:
             controller.cameraScreenshotLibrarySnapshot();
 
         QVERIFY2(library.result.ok, qPrintable(library.result.error));
+        QCOMPARE(
+            controller.cameraPoseLibraryPath(),
+            QStringLiteral("/tmp/all-camera-poses.json"));
         QCOMPARE(library.poses.size(), 2);
         QCOMPARE(library.poses.at(0).viewId, QStringLiteral("view_A"));
         QCOMPARE(library.poses.at(1).viewId, QStringLiteral("view_B"));

@@ -114,6 +114,7 @@ CameraPanel::CameraPanel(
                 QVariant::fromValue(tags));
         };
     }
+    cameraPoseLibraryPath_ = commands_.cameraPoseLibraryPath();
 
     setObjectName(QStringLiteral("cameraPanel"));
     setWindowModality(Qt::NonModal);
@@ -176,19 +177,19 @@ CameraPanel::CameraPanel(
 
     auto* saveActions = new QHBoxLayout;
     saveActions->setSpacing(7);
-    saveButton_ = new QPushButton(tr("Save Screenshot"), captureSection);
+    saveButton_ = new QPushButton(tr("Save Pose"), captureSection);
     saveButton_->setObjectName(QStringLiteral("saveCameraPoseButton"));
     saveButton_->setToolTip(
         tr("Save the current pose with exactly one local screenshot"));
     saveActions->addWidget(saveButton_, 1);
 
     saveAndCopyScreenshotButton_ =
-        new QPushButton(tr("Save & Copy"), captureSection);
+        new QPushButton(tr("Save Pose & Copy"), captureSection);
     saveAndCopyScreenshotButton_->setObjectName(
         QStringLiteral("saveCameraPoseAndCopyScreenshotButton"));
     saveAndCopyScreenshotButton_->setToolTip(
         tr("Save the pose with one local screenshot and also copy it"));
-    saveActions->addWidget(saveAndCopyScreenshotButton_);
+    saveActions->addWidget(saveAndCopyScreenshotButton_, 1);
     captureLayout->addLayout(saveActions);
     root->addWidget(captureSection);
 
@@ -209,6 +210,13 @@ CameraPanel::CameraPanel(
     browseScreenshotsButton_->setToolTip(
         tr("Browse all locally saved screenshots by tag"));
     libraryHeader->addWidget(browseScreenshotsButton_);
+    openJsonFolderButton_ =
+        new QPushButton(tr("Open JSON Folder"), librarySection);
+    openJsonFolderButton_->setObjectName(
+        QStringLiteral("openCameraJsonFolderButton"));
+    openJsonFolderButton_->setToolTip(
+        tr("Open the folder containing the camera pose JSON library"));
+    libraryHeader->addWidget(openJsonFolderButton_);
     libraryLayout->addLayout(libraryHeader);
 
     poseList_ = new QListWidget(librarySection);
@@ -353,6 +361,11 @@ CameraPanel::CameraPanel(
         &QPushButton::clicked,
         this,
         &CameraPanel::openScreenshotBrowser);
+    connect(
+        openJsonFolderButton_,
+        &QPushButton::clicked,
+        this,
+        &CameraPanel::openCameraPoseLibraryFolder);
     connect(
         openScreenshotFolderButton_,
         &QPushButton::clicked,
@@ -646,6 +659,18 @@ void CameraPanel::openScreenshotBrowser()
     screenshotBrowser_->show();
 }
 
+void CameraPanel::openCameraPoseLibraryFolder()
+{
+    const QString folderPath =
+        QFileInfo(cameraPoseLibraryPath_).absolutePath();
+    if (cameraPoseLibraryPath_.isEmpty() ||
+        folderPath.isEmpty() ||
+        !services_.openLocalFolder(folderPath)) {
+        reportFailure(OperationResult::failure(
+            tr("The camera pose JSON folder could not be opened.")));
+    }
+}
+
 void CameraPanel::openSelectedScreenshotFolder()
 {
     const QListWidgetItem* item = poseList_->currentItem();
@@ -707,6 +732,7 @@ void CameraPanel::updateActionState()
         ready && inputMatchesSnapshot && hasSelection);
     updateTagsButton_->setEnabled(ready && inputMatchesSnapshot && hasSelection);
     browseScreenshotsButton_->setEnabled(snapshotAvailable_);
+    openJsonFolderButton_->setEnabled(!cameraPoseLibraryPath_.isEmpty());
     openScreenshotFolderButton_->setEnabled(
         ready && inputMatchesSnapshot && hasSelection && hasScreenshot);
     deleteButton_->setEnabled(ready && inputMatchesSnapshot && hasSelection);

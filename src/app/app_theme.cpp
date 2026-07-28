@@ -263,7 +263,8 @@ QLabel#cameraEmptyStateLabel {
     border-radius: 6px;
 }
 
-QPushButton#saveCameraPoseButton {
+QPushButton#saveCameraPoseButton,
+QPushButton#saveCameraPoseAndCopyScreenshotButton {
     min-height: 34px;
     color: #FFFFFF;
     background: #3C64D9;
@@ -271,22 +272,25 @@ QPushButton#saveCameraPoseButton {
     font-weight: 600;
 }
 
-QPushButton#saveCameraPoseButton:hover {
+QPushButton#saveCameraPoseButton:hover,
+QPushButton#saveCameraPoseAndCopyScreenshotButton:hover {
     background: #4B73EA;
 }
 
-QPushButton#saveCameraPoseButton:pressed {
+QPushButton#saveCameraPoseButton:pressed,
+QPushButton#saveCameraPoseAndCopyScreenshotButton:pressed {
     background: #3155C2;
 }
 
-QPushButton#saveCameraPoseButton:disabled {
+QPushButton#saveCameraPoseButton:disabled,
+QPushButton#saveCameraPoseAndCopyScreenshotButton:disabled {
     color: #8B8C87;
     background: #333430;
     border-color: #484944;
 }
 
-QPushButton#saveCameraPoseAndCopyScreenshotButton,
 QPushButton#browseCameraScreenshotsButton,
+QPushButton#openCameraJsonFolderButton,
 QPushButton#updateCameraPoseTagsButton,
 QPushButton#openCameraScreenshotFolderButton,
 QPushButton#applyCameraPoseButton {

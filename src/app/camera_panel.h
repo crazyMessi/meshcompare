@@ -62,6 +62,7 @@ private:
     void applySelectedPose();
     void updateSelectedPoseTags();
     void openScreenshotBrowser();
+    void openCameraPoseLibraryFolder();
     void openSelectedScreenshotFolder();
     void deleteSelectedPose();
     void updateActionState();
@@ -85,10 +86,12 @@ private:
     QPushButton* applyButton_ = nullptr;
     QPushButton* updateTagsButton_ = nullptr;
     QPushButton* browseScreenshotsButton_ = nullptr;
+    QPushButton* openJsonFolderButton_ = nullptr;
     QPushButton* openScreenshotFolderButton_ = nullptr;
     QPushButton* deleteButton_ = nullptr;
     ScreenshotBrowser* screenshotBrowser_ = nullptr;
     QString workspaceUuid_;
+    QString cameraPoseLibraryPath_;
     QString tagHistoryUuid_;
     QStringList knownTags_;
     QStringList lastUsedTags_;
