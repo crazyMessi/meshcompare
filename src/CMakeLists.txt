@@ -52,6 +52,8 @@ target_link_libraries(meshcompare-startup-command-line PUBLIC Qt5::Core)
 add_library(meshcompare-meshlab-infrastructure STATIC
 	services/mesh_import_service.cpp
 	services/mesh_import_service.h
+	infrastructure/meshlab/glb_mesh_loader.cpp
+	infrastructure/meshlab/glb_mesh_loader.h
 	infrastructure/meshlab/meshlab_mesh_repository.cpp
 	infrastructure/meshlab/meshlab_mesh_repository.h
 	infrastructure/meshlab/meshlab_mesh_loader.cpp

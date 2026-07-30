@@ -36,6 +36,18 @@
 			<key>LSHandlerRank</key>
 			<string>Default</string>
 		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>GL Transmission Format Binary</string>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>glb</string>
+			</array>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Default</string>
+		</dict>
 	</array>
 	<key>NSHighResolutionCapable</key>
 	<true/>

@@ -1,6 +1,7 @@
 #include "meshlab_mesh_loader.h"
 
 #include "core/camera_pose_uuid.h"
+#include "glb_mesh_loader.h"
 
 #include <cmath>
 #include <exception>
@@ -72,6 +73,8 @@ OperationResult loadMeshModels(
         return OperationResult::failure(QStringLiteral("File is not readable."));
 
     const QString suffix = info.suffix();
+    if (suffix.compare(QStringLiteral("glb"), Qt::CaseInsensitive) == 0)
+        return loadGlbMeshModels(path, destination, loadedModels);
     IOPlugin* plugin = meshlab::pluginManagerInstance().inputMeshPlugin(suffix);
     if (plugin == nullptr) {
         return OperationResult::failure(

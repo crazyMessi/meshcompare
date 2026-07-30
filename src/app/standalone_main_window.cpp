@@ -593,7 +593,7 @@ QWidget* StandaloneMainWindow::buildCommandBar(QWidget* parent)
             this,
             tr("Open Meshes or MeshLab Project"),
             {},
-            tr("MeshLab Project (*.mlp);;Mesh Files (*.obj *.ply *.stl *.off);;All Files (*)"));
+            tr("MeshLab Project (*.mlp);;Mesh Files (*.obj *.ply *.stl *.off *.glb);;All Files (*)"));
         requestImport(paths);
     });
     connect(

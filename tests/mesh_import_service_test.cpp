@@ -1,5 +1,7 @@
 #include <QtTest>
 
+#include <cstring>
+
 #include "fakes/fake_mesh_loader.h"
 #include "infrastructure/meshlab/meshlab_mesh_loader.h"
 
@@ -7,12 +9,88 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QTemporaryDir>
+#include <QtEndian>
 #include <common/ml_document/mesh_model.h>
 #include <common/globals.h>
 #include <common/plugins/plugin_manager.h>
 #include <vcg/complex/allocate.h>
 
 namespace {
+void appendUInt32(QByteArray* bytes, quint32 value)
+{
+    const quint32 littleEndian = qToLittleEndian(value);
+    bytes->append(
+        reinterpret_cast<const char*>(&littleEndian),
+        sizeof(littleEndian));
+}
+
+void appendUInt16(QByteArray* bytes, quint16 value)
+{
+    const quint16 littleEndian = qToLittleEndian(value);
+    bytes->append(
+        reinterpret_cast<const char*>(&littleEndian),
+        sizeof(littleEndian));
+}
+
+void appendFloat(QByteArray* bytes, float value)
+{
+    quint32 bits = 0;
+    static_assert(sizeof(bits) == sizeof(value), "float must be 32-bit");
+    std::memcpy(&bits, &value, sizeof(bits));
+    appendUInt32(bytes, bits);
+}
+
+bool writeTwoNodeGlb(const QString& path)
+{
+    QByteArray binary;
+    for (float value : {
+             0.0f, 0.0f, 0.0f,
+             1.0f, 0.0f, 0.0f,
+             0.0f, 1.0f, 0.0f})
+        appendFloat(&binary, value);
+    for (quint8 value : {
+             quint8(255), quint8(0), quint8(0), quint8(255),
+             quint8(0), quint8(255), quint8(0), quint8(128),
+             quint8(0), quint8(0), quint8(255), quint8(64)})
+        binary.append(char(value));
+    appendUInt16(&binary, 0);
+    appendUInt16(&binary, 1);
+    appendUInt16(&binary, 2);
+    while (binary.size() % 4 != 0)
+        binary.append('\0');
+
+    QByteArray json = QByteArrayLiteral(
+        R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0,1]}],)"
+        R"("nodes":[{"name":"Reference","mesh":0},{"name":"Candidate","mesh":0,"translation":[10,20,30],"scale":[-1,1,1]}],)"
+        R"("meshes":[{"primitives":[{"attributes":{"POSITION":0,"COLOR_0":1},"indices":2}]}],)"
+        R"("accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},)"
+        R"({"bufferView":1,"componentType":5121,"normalized":true,"count":3,"type":"VEC4"},)"
+        R"({"bufferView":2,"componentType":5123,"count":3,"type":"SCALAR"}],)"
+        R"("bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},)"
+        R"({"buffer":0,"byteOffset":36,"byteLength":12},)"
+        R"({"buffer":0,"byteOffset":48,"byteLength":6}],)"
+        R"("buffers":[{"byteLength":56}]})");
+    while (json.size() % 4 != 0)
+        json.append(' ');
+
+    QByteArray glb;
+    appendUInt32(&glb, 0x46546c67);
+    appendUInt32(&glb, 2);
+    appendUInt32(
+        &glb,
+        quint32(12 + 8 + json.size() + 8 + binary.size()));
+    appendUInt32(&glb, quint32(json.size()));
+    appendUInt32(&glb, 0x4e4f534a);
+    glb.append(json);
+    appendUInt32(&glb, quint32(binary.size()));
+    appendUInt32(&glb, 0x004e4942);
+    glb.append(binary);
+
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly) &&
+           file.write(glb) == glb.size();
+}
+
 bool loadIoBasePlugin()
 {
     PluginManager& plugins = meshlab::pluginManagerInstance();
@@ -161,6 +239,70 @@ private slots:
         QVERIFY2(staged.result.ok, qPrintable(staged.result.error));
         QCOMPARE(staged.entries.size(), 2);
         QVERIFY(staged.repository != nullptr);
+    }
+
+    void importsGlbSceneNodesWithWorldTransforms()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString path =
+            directory.filePath(QStringLiteral("comparison.GLB"));
+        QVERIFY(writeTwoNodeGlb(path));
+
+        MeshLabMeshLoader loader;
+        MeshImportService service(loader);
+        StagedWorkspace staged = service.stage({path});
+
+        QVERIFY2(staged.result.ok, qPrintable(staged.result.error));
+        QCOMPARE(staged.entries.size(), 2);
+        QCOMPARE(staged.entries.at(0).displayName, QStringLiteral("Reference"));
+        QCOMPARE(staged.entries.at(1).displayName, QStringLiteral("Candidate"));
+        const IMeshGeometryView* reference =
+            staged.repository->geometry(staged.entries.at(0).resourceId);
+        const IMeshGeometryView* candidate =
+            staged.repository->geometry(staged.entries.at(1).resourceId);
+        QVERIFY(reference != nullptr);
+        QVERIFY(candidate != nullptr);
+        QCOMPARE(reference->vertexPosition(0), (MeshPoint3D{{0.0, 0.0, 0.0}}));
+        QCOMPARE(candidate->vertexPosition(0), (MeshPoint3D{{10.0, 20.0, 30.0}}));
+        QCOMPARE(candidate->vertexPosition(1), (MeshPoint3D{{9.0, 20.0, 30.0}}));
+        QCOMPARE(candidate->faceVertexIndices(0), (std::array<int, 3>{{0, 2, 1}}));
+        QVERIFY(candidate->hasVertexColors());
+        QCOMPARE(candidate->vertexColor(0), QColor(255, 0, 0, 255));
+        QCOMPARE(candidate->vertexColor(1), QColor(0, 255, 0, 128));
+        QCOMPARE(candidate->vertexColor(2), QColor(0, 0, 255, 64));
+    }
+
+    void importsGlbLayersReferencedByMeshLabProject()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString glbPath =
+            directory.filePath(QStringLiteral("comparison.glb"));
+        QVERIFY(writeTwoNodeGlb(glbPath));
+
+        const QString projectPath =
+            directory.filePath(QStringLiteral("comparison.mlp"));
+        QFile project(projectPath);
+        QVERIFY(project.open(QIODevice::WriteOnly | QIODevice::Text));
+        const QByteArray projectXml = QByteArrayLiteral(
+            "<!DOCTYPE MeshLabDocument>\n"
+            "<MeshLabProject><MeshGroup>\n"
+            "  <MLMesh label=\"GLB Candidate\" filename=\"comparison.glb\" idInFile=\"1\" />\n"
+            "  <MLMesh label=\"GLB Reference\" filename=\"comparison.glb\" idInFile=\"0\" />\n"
+            "</MeshGroup></MeshLabProject>\n");
+        QCOMPARE(project.write(projectXml), projectXml.size());
+        project.close();
+
+        MeshLabMeshLoader loader;
+        MeshImportService service(loader);
+        StagedWorkspace staged = service.stage({projectPath});
+
+        QVERIFY2(staged.result.ok, qPrintable(staged.result.error));
+        QCOMPARE(staged.layoutMode, SceneLayoutMode::Overlay);
+        QCOMPARE(staged.entries.size(), 2);
+        QCOMPARE(staged.entries.at(0).displayName, QStringLiteral("GLB Candidate"));
+        QCOMPARE(staged.entries.at(1).displayName, QStringLiteral("GLB Reference"));
     }
 
     void importsPlyVertexColorsIntoGeometrySnapshot()

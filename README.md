@@ -55,8 +55,8 @@ ctest --test-dir build-tests -R '^meshcompare-' --output-on-failure
 ## Launch
 
 Open the application normally, or pass 2–8 meshes to enter comparison mode
-immediately. Ordinary mesh files are displayed in one linked viewport per
-mesh:
+immediately. Ordinary `.obj`, `.ply`, `.stl`, `.off`, and `.glb` mesh files
+are displayed in one linked viewport per mesh:
 
 ```bash
 open build/dist/meshcompare.app --args reference_gt.obj candidate.obj
@@ -110,11 +110,13 @@ existing Mesh Compare analysis before the grid PNG is captured, using the
 same default analysis parameters as the application.
 Run `meshcompare --help` for the full command-line usage.
 
-On macOS, `.mlp` is also registered as a document type, so a project can be
+On macOS, `.mlp` and `.glb` are registered as document types, so they can be
 opened from Finder. The in-app Open dialog and drag-and-drop accept the same
-project files. An MLP project cannot be mixed with ordinary mesh paths in one
-open request. Every listed mesh layer participates in comparison; saved
-MeshLab visibility flags are not used.
+files. An MLP project cannot be mixed with ordinary mesh paths in one open
+request. Every listed mesh layer participates in comparison; saved MeshLab
+visibility flags are not used. GLB 2.0 files must carry their geometry in the
+embedded binary chunk; Draco-compressed and sparse accessors are reported as
+unsupported.
 
 The first mesh whose name contains the approved `gt` token becomes the initial
 Reference. If no mesh matches, the first imported mesh is used and the status
