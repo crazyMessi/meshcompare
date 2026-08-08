@@ -35,4 +35,5 @@ struct ViewportDependencies
     bool reference = false;
     QVector<int> additionalMeshModelIds;
     ColorLegendSpec colorLegend;
+    bool normalizeMesh = false;
 };

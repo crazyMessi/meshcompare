@@ -50,6 +50,7 @@ public:
 
     WorkspaceImportOutcome importMeshes(const QStringList& paths);
     OperationResult setLayoutMode(SceneLayoutMode layoutMode);
+    OperationResult setGridNormalizationEnabled(bool enabled);
     OperationResult setMeshVisible(MeshId meshId, bool visible);
     OperationResult selectMesh(MeshId id) override;
     OperationResult setReference(MeshId id) override;

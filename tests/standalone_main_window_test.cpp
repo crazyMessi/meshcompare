@@ -259,6 +259,8 @@ private slots:
             window.findChild<QPushButton*>("overlayViewButton");
         auto* gridButton =
             window.findChild<QPushButton*>("gridViewButton");
+        auto* normalizeButton =
+            window.findChild<QPushButton*>("normalizeGridButton");
         auto* layersButton =
             window.findChild<QToolButton*>("layersButton");
 
@@ -266,11 +268,13 @@ private slots:
         QVERIFY(cameraButton);
         QVERIFY(overlayButton);
         QVERIFY(gridButton);
+        QVERIFY(normalizeButton);
         QVERIFY(layersButton);
         QVERIFY(!coloringButton->isEnabled());
         QVERIFY(!cameraButton->isEnabled());
         QVERIFY(!overlayButton->isEnabled());
         QVERIFY(!gridButton->isEnabled());
+        QVERIFY(!normalizeButton->isEnabled());
         QVERIFY(!layersButton->isEnabled());
     }
 
@@ -289,6 +293,8 @@ private slots:
             window.findChild<QPushButton*>("overlayViewButton");
         auto* gridButton =
             window.findChild<QPushButton*>("gridViewButton");
+        auto* normalizeButton =
+            window.findChild<QPushButton*>("normalizeGridButton");
         int requestCount = 0;
         SceneLayoutMode requestedMode = SceneLayoutMode::Overlay;
         connect(
@@ -299,11 +305,22 @@ private slots:
                 requestedMode = mode;
                 QVERIFY(state.setLayoutMode(mode).ok);
             });
+        connect(
+            &window,
+            &StandaloneMainWindow::gridNormalizationRequested,
+            [&](bool enabled) {
+                QVERIFY(state.setGridNormalizationEnabled(enabled).ok);
+            });
 
+        QVERIFY(overlayButton);
+        QVERIFY(gridButton);
+        QVERIFY(normalizeButton);
         QVERIFY(overlayButton->isEnabled());
         QVERIFY(gridButton->isEnabled());
         QVERIFY(overlayButton->isChecked());
         QVERIFY(!gridButton->isChecked());
+        QVERIFY(!normalizeButton->isEnabled());
+        QVERIFY(!normalizeButton->isChecked());
 
         gridButton->click();
 
@@ -311,11 +328,18 @@ private slots:
         QCOMPARE(requestedMode, SceneLayoutMode::ComparisonGrid);
         QVERIFY(!overlayButton->isChecked());
         QVERIFY(gridButton->isChecked());
+        QVERIFY(normalizeButton->isEnabled());
+
+        normalizeButton->click();
+
+        QVERIFY(state.gridNormalizationEnabled());
+        QVERIFY(normalizeButton->isChecked());
 
         QVERIFY(state.beginAnalysis().ok);
         window.refreshWorkspace();
         QVERIFY(!overlayButton->isEnabled());
         QVERIFY(!gridButton->isEnabled());
+        QVERIFY(!normalizeButton->isEnabled());
     }
 
     void layersMenuControlsIndividualVisibilityInBothViews()
@@ -607,6 +631,25 @@ private slots:
         QCOMPARE(meshCount->text(), QStringLiteral("2 meshes"));
         QVERIFY(coloringButton->isEnabled());
         QVERIFY(cameraButton->isEnabled());
+    }
+
+    void singleMeshUsesSingularImportAndCountText()
+    {
+        WorkspaceState state;
+        state.beginLoading();
+        QVERIFY(state.commitWorkspace({entry(1)}, 1).ok);
+        StandaloneMainWindow window(state);
+
+        window.presentImportOutcome({OperationResult::success(), {}, {}});
+
+        auto* meshCount =
+            window.findChild<QLabel*>(QStringLiteral("meshCountLabel"));
+        auto* status =
+            window.findChild<QLabel*>(QStringLiteral("statusLabel"));
+        QVERIFY(meshCount != nullptr);
+        QVERIFY(status != nullptr);
+        QCOMPARE(meshCount->text(), QStringLiteral("1 mesh"));
+        QCOMPARE(status->text(), QStringLiteral("Imported 1 mesh."));
     }
 
     void coloringPanelFloatsBelowTheButtonWithoutResizingTheViewportHost()

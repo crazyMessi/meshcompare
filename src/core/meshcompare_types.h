@@ -133,4 +133,5 @@ struct SceneDescriptor {
     MeshId referenceId = 0;
     SceneLayoutMode layoutMode = SceneLayoutMode::ComparisonGrid;
     CameraPose initialCamera;
+    bool normalizeGridMeshes = false;
 };

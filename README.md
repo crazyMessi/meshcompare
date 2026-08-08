@@ -1,28 +1,49 @@
-# Mesh Compare
+<div align="center">
+  <img src="resources/meshcompare-icon-1024.png" width="96" alt="Mesh Compare icon">
+  <h1>Mesh Compare</h1>
+  <p>A focused macOS workspace for visual and quantitative mesh comparison.</p>
+</div>
 
-Mesh Compare is the standalone, single-workspace mesh comparison application.
-It keeps the MeshLab-style viewport engine behind a Renderer Adapter while
-owning its window, workflow, diagnostics, application data, build, and macOS
-bundle.
+![Normalized comparison grid](docs/images/grid-normalized.png)
 
-## Dependencies
+## Highlights
 
-The customized MeshLab/VCGLib viewport engine and its GLEW, EasyExif, and
-Eigen sources are vendored in this repository:
+- Open **1–8 meshes** or a multi-layer MeshLab project.
+- Compare meshes in a **linked camera grid** or a single **overlay view**.
+- **Normalize** every Grid mesh independently for easier shape comparison.
+- Run **Distance to Reference** and **Double Layer** analyses with color overlays.
+- Choose the Reference mesh, assign uniform colors, and control layer visibility.
+- Save reusable camera poses with tags and screenshots.
+- Render comparison grids from the command line.
 
-```text
-meshcompare/
-├── src/
-└── third_party/meshlab/
+## Views
+
+| Linked Grid | Overlay |
+|:--:|:--:|
+| ![Linked grid view](docs/images/grid-view.png) | ![Overlay view](docs/images/overlay-view.png) |
+| Inspect each mesh in its own synchronized viewport. | Inspect all visible layers in one viewport. |
+
+## Quick Start
+
+Open files from Finder, drag them into the window, or use **Open** in the
+toolbar. Supported mesh formats are `.obj`, `.ply`, `.stl`, `.off`, and
+embedded `.glb`.
+
+```bash
+# Open one or more meshes
+open build/dist/meshcompare.app --args reference_gt.obj candidate.obj
+
+# Open one MeshLab project
+open build/dist/meshcompare.app --args comparison.mlp
 ```
 
-Configuration and compilation do not download source code or read a sibling
-repository. The remaining build prerequisites are CMake 3.18 or newer, a C/C++
-toolchain, Qt 5.15, and the platform OpenGL SDK. On macOS, packaging also uses
-the `macdeployqt` installed alongside that Qt and the standard Xcode command
-line tools.
+The first mesh whose name contains `gt` becomes the initial Reference. If no
+mesh matches, Mesh Compare uses the first imported mesh.
 
 ## Build
+
+Requirements: CMake 3.18+, Qt 5.15, a C++ toolchain, and the platform OpenGL
+SDK. MeshLab/VCGLib sources are vendored in `third_party/`.
 
 ```bash
 cmake -S . -B build \
@@ -31,136 +52,42 @@ cmake -S . -B build \
 cmake --build build --target meshcompare --parallel
 ```
 
-`CMAKE_PREFIX_PATH` can be omitted when Qt 5.15 is already discoverable.
-
-The macOS application is written to:
+The macOS bundle is written to:
 
 ```text
 build/dist/meshcompare.app
 ```
 
-The build imports only `meshlab-common`, `io_base`, VCGLib, and the viewport
-sources it needs. It does not build or package MeshLab's MainWindow, filters,
-edit tools, render plugins, or decorators. On macOS, Qt frameworks and the
-platform plugin are deployed into the signed bundle.
-
-Tests remain available as an opt-in build:
+Run the test suite with:
 
 ```bash
-cmake -S . -B build-tests -DBUILD_TESTING=ON
-cmake --build build-tests --parallel
-ctest --test-dir build-tests -R '^meshcompare-' --output-on-failure
+cmake -S . -B build -DBUILD_TESTING=ON
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
 ```
 
-## Launch
+## Batch Rendering
 
-Open the application normally, or pass 2–8 meshes to enter comparison mode
-immediately. Ordinary `.obj`, `.ply`, `.stl`, `.off`, and `.glb` mesh files
-are displayed in one linked viewport per mesh:
-
-```bash
-open build/dist/meshcompare.app --args reference_gt.obj candidate.obj
-```
-
-Open one MeshLab project containing 2–8 mesh layers by itself to load its
-layers, names, order, and transforms into a single overlapping viewport:
-
-```bash
-open build/dist/meshcompare.app --args comparison.mlp
-```
-
-Use the batch CLI to render that same project as a linked comparison grid
-without opening the application window. It writes `<project>.grid.png` into
-the requested output directory:
+Render an `.mlp` project to a PNG without opening the application window:
 
 ```bash
 build/dist/meshcompare.app/Contents/MacOS/meshcompare \
-  --render-grid comparison.mlp --output-dir ./renders --size 3840x2160 \
-  --coloring distance --camera 2,2,2 --look-at 0,0,0 --up 0,0,1 --fov 45
+  --render-grid comparison.mlp \
+  --output-dir ./renders \
+  --size 2048x1152 \
+  --coloring distance
 ```
 
-To reuse a pose saved from the application's Camera panel, pass its workspace
-UID and saved view ID instead of explicit camera coordinates:
+Use `meshcompare --help` for camera, saved-pose, coloring, and output options.
 
-```bash
-build/dist/meshcompare.app/Contents/MacOS/meshcompare \
-  --render-grid comparison.mlp --output-dir ./renders --size 3840x2160 \
-  --camera-pose workspace-uuid:view_001
-```
+## Architecture
 
-To use a pose library at an explicit JSON path instead of the app's default
-library, add `--camera-pose-file`:
+Mesh Compare owns its workspace, UI, analysis, camera library, and diagnostics.
+The vendored MeshLab viewport engine is isolated behind a renderer adapter; the
+legacy MeshLab window, docks, filters, and editing tools are not packaged.
 
-```bash
-build/dist/meshcompare.app/Contents/MacOS/meshcompare \
-  --render-grid comparison.mlp --output-dir ./renders --size 3840x2160 \
-  --camera-pose workspace-uuid:view_001 \
-  --camera-pose-file /path/to/meshlab_lizd_camera_poses.json
-```
+See [docs/architecture.md](docs/architecture.md) for implementation details.
 
-`--render-grid` accepts exactly one `.mlp` input and exits after the PNG is
-written. `--size` is optional, sets the final PNG pixel dimensions, and
-defaults to `2048x1152` (maximum: 16,384 pixels per side and 64 megapixels).
-`--camera` and `--look-at` optionally set a shared world-space view for every
-grid cell; `--up` defaults to `0,1,0`, and `--fov` defaults to 60 degrees.
-`--camera-pose` restores the complete saved MeshLab view and cannot be combined
-with the explicit camera options.
-`--coloring distance` and `--coloring double-layer` run the corresponding
-existing Mesh Compare analysis before the grid PNG is captured, using the
-same default analysis parameters as the application.
-Run `meshcompare --help` for the full command-line usage.
+## License
 
-On macOS, `.mlp` and `.glb` are registered as document types, so they can be
-opened from Finder. The in-app Open dialog and drag-and-drop accept the same
-files. An MLP project cannot be mixed with ordinary mesh paths in one open
-request. Every listed mesh layer participates in comparison; saved MeshLab
-visibility flags are not used. GLB 2.0 files must carry their geometry in the
-embedded binary chunk; Draco-compressed and sparse accessors are reported as
-unsupported.
-
-The first mesh whose name contains the approved `gt` token becomes the initial
-Reference. If no mesh matches, the first imported mesh is used and the status
-area explains the fallback.
-
-## Application data
-
-On macOS, Mesh Compare uses its own application-data directory:
-
-```text
-~/Library/Application Support/VCG/MeshCompare/
-```
-
-The camera pose library is:
-
-```text
-~/Library/Application Support/VCG/MeshCompare/meshlab_lizd_camera_poses.json
-```
-
-Every newly saved camera pose has exactly one PNG screenshot. Screenshots are
-stored beneath `camera_pose_screenshots/`, first by workspace UID and then by
-the pose's tag combination (`untagged` when no tags are assigned). The pose
-record keeps the unique screenshot path, so updating tags moves the image and
-deleting a pose deletes its image. Select a pose and use **Open Screenshot
-Folder** in the Camera panel to open its containing folder.
-
-On first launch, when this file does not yet exist, Mesh Compare copies an
-existing legacy library from the customized MeshLab data directory. It prefers
-an existing `MeshLab_64bit_fp` library and otherwise uses `MeshLab_64bit_dp`.
-Migration copies once; it never renames, deletes, or rewrites the legacy file.
-
-## Diagnostics
-
-The upper-right diagnostics menu contains only Reset Camera, Orthographic,
-Wireframe Overlay, Show Normals, Copy Diagnostics, Open Local Log, and About.
-Copied diagnostics include renderer and OpenGL information but never mesh
-source paths.
-
-The local JSONL log is stored at:
-
-```text
-~/Library/Application Support/VCG/MeshCompare/meshcompare-diagnostics.jsonl
-```
-
-It rotates before exceeding 2 MiB and retains one previous file named
-`meshcompare-diagnostics.previous.jsonl`. Logged mesh names containing `/` or
-`\` are replaced with `path_like_name_omitted`.
+See [LICENSE.txt](LICENSE.txt).

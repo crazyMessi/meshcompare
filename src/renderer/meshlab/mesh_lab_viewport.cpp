@@ -23,6 +23,7 @@
 #include <common/ml_document/mesh_document.h>
 #include <common/ml_shared_data_context/ml_scene_gl_shared_data_context.h>
 #include <common/mlexception.h>
+#include <wrap/gl/deprecated_math.h>
 #include <wrap/gl/picking.h>
 #include <wrap/qt/device_to_logical.h>
 #include <wrap/qt/shot_qt.h>
@@ -44,6 +45,26 @@ QString openGlString(GLenum name)
     return value == nullptr
                ? QString()
                : QString::fromLatin1(reinterpret_cast<const char*>(value));
+}
+
+bool hasFiniteCoordinates(const Point3m& point)
+{
+    return std::isfinite(static_cast<double>(point[0])) &&
+           std::isfinite(static_cast<double>(point[1])) &&
+           std::isfinite(static_cast<double>(point[2]));
+}
+
+bool hasFiniteEntries(const Matrix44m& matrix)
+{
+    for (int row = 0; row < 4; ++row) {
+        for (int column = 0; column < 4; ++column) {
+            if (!std::isfinite(
+                    static_cast<double>(matrix[row][column]))) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 bool splitLegacyCameraValues(
@@ -408,6 +429,7 @@ MeshLabViewport::MeshLabViewport(QWidget* parent, ViewportDependencies dependenc
       selected_(dependencies.selected),
       scoreLabel_(dependencies.scoreLabel),
       reference_(dependencies.reference),
+      normalizeMesh_(dependencies.normalizeMesh),
       colorLegend_(dependencies.colorLegend)
 {
     meshModelIds_ += dependencies.additionalMeshModelIds;
@@ -775,11 +797,65 @@ void MeshLabViewport::drawAssignedMesh()
         else
             glDisable(GL_CULL_FACE);
 
-        sharedContext_.setMeshTransformationMatrix(meshModelId, mesh->cm.Tr);
+        const Matrix44m transform = meshRenderTransform(*mesh);
+        sharedContext_.setMeshTransformationMatrix(meshModelId, transform);
         sharedContext_.draw(meshModelId, context());
         if (normalsDiagnostic_)
-            drawNormals(*mesh);
+            drawNormals(*mesh, transform);
     }
+}
+
+Matrix44m MeshLabViewport::meshRenderTransform(const MeshModel& mesh) const
+{
+    if (!normalizeMesh_)
+        return mesh.cm.Tr;
+
+    const Box3m sceneBounds = document_.bbox();
+    Box3m meshBounds;
+    meshBounds.Add(mesh.cm.Tr, mesh.cm.bbox);
+    const Scalarm sceneDiagonal = sceneBounds.Diag();
+    const Scalarm meshDiagonal = meshBounds.Diag();
+    if (sceneBounds.IsNull() || meshBounds.IsNull() ||
+        !std::isfinite(static_cast<double>(sceneDiagonal)) ||
+        !std::isfinite(static_cast<double>(meshDiagonal)) ||
+        sceneDiagonal <= 0 || meshDiagonal <= 0 ||
+        !hasFiniteCoordinates(sceneBounds.Center()) ||
+        !hasFiniteCoordinates(meshBounds.Center())) {
+        return mesh.cm.Tr;
+    }
+
+    const double scaleValue =
+        static_cast<double>(sceneDiagonal) /
+        static_cast<double>(meshDiagonal);
+    if (!std::isfinite(scaleValue) || scaleValue <= 0.0 ||
+        scaleValue > static_cast<double>(
+                         std::numeric_limits<Scalarm>::max())) {
+        return mesh.cm.Tr;
+    }
+
+    const Point3m meshCenter = meshBounds.Center();
+    Matrix44m toOrigin;
+    toOrigin.SetTranslate(
+        Point3m(-meshCenter[0], -meshCenter[1], -meshCenter[2]));
+    Matrix44m scale;
+    const Scalarm scalarScale = static_cast<Scalarm>(scaleValue);
+    scale.SetScale(scalarScale, scalarScale, scalarScale);
+    Matrix44m toSceneCenter;
+    toSceneCenter.SetTranslate(sceneBounds.Center());
+    const Matrix44m normalized =
+        toSceneCenter * scale * toOrigin * mesh.cm.Tr;
+    return hasFiniteEntries(normalized) ? normalized : mesh.cm.Tr;
+}
+
+Matrix44m MeshLabViewport::meshRenderTransformForTest(
+    int meshModelId) const
+{
+    const MeshModel* mesh = document_.getMesh(meshModelId);
+    if (mesh != nullptr)
+        return meshRenderTransform(*mesh);
+    Matrix44m identity;
+    identity.SetIdentity();
+    return identity;
 }
 
 void MeshLabViewport::setLabel(QString label)
@@ -799,13 +875,17 @@ void MeshLabViewport::setMeshVisible(int meshModelId, bool visible)
     update();
 }
 
-void MeshLabViewport::drawNormals(const MeshModel& mesh)
+void MeshLabViewport::drawNormals(
+    const MeshModel& mesh,
+    const Matrix44m& transform)
 {
     const Scalarm diagonal = mesh.cm.bbox.Diag();
     if (!std::isfinite(static_cast<double>(diagonal)) || diagonal <= 0)
         return;
 
     const Scalarm length = diagonal * Scalarm(0.025);
+    glPushMatrix();
+    vcg::glMultMatrix(transform);
     glPushAttrib(GL_ENABLE_BIT | GL_CURRENT_BIT | GL_LINE_BIT);
     glDisable(GL_LIGHTING);
     glDisable(GL_TEXTURE_2D);
@@ -832,6 +912,7 @@ void MeshLabViewport::drawNormals(const MeshModel& mesh)
     }
     glEnd();
     glPopAttrib();
+    glPopMatrix();
 }
 
 void MeshLabViewport::registerAssignedMesh()

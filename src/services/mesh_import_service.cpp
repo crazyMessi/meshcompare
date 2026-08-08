@@ -60,8 +60,8 @@ StagedWorkspace MeshImportService::stage(const QStringList& paths)
                 nullptr,
                 {},
                 errors};
-    if (entries.size() < 2 || entries.size() > 8)
-        return {OperationResult::failure(QStringLiteral("Import must produce between 2 and 8 mesh layers.")),
+    if (entries.isEmpty() || entries.size() > 8)
+        return {OperationResult::failure(QStringLiteral("Import must produce between 1 and 8 mesh layers.")),
                 nullptr,
                 {},
                 {}};

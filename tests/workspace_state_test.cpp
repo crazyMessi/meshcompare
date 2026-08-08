@@ -156,14 +156,23 @@ private slots:
                  QStringList({QStringLiteral("uuid-a"), QStringLiteral("uuid-b")}));
     }
 
-    void commitRejectsTooFewOrTooManyMeshes()
+    void commitAcceptsOneMeshAndRejectsEmptyOrTooMany()
     {
+        WorkspaceState singleState;
+        singleState.beginLoading();
+        const OperationResult single =
+            singleState.commitWorkspace({makeEntry(1)}, 1);
+        QVERIFY2(single.ok, qPrintable(single.error));
+        QCOMPARE(singleState.meshes().size(), 1);
+        QCOMPARE(singleState.referenceId(), MeshId(1));
+        QCOMPARE(singleState.selectedMeshId(), MeshId(1));
+
         WorkspaceState state;
         state.beginLoading();
 
-        const OperationResult tooFew = state.commitWorkspace({makeEntry(1)}, 1);
-        QVERIFY(!tooFew.ok);
-        QVERIFY(!tooFew.error.isEmpty());
+        const OperationResult empty = state.commitWorkspace({}, 1);
+        QVERIFY(!empty.ok);
+        QVERIFY(!empty.error.isEmpty());
         QCOMPARE(state.generation(), quint64(0));
         QCOMPARE(state.meshes().size(), 0);
 
@@ -175,6 +184,22 @@ private slots:
         QVERIFY(!tooManyResult.error.isEmpty());
         QCOMPARE(state.generation(), quint64(0));
         QCOMPARE(state.meshes().size(), 0);
+    }
+
+    void gridNormalizationRequiresAReadyWorkspaceAndResetsOnImport()
+    {
+        WorkspaceState state;
+        QVERIFY(!state.setGridNormalizationEnabled(true).ok);
+
+        state.beginLoading();
+        QVERIFY(state.commitWorkspace({makeEntry(1)}, 1).ok);
+        QVERIFY(!state.gridNormalizationEnabled());
+        QVERIFY(state.setGridNormalizationEnabled(true).ok);
+        QVERIFY(state.gridNormalizationEnabled());
+
+        state.beginLoading();
+        QVERIFY(state.commitWorkspace({makeEntry(2)}, 2).ok);
+        QVERIFY(!state.gridNormalizationEnabled());
     }
 
     void commitRejectsDuplicateMeshIdsWithoutChangingWorkspace()

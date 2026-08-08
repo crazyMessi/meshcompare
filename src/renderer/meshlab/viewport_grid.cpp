@@ -225,9 +225,9 @@ OperationResult ViewportGrid::create(
     clear();
     if (host == nullptr)
         return OperationResult::failure(QStringLiteral("A viewport host is required."));
-    if (scene.meshes.size() < 2 || scene.meshes.size() > 8) {
+    if (scene.meshes.isEmpty() || scene.meshes.size() > 8) {
         return OperationResult::failure(
-            QStringLiteral("A viewport layout requires between 2 and 8 meshes."));
+            QStringLiteral("A viewport layout requires between 1 and 8 meshes."));
     }
     if (!dependencies.meshModelIdFor) {
         return OperationResult::failure(
@@ -344,7 +344,8 @@ OperationResult ViewportGrid::create(
             additionalMeshModelIds,
             overlayMode_
                 ? overlayColorLegend()
-                : sceneMesh.presentation.colorLegend};
+                : sceneMesh.presentation.colorLegend,
+            scene.normalizeGridMeshes && !overlayMode_};
         std::unique_ptr<IViewport> viewport;
         QWidget* viewportHost = viewportHosts[static_cast<std::size_t>(index)];
         auto* viewportLayout = new QVBoxLayout(viewportHost);

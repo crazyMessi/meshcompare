@@ -46,6 +46,7 @@ public:
     RendererDiagnostics rendererDiagnostics() const;
     const QString& scoreLabelForTest() const { return scoreLabel_; }
     int assignedMeshCountForTest() const { return meshModelIds_.size(); }
+    Matrix44m meshRenderTransformForTest(int meshModelId) const;
 
 protected:
     void initializeGL() override;
@@ -63,7 +64,8 @@ private:
     void drawGradient();
     void drawLight();
     void drawAssignedMesh();
-    void drawNormals(const MeshModel& mesh);
+    void drawNormals(const MeshModel& mesh, const Matrix44m& transform);
+    Matrix44m meshRenderTransform(const MeshModel& mesh) const;
     void registerAssignedMesh();
     void applyWireframeDiagnostic();
     void drawViewportOverlay(QPainter& painter) const;
@@ -96,6 +98,7 @@ private:
     bool selected_;
     QString scoreLabel_;
     bool reference_ = false;
+    bool normalizeMesh_ = false;
     ColorLegendSpec colorLegend_;
     bool cameraOrthographic_ = false;
     bool orthographicDiagnostic_ = false;

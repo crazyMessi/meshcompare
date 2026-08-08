@@ -249,6 +249,18 @@ int main(int argc, char** argv)
             });
         QObject::connect(
             &window,
+            &StandaloneMainWindow::gridNormalizationRequested,
+            &window,
+            [&controller, &window](bool enabled) {
+                const OperationResult result =
+                    controller.setGridNormalizationEnabled(enabled);
+                if (!result.ok) {
+                    window.showStatusMessage(result.error);
+                    window.refreshWorkspace();
+                }
+            });
+        QObject::connect(
+            &window,
             &StandaloneMainWindow::meshVisibilityRequested,
             &window,
             [&controller, &window](MeshId meshId, bool visible) {

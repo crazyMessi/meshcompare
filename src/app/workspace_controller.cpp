@@ -23,13 +23,15 @@ SceneDescriptor makeSceneDescriptor(
     const QVector<MeshEntry>& entries,
     MeshId referenceId,
     SceneLayoutMode layoutMode,
-    const CameraPose& initialCamera = {})
+    const CameraPose& initialCamera = {},
+    bool normalizeGridMeshes = false)
 {
     SceneDescriptor scene;
     scene.generation = generation;
     scene.referenceId = referenceId;
     scene.layoutMode = layoutMode;
     scene.initialCamera = initialCamera;
+    scene.normalizeGridMeshes = normalizeGridMeshes;
     scene.meshes.reserve(entries.size());
     for (const MeshEntry& entry : entries) {
         scene.meshes.append(
@@ -319,7 +321,8 @@ OperationResult WorkspaceController::setLayoutMode(SceneLayoutMode layoutMode)
         state_.meshes(),
         state_.referenceId(),
         layoutMode,
-        renderer_.captureCamera());
+        renderer_.captureCamera(),
+        state_.gridNormalizationEnabled());
     const OperationResult prepared =
         renderer_.prepareScene(scene, *repository_);
     if (!prepared.ok) {
@@ -339,6 +342,67 @@ OperationResult WorkspaceController::setLayoutMode(SceneLayoutMode layoutMode)
         state_.enterFatalError();
         return OperationResult::failure(
             QStringLiteral("The prepared view layout could not be committed."));
+    }
+
+    renderer_.setReferenceMesh(state_.referenceId());
+    renderer_.setSelectedMesh(state_.selectedMeshId());
+    publishWorkspaceChanged();
+    return OperationResult::success();
+}
+
+OperationResult WorkspaceController::setGridNormalizationEnabled(bool enabled)
+{
+    if (handlingCallback_) {
+        return OperationResult::failure(QStringLiteral(
+            "Grid normalization is unavailable during a renderer callback."));
+    }
+    if (replacingWorkspace_) {
+        return OperationResult::failure(QStringLiteral(
+            "Grid normalization is unavailable during workspace replacement."));
+    }
+    if (cameraCommandInProgress_) {
+        return OperationResult::failure(QStringLiteral(
+            "Grid normalization is unavailable during a camera-pose command."));
+    }
+    if (state_.phase() != WorkspacePhase::Ready || repository_ == nullptr) {
+        return OperationResult::failure(
+            QStringLiteral("Grid normalization requires an idle ready workspace."));
+    }
+    if (state_.layoutMode() != SceneLayoutMode::ComparisonGrid) {
+        return OperationResult::failure(
+            QStringLiteral("Grid normalization is available only in Grid view."));
+    }
+    if (state_.gridNormalizationEnabled() == enabled)
+        return OperationResult::success();
+
+    QScopedValueRollback<bool> replacementGuard(replacingWorkspace_, true);
+    const SceneDescriptor scene = makeSceneDescriptor(
+        state_.generation(),
+        state_.meshes(),
+        state_.referenceId(),
+        SceneLayoutMode::ComparisonGrid,
+        renderer_.captureCamera(),
+        enabled);
+    const OperationResult prepared =
+        renderer_.prepareScene(scene, *repository_);
+    if (!prepared.ok) {
+        renderer_.discardPreparedScene();
+        return prepared;
+    }
+
+    disconnectRendererEvents();
+    renderer_.commitPreparedScene();
+    connectRendererEvents();
+    const OperationResult changed =
+        state_.setGridNormalizationEnabled(enabled);
+    Q_ASSERT_X(
+        changed.ok,
+        "WorkspaceController::setGridNormalizationEnabled",
+        "a synchronously prevalidated grid normalization change must succeed");
+    if (!changed.ok) {
+        state_.enterFatalError();
+        return OperationResult::failure(
+            QStringLiteral("The prepared grid normalization could not be committed."));
     }
 
     renderer_.setReferenceMesh(state_.referenceId());
@@ -409,7 +473,8 @@ OperationResult WorkspaceController::setMeshVisible(MeshId meshId, bool visible)
             updatedMeshes,
             state_.referenceId(),
             SceneLayoutMode::ComparisonGrid,
-            renderer_.captureCamera());
+            renderer_.captureCamera(),
+            state_.gridNormalizationEnabled());
         const OperationResult prepared = renderer_.prepareScene(scene, *repository_);
         if (!prepared.ok) {
             renderer_.discardPreparedScene();

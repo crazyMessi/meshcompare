@@ -73,6 +73,7 @@ public:
     MeshId selectedMeshId() const;
     MeshId referenceId() const;
     SceneLayoutMode layoutMode() const;
+    bool gridNormalizationEnabled() const;
 
     void beginLoading();
     void cancelLoading();
@@ -86,6 +87,7 @@ public:
     OperationResult setSelectedMesh(MeshId id);
     OperationResult setReference(MeshId id);
     OperationResult setLayoutMode(SceneLayoutMode layoutMode);
+    OperationResult setGridNormalizationEnabled(bool enabled);
     OperationResult setMeshVisible(MeshId id, bool visible);
     OperationResult beginAnalysis();
     void finishAnalysis();
@@ -107,4 +109,5 @@ private:
     MeshId selectedMeshId_ = 0;
     MeshId referenceId_ = 0;
     SceneLayoutMode layoutMode_ = SceneLayoutMode::ComparisonGrid;
+    bool gridNormalizationEnabled_ = false;
 };

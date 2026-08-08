@@ -65,6 +65,13 @@ int visibleMeshCount(const WorkspaceState& state)
     return count;
 }
 
+QString meshCountText(int count)
+{
+    return count == 1
+               ? QObject::tr("1 mesh")
+               : QObject::tr("%1 meshes").arg(count);
+}
+
 bool canChangeLayerVisibility(
     const WorkspaceState& state,
     const MeshEntry& mesh,
@@ -220,7 +227,7 @@ void StandaloneMainWindow::presentImportOutcome(const WorkspaceImportOutcome& ou
         showStatusMessage(outcome.notice);
     else
         showPassiveStatusMessage(
-            tr("Imported %1 meshes.").arg(state_.meshes().size()));
+            tr("Imported %1.").arg(meshCountText(state_.meshes().size())));
 }
 
 void StandaloneMainWindow::refreshWorkspace()
@@ -239,6 +246,8 @@ void StandaloneMainWindow::refreshWorkspace()
         state_.layoutMode() == SceneLayoutMode::ComparisonGrid);
     const int visibleCount = visibleMeshCount(state_);
     const bool grid = state_.layoutMode() == SceneLayoutMode::ComparisonGrid;
+    normalizeGridButton_->setEnabled(viewSwitchingEnabled && grid);
+    normalizeGridButton_->setChecked(state_.gridNormalizationEnabled());
     const bool layersEnabled =
         actionsEnabled && (!grid || viewSwitchingEnabled);
     layersButton_->setEnabled(layersEnabled);
@@ -252,7 +261,7 @@ void StandaloneMainWindow::refreshWorkspace()
         grid
             ? tr("Choose which mesh layers appear in Grid")
             : tr("Choose which mesh layers are visible in Overlay"));
-    meshCountLabel_->setText(tr("%1 meshes").arg(state_.meshes().size()));
+    meshCountLabel_->setText(meshCountText(state_.meshes().size()));
     updateWorkspaceStatus();
     if (coloringPanel_ != nullptr)
         coloringPanel_->refreshFromState();
@@ -448,7 +457,7 @@ QFrame* StandaloneMainWindow::buildStatusBar(QWidget* parent)
     layout->setSpacing(12);
 
     statusLabel_ = new QLabel(
-        tr("Open a 2–8 layer MeshLab project or import 2–8 meshes to begin."),
+        tr("Open a 1–8 layer MeshLab project or import 1–8 meshes to begin."),
         bar);
     statusLabel_->setObjectName(QStringLiteral("statusLabel"));
     statusLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -541,6 +550,11 @@ QWidget* StandaloneMainWindow::buildCommandBar(QWidget* parent)
     gridViewButton_->setCheckable(true);
     gridViewButton_->setToolTip(
         tr("Show each mesh layer in its own viewport"));
+    normalizeGridButton_ = new QPushButton(tr("Normalize"), commandBar);
+    normalizeGridButton_->setObjectName("normalizeGridButton");
+    normalizeGridButton_->setCheckable(true);
+    normalizeGridButton_->setToolTip(
+        tr("Center and scale every Grid mesh independently for visual comparison"));
     auto* viewModeGroup = new QButtonGroup(commandBar);
     viewModeGroup->setExclusive(true);
     viewModeGroup->addButton(overlayViewButton_);
@@ -557,6 +571,7 @@ QWidget* StandaloneMainWindow::buildCommandBar(QWidget* parent)
     cameraButton_->setEnabled(false);
     overlayViewButton_->setEnabled(false);
     gridViewButton_->setEnabled(false);
+    normalizeGridButton_->setEnabled(false);
     layersButton_->setEnabled(false);
 
     auto* linkedCameraLabel = new QLabel(
@@ -566,7 +581,8 @@ QWidget* StandaloneMainWindow::buildCommandBar(QWidget* parent)
         commandBar);
     linkedCameraLabel->setObjectName(QStringLiteral("linkedCameraLabel"));
     linkedCameraLabel->setTextFormat(Qt::RichText);
-    meshCountLabel_ = new QLabel(tr("%1 meshes").arg(state_.meshes().size()), commandBar);
+    meshCountLabel_ = new QLabel(
+        meshCountText(state_.meshes().size()), commandBar);
     meshCountLabel_->setObjectName("meshCountLabel");
     diagnosticsButton_ = new QToolButton(commandBar);
     diagnosticsButton_->setObjectName(QStringLiteral("diagnosticsButton"));
@@ -581,6 +597,7 @@ QWidget* StandaloneMainWindow::buildCommandBar(QWidget* parent)
     layout->addWidget(viewLabel);
     layout->addWidget(overlayViewButton_);
     layout->addWidget(gridViewButton_);
+    layout->addWidget(normalizeGridButton_);
     layout->addWidget(toolbarDivider(commandBar));
     layout->addWidget(layersButton_);
     layout->addStretch(1);
@@ -614,6 +631,15 @@ QWidget* StandaloneMainWindow::buildCommandBar(QWidget* parent)
     connect(gridViewButton_, &QPushButton::clicked, this, [this] {
         if (state_.layoutMode() != SceneLayoutMode::ComparisonGrid)
             emit layoutModeRequested(SceneLayoutMode::ComparisonGrid);
+        refreshWorkspace();
+    });
+    connect(normalizeGridButton_, &QPushButton::clicked, this, [this] {
+        if (state_.layoutMode() == SceneLayoutMode::ComparisonGrid &&
+            state_.gridNormalizationEnabled() !=
+                normalizeGridButton_->isChecked()) {
+            emit gridNormalizationRequested(
+                normalizeGridButton_->isChecked());
+        }
         refreshWorkspace();
     });
     connect(

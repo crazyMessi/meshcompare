@@ -132,6 +132,11 @@ SceneLayoutMode WorkspaceState::layoutMode() const
     return layoutMode_;
 }
 
+bool WorkspaceState::gridNormalizationEnabled() const
+{
+    return gridNormalizationEnabled_;
+}
+
 void WorkspaceState::beginLoading()
 {
     if (phase_ != WorkspacePhase::Loading)
@@ -149,9 +154,9 @@ OperationResult WorkspaceState::validateWorkspace(
     const QVector<MeshEntry>& meshes,
     MeshId referenceId) const
 {
-    if (meshes.size() < 2 || meshes.size() > 8)
+    if (meshes.isEmpty() || meshes.size() > 8)
         return OperationResult::failure(
-            QStringLiteral("A workspace must contain between 2 and 8 meshes."));
+            QStringLiteral("A workspace must contain between 1 and 8 meshes."));
 
     QSet<MeshId> meshIds;
     for (const MeshEntry& mesh : meshes) {
@@ -190,6 +195,7 @@ OperationResult WorkspaceState::commitWorkspace(
     referenceId_ = referenceId;
     selectedMeshId_ = meshes_.front().id;
     layoutMode_ = layoutMode;
+    gridNormalizationEnabled_ = false;
     phase_ = WorkspacePhase::Ready;
     phaseBeforeLoading_ = WorkspacePhase::Ready;
     ++generation_;
@@ -203,6 +209,16 @@ OperationResult WorkspaceState::setLayoutMode(SceneLayoutMode layoutMode)
             QStringLiteral("View switching requires an idle ready workspace."));
     }
     layoutMode_ = layoutMode;
+    return OperationResult::success();
+}
+
+OperationResult WorkspaceState::setGridNormalizationEnabled(bool enabled)
+{
+    if (phase_ != WorkspacePhase::Ready || meshes_.isEmpty()) {
+        return OperationResult::failure(
+            QStringLiteral("Grid normalization requires an idle ready workspace."));
+    }
+    gridNormalizationEnabled_ = enabled;
     return OperationResult::success();
 }
 

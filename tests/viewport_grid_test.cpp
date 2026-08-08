@@ -277,6 +277,7 @@ public:
         QVector<int> modelIds{dependencies.meshModelId};
         modelIds += dependencies.additionalMeshModelIds;
         boundModelIds_.push_back(modelIds);
+        normalizationModes_.push_back(dependencies.normalizeMesh);
         QString initializationError;
         if (creationCount_ == failingInitializationIndex_)
             initializationError = QStringLiteral("candidate initialization failed");
@@ -302,6 +303,10 @@ public:
     {
         return boundModelIds_.at(static_cast<std::size_t>(index));
     }
+    bool normalizationEnabled(int index) const
+    {
+        return normalizationModes_.at(static_cast<std::size_t>(index));
+    }
     void failInitializationAt(int oneBasedIndex)
     {
         failingInitializationIndex_ = oneBasedIndex;
@@ -314,6 +319,7 @@ public:
 private:
     std::vector<GridFakeViewport*> viewports_;
     std::vector<QVector<int>> boundModelIds_;
+    std::vector<bool> normalizationModes_;
     int creationCount_ = 0;
     int initializationCount_ = 0;
     int liveCount_ = 0;
@@ -328,6 +334,60 @@ class ViewportGridTest : public QObject
     Q_OBJECT
 
 private slots:
+    void createsAViewportForASingleMesh()
+    {
+        QWidget host;
+        TestRenderScene renderScene;
+        GridFakeViewportFactory factory;
+        RecordingCallbacks callbacks;
+        ViewportGrid grid(factory, callbacks);
+        const SceneDescriptor descriptor = scene(1);
+
+        const OperationResult result = grid.create(
+            &host,
+            descriptor,
+            renderScene.dependencies(),
+            descriptor.referenceId);
+
+        QVERIFY2(result.ok, qPrintable(result.error));
+        QCOMPARE(factory.creationCount(), 1);
+        QCOMPARE(grid.viewportCount(), 1);
+        QCOMPARE(grid.meshIdForViewport(1), descriptor.referenceId);
+    }
+
+    void normalizationIsEnabledOnlyForGridViewports()
+    {
+        QWidget host;
+        TestRenderScene renderScene;
+        GridFakeViewportFactory gridFactory;
+        RecordingCallbacks callbacks;
+        ViewportGrid grid(gridFactory, callbacks);
+        SceneDescriptor gridDescriptor = scene(2);
+        gridDescriptor.normalizeGridMeshes = true;
+
+        QVERIFY(grid.create(
+                    &host,
+                    gridDescriptor,
+                    renderScene.dependencies(),
+                    gridDescriptor.referenceId)
+                    .ok);
+        QVERIFY(gridFactory.normalizationEnabled(0));
+        QVERIFY(gridFactory.normalizationEnabled(1));
+
+        GridFakeViewportFactory overlayFactory;
+        ViewportGrid overlay(overlayFactory, callbacks);
+        SceneDescriptor overlayDescriptor = scene(2);
+        overlayDescriptor.layoutMode = SceneLayoutMode::Overlay;
+        overlayDescriptor.normalizeGridMeshes = true;
+        QVERIFY(overlay.create(
+                    &host,
+                    overlayDescriptor,
+                    renderScene.dependencies(),
+                    overlayDescriptor.referenceId)
+                    .ok);
+        QVERIFY(!overlayFactory.normalizationEnabled(0));
+    }
+
     void createsOnePreparedViewportPerMeshInImportOrder()
     {
         QWidget host;

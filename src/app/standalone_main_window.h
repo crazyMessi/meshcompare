@@ -53,6 +53,7 @@ public slots:
 signals:
     void importRequested(const QStringList& paths);
     void layoutModeRequested(SceneLayoutMode layoutMode);
+    void gridNormalizationRequested(bool enabled);
     void meshVisibilityRequested(MeshId meshId, bool visible);
     void operationFailed(const QString& message);
 
@@ -84,6 +85,7 @@ private:
     QPushButton* cameraButton_ = nullptr;
     QPushButton* overlayViewButton_ = nullptr;
     QPushButton* gridViewButton_ = nullptr;
+    QPushButton* normalizeGridButton_ = nullptr;
     QToolButton* layersButton_ = nullptr;
     QMenu* layersMenu_ = nullptr;
     QToolButton* diagnosticsButton_ = nullptr;

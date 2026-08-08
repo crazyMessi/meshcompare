@@ -21,7 +21,7 @@ The final product direction is not a reskinned MeshLab. It is a new standalone a
 
 The first release serves four core workflows:
 
-1. Import 2–8 meshes in one batch and automatically create synchronized comparison viewports.
+1. Import 1–8 meshes in one batch and automatically create synchronized comparison viewports.
 2. Apply Distance-to-Reference or Double Layer analytical coloring.
 3. Assign a uniform color to the currently selected mesh.
 4. Save, list, apply, and automatically restore camera poses by workspace UID,
@@ -59,7 +59,7 @@ Whenever the workspace is non-empty, starting another batch import asks for conf
 
 ### 4.2 Batch Import
 
-The empty state provides a drop target and an “Import Meshes” button. The user chooses 2–8 files at once. A successful import enters comparison mode immediately, without an intermediate single-view mode or Layer Dialog.
+The empty state provides a drop target and an “Import Meshes” button. The user chooses 1–8 files at once. A successful import enters comparison mode immediately, without an intermediate Layer Dialog.
 
 Import is transactional:
 
@@ -110,6 +110,8 @@ resources. Creating a new scene uses the host's current aspect ratio to
 construct a fresh topology.
 
 Each viewport displays exactly one mesh. All viewports share a camera by default. Rotating, zooming, or panning in any viewport updates every other viewport. Clicking a viewport changes only the selected mesh; it does not unlink the cameras.
+
+Grid view can normalize each visible mesh for visual comparison. This display-only transform maps every mesh's world-space bounding-box center and diagonal to a shared frame. It does not modify imported geometry, analysis coordinates, or Overlay view.
 
 The upper-left corner of each viewport shows a compact name. The Reference has an explicit badge. After analysis, affected viewports show a compact metric summary. The selected viewport uses a subtle accent border.
 
@@ -373,7 +375,7 @@ Automatic restore flow:
 ## 8. Error Handling
 
 - Import errors are grouped by file and never create a partial workspace.
-- Counts outside 2–8, meshes without valid triangle faces, and unsupported formats produce specific explanations.
+- Counts outside 1–8, meshes without valid triangle faces, and unsupported formats produce specific explanations.
 - GPU preparation failure releases staged resources and preserves the old workspace.
 - Invalid analysis parameters are rejected before a task starts.
 - If any target analysis fails, the batch's new results are not committed.
@@ -405,7 +407,7 @@ The same contract suite must also run against `MeshLabRendererAdapter`.
 
 ### 9.3 Integration Tests
 
-- Creating, rearranging, and destroying 2–8 viewports.
+- Creating, rearranging, and destroying 1–8 viewports.
 - Uploading shared OpenGL resources once and referencing them correctly from every viewport.
 - Camera synchronization, capture, and restore.
 - Switching among default, uniform-color, and analytical vertex-color presentations.
@@ -424,7 +426,7 @@ The same contract suite must also run against `MeshLabRendererAdapter`.
 The implementation is complete only when all of the following are true:
 
 1. The new application target does not link the old `MainWindow`, MDI, `MultiViewer_Container`, Filter Dock, or Layer Dialog.
-2. A batch of 2–8 meshes imports directly into synchronized comparison viewports.
+2. A batch of 1–8 meshes imports directly into synchronized comparison viewports.
 3. Automatic `gt` Reference selection and manual Reference changes both work.
 4. Distance processes every non-Reference mesh, while Double Layer processes every mesh in one operation.
 5. The selected mesh can use a uniform color, and coloring can be cleared.

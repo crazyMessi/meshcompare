@@ -134,6 +134,26 @@ class WorkspaceControllerTest : public QObject
     Q_OBJECT
 
 private slots:
+    void importsASingleMeshAsAReadyWorkspace()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(
+            staged({entry(1, QStringLiteral("single.obj"))}));
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        WorkspaceController controller(
+            state, importer, renderer, comparer, cameraStore_);
+
+        const WorkspaceImportOutcome outcome =
+            controller.importMeshes({QStringLiteral("single.obj")});
+
+        QVERIFY2(outcome.result.ok, qPrintable(outcome.result.error));
+        QCOMPARE(state.phase(), WorkspacePhase::Ready);
+        QCOMPARE(state.meshes().size(), 1);
+        QCOMPARE(state.referenceId(), MeshId(1));
+        QCOMPARE(renderer.lastPreparedScene().meshes.size(), 1);
+    }
+
     void failedRendererPreparationPreservesTheOldWorkspace()
     {
         WorkspaceState state;
@@ -355,6 +375,67 @@ private slots:
         QCOMPARE(state.layoutMode(), SceneLayoutMode::Overlay);
         QCOMPARE(renderer.committedGeneration(), state.generation());
         QCOMPARE(changedSpy.size(), 0);
+    }
+
+    void gridNormalizationRebuildsAtomicallyAndPreservesTheCamera()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(staged({entry(1), entry(2)}));
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        WorkspaceController controller(
+            state, importer, renderer, comparer, cameraStore_);
+        QVERIFY(controller.importMeshes(
+                    {QStringLiteral("a.obj"), QStringLiteral("b.obj")})
+                    .result.ok);
+        renderer.setCamera({QStringLiteral("<camera-state/>")});
+        const int prepareCount = renderer.prepareCount();
+        QSignalSpy changedSpy(
+            &controller, &WorkspaceController::workspaceChanged);
+
+        const OperationResult enabled =
+            controller.setGridNormalizationEnabled(true);
+
+        QVERIFY2(enabled.ok, qPrintable(enabled.error));
+        QVERIFY(state.gridNormalizationEnabled());
+        QCOMPARE(renderer.prepareCount(), prepareCount + 1);
+        QVERIFY(renderer.lastPreparedScene().normalizeGridMeshes);
+        QCOMPARE(
+            renderer.lastPreparedScene().initialCamera.viewStateXml,
+            QStringLiteral("<camera-state/>"));
+        QCOMPARE(changedSpy.size(), 1);
+
+        renderer.failNextPrepare(
+            QStringLiteral("normalization preparation failed"));
+        const OperationResult disabled =
+            controller.setGridNormalizationEnabled(false);
+
+        QVERIFY(!disabled.ok);
+        QCOMPARE(
+            disabled.error,
+            QStringLiteral("normalization preparation failed"));
+        QVERIFY(state.gridNormalizationEnabled());
+        QVERIFY(renderer.lastPreparedScene().normalizeGridMeshes);
+        QCOMPARE(changedSpy.size(), 1);
+    }
+
+    void gridNormalizationIsRejectedOutsideGridView()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(staged(
+            {entry(1), entry(2)}, SceneLayoutMode::Overlay));
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        WorkspaceController controller(
+            state, importer, renderer, comparer, cameraStore_);
+        QVERIFY(controller.importMeshes({QStringLiteral("comparison.mlp")})
+                    .result.ok);
+
+        const OperationResult result =
+            controller.setGridNormalizationEnabled(true);
+
+        QVERIFY(!result.ok);
+        QVERIFY(!state.gridNormalizationEnabled());
     }
 
     void overlayVisibilityUpdatesRendererAndPersistsAcrossLayoutChanges()

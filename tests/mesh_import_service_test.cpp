@@ -188,9 +188,24 @@ private slots:
         QCOMPARE(staged.entries.size(), 2);
     }
 
-    void rejectsZeroOneAndNineLoadedLayers()
+    void acceptsOneLoadedLayerAndRejectsZeroOrNine()
     {
-        for (const int count : {0, 1, 9}) {
+        {
+            FakeMeshLoader loader;
+            loader.succeed(
+                QStringLiteral("single.obj"),
+                {fakeLoadedMesh(1, QStringLiteral("single"))});
+            MeshImportService service(loader);
+
+            StagedWorkspace staged =
+                service.stage({QStringLiteral("single.obj")});
+
+            QVERIFY2(staged.result.ok, qPrintable(staged.result.error));
+            QCOMPARE(staged.entries.size(), 1);
+            QVERIFY(staged.repository != nullptr);
+        }
+
+        for (const int count : {0, 9}) {
             FakeMeshLoader loader;
             QVector<LoadedMesh> meshes;
             for (int index = 0; index < count; ++index)

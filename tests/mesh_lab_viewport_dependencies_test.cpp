@@ -1284,6 +1284,57 @@ private slots:
         QVERIFY(settings.attribute(QStringLiteral("TrackScale")).toFloat() < 0.1f);
     }
 
+    void normalizedViewportMapsItsMeshToTheSharedDocumentBounds()
+    {
+        TestRenderScene scene;
+        MeshModel* assignedMesh =
+            scene.document().addNewMesh(QString(), QStringLiteral("assigned"), false);
+        assignedMesh->cm.bbox.Set(Point3m(-1.0f, -2.0f, -3.0f));
+        assignedMesh->cm.bbox.Add(Point3m(1.0f, 2.0f, 3.0f));
+        assignedMesh->cm.Tr.SetTranslate(20.0f, 5.0f, -7.0f);
+        MeshModel* distantMesh =
+            scene.document().addNewMesh(QString(), QStringLiteral("distant"), false);
+        distantMesh->cm.bbox.Set(Point3m(100.0f, 50.0f, 25.0f));
+        distantMesh->cm.bbox.Add(Point3m(180.0f, 130.0f, 105.0f));
+
+        FakeViewportCallbacks callbacks;
+        ViewportDependencies dependencies{
+            scene.document(),
+            scene.sharedContext(),
+            scene.settings(),
+            callbacks,
+            11,
+            assignedMesh->id(),
+            1,
+            2,
+            QStringLiteral("assigned"),
+            true,
+            QString(),
+            false,
+            {},
+            {},
+            true};
+        MeshLabViewport viewport(nullptr, dependencies);
+
+        const Matrix44m transform =
+            viewport.meshRenderTransformForTest(assignedMesh->id());
+        Box3m normalizedBounds;
+        normalizedBounds.Add(transform, assignedMesh->cm.bbox);
+        const Box3m sceneBounds = scene.document().bbox();
+
+        QVERIFY(
+            qAbs(normalizedBounds.Diag() - sceneBounds.Diag()) < 1e-3f);
+        for (int axis = 0; axis < 3; ++axis) {
+            QVERIFY(
+                qAbs(
+                    normalizedBounds.Center()[axis] -
+                    sceneBounds.Center()[axis]) < 1e-3f);
+        }
+        QCOMPARE(assignedMesh->cm.Tr[0][3], Scalarm(20.0f));
+        QCOMPARE(assignedMesh->cm.Tr[1][3], Scalarm(5.0f));
+        QCOMPARE(assignedMesh->cm.Tr[2][3], Scalarm(-7.0f));
+    }
+
     void selectionCanBeUpdatedWithoutParentLookup()
     {
         TestRenderScene scene;

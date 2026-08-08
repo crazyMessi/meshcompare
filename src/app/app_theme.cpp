@@ -59,13 +59,17 @@ QPushButton#importMeshesButton:hover {
     background: #4B73EA;
 }
 
-QPushButton#overlayViewButton, QPushButton#gridViewButton {
+QPushButton#overlayViewButton,
+QPushButton#gridViewButton,
+QPushButton#normalizeGridButton {
     min-width: 64px;
     background: #20211F;
     border-color: #4A4B46;
 }
 
-QPushButton#overlayViewButton:checked, QPushButton#gridViewButton:checked {
+QPushButton#overlayViewButton:checked,
+QPushButton#gridViewButton:checked,
+QPushButton#normalizeGridButton:checked {
     background: #6252D2;
     border-color: #7565E3;
     color: #FFFFFF;
@@ -73,7 +77,8 @@ QPushButton#overlayViewButton:checked, QPushButton#gridViewButton:checked {
 }
 
 QPushButton#overlayViewButton:checked:disabled,
-QPushButton#gridViewButton:checked:disabled {
+QPushButton#gridViewButton:checked:disabled,
+QPushButton#normalizeGridButton:checked:disabled {
     background: #333430;
     border-color: #484944;
     color: #777873;
