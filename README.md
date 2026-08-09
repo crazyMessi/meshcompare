@@ -13,6 +13,7 @@
 - **Normalize** every Grid mesh independently for easier shape comparison.
 - Run **Distance to Reference** and **Double Layer** analyses with color overlays.
 - Choose the Reference mesh, assign uniform colors, and control layer visibility.
+- Force **double-sided rendering** for open or inconsistently wound surfaces.
 - Save reusable camera poses with tags and screenshots.
 - Render comparison grids from the command line.
 

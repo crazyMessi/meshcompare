@@ -792,7 +792,7 @@ void MeshLabViewport::drawAssignedMesh()
         }
 
         setLightingColors(options);
-        if (options._back_face_cull)
+        if (usesBackFaceCulling(options._back_face_cull))
             glEnable(GL_CULL_FACE);
         else
             glDisable(GL_CULL_FACE);
@@ -1058,10 +1058,13 @@ void MeshLabViewport::drawViewportOverlay(QPainter& painter) const
 
 void MeshLabViewport::setLightingColors(const MLPerViewGLOptions& options)
 {
-    if (options._double_side_lighting || options._fancy_lighting)
+    if (usesDoubleSidedLighting(options._double_side_lighting) ||
+        options._fancy_lighting) {
         glEnable(GL_LIGHT1);
-    else
+    }
+    else {
         glDisable(GL_LIGHT1);
+    }
 
     setLightColor(GL_LIGHT0, GL_AMBIENT, renderSettings_.baseLightAmbientColor);
     setLightColor(GL_LIGHT0, GL_DIFFUSE, renderSettings_.baseLightDiffuseColor);
@@ -1073,6 +1076,18 @@ void MeshLabViewport::setLightingColors(const MLPerViewGLOptions& options)
         setLightColor(GL_LIGHT0, GL_DIFFUSE, renderSettings_.fancyFLightDiffuseColor);
         setLightColor(GL_LIGHT1, GL_DIFFUSE, renderSettings_.fancyBLightDiffuseColor);
     }
+}
+
+bool MeshLabViewport::usesBackFaceCulling(
+    bool meshOptionEnabled) const
+{
+    return meshOptionEnabled && !doubleSidedRendering_;
+}
+
+bool MeshLabViewport::usesDoubleSidedLighting(
+    bool meshOptionEnabled) const
+{
+    return meshOptionEnabled || doubleSidedRendering_;
 }
 
 CameraPose MeshLabViewport::captureCamera() const
@@ -1268,6 +1283,9 @@ void MeshLabViewport::setDiagnostic(DiagnosticFlag flag, bool enabled)
         break;
     case DiagnosticFlag::Normals:
         normalsDiagnostic_ = enabled;
+        break;
+    case DiagnosticFlag::DoubleSided:
+        doubleSidedRendering_ = enabled;
         break;
     }
     update();

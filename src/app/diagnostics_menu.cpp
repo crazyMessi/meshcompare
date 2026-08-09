@@ -113,6 +113,14 @@ DiagnosticsMenu::DiagnosticsMenu(
         renderer_.setDiagnostic(DiagnosticFlag::Wireframe, enabled);
     });
 
+    QAction* doubleSided =
+        addAction(QStringLiteral("Double-Sided Rendering"));
+    doubleSided->setObjectName(QStringLiteral("doubleSidedRenderingAction"));
+    doubleSided->setCheckable(true);
+    connect(doubleSided, &QAction::toggled, this, [this](bool enabled) {
+        renderer_.setDiagnostic(DiagnosticFlag::DoubleSided, enabled);
+    });
+
     QAction* normals = addAction(QStringLiteral("Show Normals"));
     normals->setObjectName(QStringLiteral("showNormalsAction"));
     normals->setCheckable(true);

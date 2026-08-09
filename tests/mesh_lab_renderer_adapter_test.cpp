@@ -570,6 +570,7 @@ private slots:
         adapter.commitPreparedScene();
         adapter.setDiagnostic(DiagnosticFlag::Wireframe, true);
         adapter.setDiagnostic(DiagnosticFlag::Normals, true);
+        adapter.setDiagnostic(DiagnosticFlag::DoubleSided, true);
         adapter.setDiagnostic(DiagnosticFlag::Wireframe, false);
 
         for (int index = 0; index < 2; ++index) {
@@ -579,6 +580,8 @@ private slots:
                 DiagnosticFlag::Wireframe));
             QVERIFY(factory.viewport(index).diagnosticEnabled(
                 DiagnosticFlag::Normals));
+            QVERIFY(factory.viewport(index).diagnosticEnabled(
+                DiagnosticFlag::DoubleSided));
         }
 
         QVERIFY(adapter.prepareScene(scene(2, {3, 4}), resources).ok);
@@ -589,6 +592,8 @@ private slots:
                 DiagnosticFlag::Wireframe));
             QVERIFY(factory.viewport(index).diagnosticEnabled(
                 DiagnosticFlag::Normals));
+            QVERIFY(factory.viewport(index).diagnosticEnabled(
+                DiagnosticFlag::DoubleSided));
         }
     }
 

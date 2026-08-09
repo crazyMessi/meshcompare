@@ -496,6 +496,42 @@ private slots:
                     QStringLiteral("RotationMatrix")) <= 1e-4);
     }
 
+    void doubleSidedRenderingOverridesAndRestoresMeshOptions()
+    {
+        TestRenderScene scene;
+        FakeViewportCallbacks callbacks;
+        ViewportDependencies deps{
+            scene.document(),
+            scene.sharedContext(),
+            scene.settings(),
+            callbacks,
+            1,
+            1,
+            1,
+            1,
+            QStringLiteral("GT"),
+            true,
+            QString()};
+        MeshLabViewport viewport(nullptr, deps);
+
+        QVERIFY(viewport.usesBackFaceCulling(true));
+        QVERIFY(!viewport.usesBackFaceCulling(false));
+        QVERIFY(!viewport.usesDoubleSidedLighting(false));
+        QVERIFY(viewport.usesDoubleSidedLighting(true));
+
+        viewport.setDiagnostic(DiagnosticFlag::DoubleSided, true);
+
+        QVERIFY(!viewport.usesBackFaceCulling(true));
+        QVERIFY(!viewport.usesBackFaceCulling(false));
+        QVERIFY(viewport.usesDoubleSidedLighting(false));
+        QVERIFY(viewport.usesDoubleSidedLighting(true));
+
+        viewport.setDiagnostic(DiagnosticFlag::DoubleSided, false);
+
+        QVERIFY(viewport.usesBackFaceCulling(true));
+        QVERIFY(!viewport.usesDoubleSidedLighting(false));
+    }
+
     void lowFovPerspectiveRemainsPerspectiveAndPreservesClipping()
     {
         TestRenderScene scene;

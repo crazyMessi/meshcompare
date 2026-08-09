@@ -116,7 +116,7 @@ class DiagnosticsMenuTest : public QObject
     Q_OBJECT
 
 private slots:
-    void menuContainsOnlyTheSevenApprovedEnglishActions()
+    void menuContainsTheApprovedEnglishActions()
     {
         QTemporaryDir root;
         QVERIFY(root.isValid());
@@ -132,18 +132,20 @@ private slots:
                 QStringLiteral("Reset Camera"),
                 QStringLiteral("Orthographic"),
                 QStringLiteral("Wireframe Overlay"),
+                QStringLiteral("Double-Sided Rendering"),
                 QStringLiteral("Show Normals"),
                 QStringLiteral("Copy Diagnostics"),
                 QStringLiteral("Open Local Log"),
                 QStringLiteral("About")}));
-        QCOMPARE(menu.actions().size(), 7);
+        QCOMPARE(menu.actions().size(), 8);
         QVERIFY(!menu.actions().at(0)->isCheckable());
         QVERIFY(menu.actions().at(1)->isCheckable());
         QVERIFY(menu.actions().at(2)->isCheckable());
         QVERIFY(menu.actions().at(3)->isCheckable());
-        QVERIFY(!menu.actions().at(4)->isCheckable());
+        QVERIFY(menu.actions().at(4)->isCheckable());
         QVERIFY(!menu.actions().at(5)->isCheckable());
         QVERIFY(!menu.actions().at(6)->isCheckable());
+        QVERIFY(!menu.actions().at(7)->isCheckable());
     }
 
     void rendererCommandsAreReachedOnlyThroughTheAdapter()
@@ -157,10 +159,12 @@ private slots:
         actionWithText(menu, QStringLiteral("Reset Camera"))->trigger();
         actionWithText(menu, QStringLiteral("Orthographic"))->setChecked(true);
         actionWithText(menu, QStringLiteral("Wireframe Overlay"))->setChecked(true);
+        actionWithText(menu, QStringLiteral("Double-Sided Rendering"))
+            ->setChecked(true);
         actionWithText(menu, QStringLiteral("Show Normals"))->setChecked(true);
 
         QCOMPARE(renderer.resetCount, 1);
-        QCOMPARE(renderer.diagnosticCalls.size(), 3);
+        QCOMPARE(renderer.diagnosticCalls.size(), 4);
         QCOMPARE(
             renderer.diagnosticCalls.at(0).first,
             DiagnosticFlag::Orthographic);
@@ -171,8 +175,12 @@ private slots:
         QVERIFY(renderer.diagnosticCalls.at(1).second);
         QCOMPARE(
             renderer.diagnosticCalls.at(2).first,
-            DiagnosticFlag::Normals);
+            DiagnosticFlag::DoubleSided);
         QVERIFY(renderer.diagnosticCalls.at(2).second);
+        QCOMPARE(
+            renderer.diagnosticCalls.at(3).first,
+            DiagnosticFlag::Normals);
+        QVERIFY(renderer.diagnosticCalls.at(3).second);
     }
 
     void copyOpenAndAboutUseInjectedPlatformServices()

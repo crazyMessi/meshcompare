@@ -198,6 +198,9 @@ public:
         case DiagnosticFlag::Normals:
             normals_ = enabled;
             break;
+        case DiagnosticFlag::DoubleSided:
+            doubleSided_ = enabled;
+            break;
         }
     }
     void requestRepaint() override { ++repaintCount_; }
@@ -229,6 +232,8 @@ public:
             return wireframe_;
         case DiagnosticFlag::Normals:
             return normals_;
+        case DiagnosticFlag::DoubleSided:
+            return doubleSided_;
         }
         return false;
     }
@@ -261,6 +266,7 @@ private:
     bool orthographic_ = false;
     bool wireframe_ = false;
     bool normals_ = false;
+    bool doubleSided_ = false;
     bool emitCameraChangedOnRestore_ = false;
     QString nextRestoreError_;
 };
@@ -725,6 +731,7 @@ private slots:
         grid.setDiagnostic(DiagnosticFlag::Orthographic, true);
         grid.setDiagnostic(DiagnosticFlag::Wireframe, true);
         grid.setDiagnostic(DiagnosticFlag::Normals, true);
+        grid.setDiagnostic(DiagnosticFlag::DoubleSided, true);
         grid.setDiagnostic(DiagnosticFlag::Wireframe, false);
 
         for (int index = 0; index < 3; ++index) {
@@ -734,6 +741,8 @@ private slots:
                 DiagnosticFlag::Wireframe));
             QVERIFY(factory.viewport(index).diagnosticEnabled(
                 DiagnosticFlag::Normals));
+            QVERIFY(factory.viewport(index).diagnosticEnabled(
+                DiagnosticFlag::DoubleSided));
         }
     }
 

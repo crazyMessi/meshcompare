@@ -18,7 +18,12 @@ enum class ColorMode {
 enum class AnalysisKind { None, DistanceToReference, DoubleLayer };
 enum class DistanceColorMapping { Linear, SquareRoot };
 enum class ColorLegendKind { None, Distance };
-enum class DiagnosticFlag { Orthographic, Wireframe, Normals };
+enum class DiagnosticFlag {
+    Orthographic,
+    Wireframe,
+    Normals,
+    DoubleSided,
+};
 enum class SceneLayoutMode { ComparisonGrid, Overlay };
 
 struct OperationResult {

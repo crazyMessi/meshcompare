@@ -63,5 +63,5 @@ private:
     RendererEvents events_;
     MeshId selectedMeshId_ = 0;
     MeshId referenceMeshId_ = 0;
-    std::array<bool, 3> diagnosticEnabled_{{false, false, false}};
+    std::array<bool, 4> diagnosticEnabled_{{false, false, false, false}};
 };

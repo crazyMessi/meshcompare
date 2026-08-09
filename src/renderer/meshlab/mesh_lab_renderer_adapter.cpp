@@ -16,10 +16,11 @@
 
 namespace
 {
-const std::array<DiagnosticFlag, 3> diagnosticFlags{{
+const std::array<DiagnosticFlag, 4> diagnosticFlags{{
     DiagnosticFlag::Orthographic,
     DiagnosticFlag::Wireframe,
-    DiagnosticFlag::Normals}};
+    DiagnosticFlag::Normals,
+    DiagnosticFlag::DoubleSided}};
 
 class MeshLabViewportHandle final : public IViewport
 {
@@ -276,7 +277,7 @@ private:
     RichParameterList settings_;
     std::unique_ptr<ViewportGrid> grid_;
     quint64 generation_ = 0;
-    std::array<bool, 3> diagnosticEnabled_{{false, false, false}};
+    std::array<bool, 4> diagnosticEnabled_{{false, false, false, false}};
 };
 
 OperationResult MeshLabViewportFactory::createViewport(

@@ -117,7 +117,7 @@ private:
     bool reference_ = false;
     QString scoreLabel_;
     ColorLegendSpec colorLegend_;
-    bool diagnostics_[3] = {false, false, false};
+    bool diagnostics_[4] = {false, false, false, false};
     int repaintCount_ = 0;
 };
 

@@ -47,6 +47,8 @@ public:
     const QString& scoreLabelForTest() const { return scoreLabel_; }
     int assignedMeshCountForTest() const { return meshModelIds_.size(); }
     Matrix44m meshRenderTransformForTest(int meshModelId) const;
+    bool usesBackFaceCulling(bool meshOptionEnabled) const;
+    bool usesDoubleSidedLighting(bool meshOptionEnabled) const;
 
 protected:
     void initializeGL() override;
@@ -99,6 +101,7 @@ private:
     QString scoreLabel_;
     bool reference_ = false;
     bool normalizeMesh_ = false;
+    bool doubleSidedRendering_ = false;
     ColorLegendSpec colorLegend_;
     bool cameraOrthographic_ = false;
     bool orthographicDiagnostic_ = false;

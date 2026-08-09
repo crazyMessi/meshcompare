@@ -215,6 +215,7 @@ The upper-right overflow menu contains only:
 - Reset Camera.
 - Perspective/Orthographic toggle.
 - Wireframe Overlay.
+- Double-Sided Rendering.
 - Show Normals.
 - Copy Diagnostics.
 - Open Local Log.
