@@ -22,6 +22,11 @@ class QWidget;
 class WorkspaceState;
 struct AnalysisBatchResult;
 struct WorkspaceImportOutcome;
+namespace python_hole_filling
+{
+class ICommands;
+class Panel;
+}
 
 class StandaloneMainWindow : public QMainWindow
 {
@@ -38,6 +43,9 @@ public:
     void unbindColoringCommands();
     void bindCameraCommands(ICameraCommands& commands);
     void unbindCameraCommands();
+    void bindHoleFillingCommands(
+        python_hole_filling::ICommands& commands);
+    void unbindHoleFillingCommands();
     void setDiagnosticsMenu(QMenu* menu);
     void presentAnalysisProgress(
         quint64 generation,
@@ -73,6 +81,8 @@ private:
     void positionColoringPanel();
     void toggleCameraPanel();
     void positionCameraPanel();
+    void toggleHoleFillingPanel();
+    void positionHoleFillingPanel();
     void requestMeshVisibilityChange(MeshId meshId, bool visible);
     void showPassiveStatusMessage(const QString& message);
     void updateWorkspaceStatus();
@@ -83,6 +93,7 @@ private:
     QPushButton* importMeshesButton_ = nullptr;
     QPushButton* coloringButton_ = nullptr;
     QPushButton* cameraButton_ = nullptr;
+    QPushButton* holeFillingButton_ = nullptr;
     QPushButton* overlayViewButton_ = nullptr;
     QPushButton* gridViewButton_ = nullptr;
     QPushButton* normalizeGridButton_ = nullptr;
@@ -100,4 +111,5 @@ private:
     QLabel* meshCountLabel_ = nullptr;
     ColoringPanel* coloringPanel_ = nullptr;
     CameraPanel* cameraPanel_ = nullptr;
+    python_hole_filling::Panel* holeFillingPanel_ = nullptr;
 };

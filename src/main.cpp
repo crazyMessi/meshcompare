@@ -372,6 +372,7 @@ int main(int argc, char** argv)
         }
         window.bindColoringCommands(controller);
         window.bindCameraCommands(controller);
+        window.bindHoleFillingCommands(controller);
 
         window.resize(1440, 900);
         window.show();
@@ -388,6 +389,7 @@ int main(int argc, char** argv)
         const int exitCode = app.exec();
         fileOpenBridge.clearOpenHandler();
         window.setDiagnosticsMenu(nullptr);
+        window.unbindHoleFillingCommands();
         window.unbindCameraCommands();
         window.unbindColoringCommands();
         const OperationResult ended = diagnosticsLog.recordSessionEnd();

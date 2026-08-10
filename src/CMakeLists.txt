@@ -49,6 +49,28 @@ target_include_directories(meshcompare-startup-command-line
 	PUBLIC ${MESHCOMPARE_SOURCE_ROOT})
 target_link_libraries(meshcompare-startup-command-line PUBLIC Qt5::Core)
 
+add_library(meshcompare-controllable-hole-filling STATIC
+	plugins/controllable_hole_filling/controllable_hole_filling.cpp
+	plugins/controllable_hole_filling/controllable_hole_filling.h
+	plugins/controllable_hole_filling/controllable_hole_filling_panel.cpp
+	plugins/controllable_hole_filling/controllable_hole_filling_panel.h)
+target_include_directories(meshcompare-controllable-hole-filling
+	PUBLIC ${MESHCOMPARE_SOURCE_ROOT})
+target_link_libraries(meshcompare-controllable-hole-filling
+	PUBLIC meshcompare-core Qt5::Widgets
+	PRIVATE meshlab-common Threads::Threads)
+
+add_library(meshcompare-python-hole-filling STATIC
+	plugins/controllable_hole_filling/python_patch.h
+	plugins/controllable_hole_filling/python_patch_engine.cpp
+	plugins/controllable_hole_filling/python_patch_panel.cpp
+	plugins/controllable_hole_filling/python_patch_panel.h)
+target_include_directories(meshcompare-python-hole-filling
+	PUBLIC ${MESHCOMPARE_SOURCE_ROOT})
+target_link_libraries(meshcompare-python-hole-filling
+	PUBLIC meshcompare-core Qt5::Widgets
+	PRIVATE meshlab-common)
+
 add_library(meshcompare-meshlab-infrastructure STATIC
 	services/mesh_import_service.cpp
 	services/mesh_import_service.h
@@ -94,6 +116,8 @@ target_link_libraries(meshcompare-ui
 		meshcompare-core
 		meshcompare-camera-pose-store
 		meshcompare-color-service
+		meshcompare-controllable-hole-filling
+		meshcompare-python-hole-filling
 		Qt5::Widgets
 	PRIVATE meshcompare-meshlab-infrastructure)
 
@@ -230,6 +254,26 @@ if(BUILD_TESTING)
 	target_link_libraries(meshcompare-standalone-main-window-test PRIVATE meshcompare-ui)
 	add_meshcompare_test(meshcompare-coloring-panel-test coloring_panel_test.cpp)
 	target_link_libraries(meshcompare-coloring-panel-test PRIVATE meshcompare-ui)
+	add_meshcompare_test(
+		meshcompare-controllable-hole-filling-test
+		controllable_hole_filling_test.cpp)
+	target_link_libraries(meshcompare-controllable-hole-filling-test
+		PRIVATE meshcompare-controllable-hole-filling)
+	add_meshcompare_test(
+		meshcompare-python-hole-filling-test
+		python_hole_filling_test.cpp)
+	target_link_libraries(meshcompare-python-hole-filling-test
+		PRIVATE meshcompare-python-hole-filling)
+	add_executable(
+		meshcompare-controllable-hole-filling-benchmark
+		"${MESHCOMPARE_TEST_ROOT}/controllable_hole_filling_benchmark.cpp")
+	target_link_libraries(meshcompare-controllable-hole-filling-benchmark
+		PRIVATE
+			meshcompare-controllable-hole-filling
+			meshcompare-meshlab-infrastructure
+			meshlab-common
+			Qt5::Core)
+	add_dependencies(meshcompare-controllable-hole-filling-benchmark io_base)
 	add_meshcompare_test(meshcompare-workspace-controller-test workspace_controller_test.cpp)
 	target_link_libraries(meshcompare-workspace-controller-test
 		PRIVATE meshcompare-ui meshcompare-meshlab-infrastructure meshlab-common)

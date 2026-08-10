@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <memory>
 #include <unordered_map>
 
@@ -21,6 +22,12 @@ public:
     MeshModel* allocateMesh(const QString& sourcePath, const QString& displayName);
     MeshResourceId resourceIdFor(const MeshModel& mesh) const;
     void removeMesh(MeshResourceId resourceId);
+    OperationResult createMesh(
+        const QString& sourcePath,
+        const QString& displayName,
+        const QVector<MeshPoint3D>& vertices,
+        const QVector<std::array<int, 3>>& faces,
+        MeshResourceId* resourceId);
 
     bool hasPositiveAreaFaces(MeshResourceId resourceId) const;
     OperationResult snapshotGeometry(

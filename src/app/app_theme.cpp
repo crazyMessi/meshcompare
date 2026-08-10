@@ -157,7 +157,9 @@ QLabel#workspaceStatusLabel[phase="inactive"] {
     color: #858680;
 }
 
-QFrame#coloringPanel, QFrame#cameraPanel {
+QFrame#coloringPanel,
+QFrame#cameraPanel,
+QFrame#controllableHoleFillingPanel {
     background: #292A27;
     color: #F2F0EB;
     border: 1px solid #4A4B46;
@@ -227,8 +229,44 @@ QLabel#screenshotBrowserEmptyState {
     color: #858680;
 }
 
-QFrame#coloringPanel QLabel, QFrame#cameraPanel QLabel {
+QFrame#coloringPanel QLabel,
+QFrame#cameraPanel QLabel,
+QFrame#controllableHoleFillingPanel QLabel {
     color: #E5E2DC;
+}
+
+QFrame#controllableHoleFillingPanel QGroupBox {
+    color: #C9C6C0;
+    background: #242522;
+    border: 1px solid #3A3B37;
+    border-radius: 8px;
+    margin-top: 7px;
+    padding-top: 4px;
+}
+
+QFrame#controllableHoleFillingPanel QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 9px;
+    padding: 0 4px;
+}
+
+QLabel#holeFillingTitle {
+    color: #FAF8F3;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+QLabel#holeFillingHint {
+    color: #9D9E98;
+    font-size: 11px;
+}
+
+QPushButton#generateHolePatchButton {
+    min-height: 34px;
+    color: #FFFFFF;
+    background: #3C64D9;
+    border-color: #4B73EA;
+    font-weight: 600;
 }
 
 QLabel#cameraPanelTitle {
@@ -388,11 +426,13 @@ TagEditor QToolButton#tagChip:hover {
     border-color: #7565E3;
 }
 
-QFrame#coloringPanel QComboBox {
+QFrame#coloringPanel QComboBox,
+QFrame#controllableHoleFillingPanel QComboBox {
     combobox-popup: 0;
 }
 
-QFrame#coloringPanel QComboBox QAbstractItemView {
+QFrame#coloringPanel QComboBox QAbstractItemView,
+QFrame#controllableHoleFillingPanel QComboBox QAbstractItemView {
     color: #F2F0EB;
     background: #20211F;
     border: 1px solid #4A4B46;
@@ -403,18 +443,21 @@ QFrame#coloringPanel QComboBox QAbstractItemView {
     selection-background-color: #6252D2;
 }
 
-QFrame#coloringPanel QComboBox QAbstractItemView::item {
+QFrame#coloringPanel QComboBox QAbstractItemView::item,
+QFrame#controllableHoleFillingPanel QComboBox QAbstractItemView::item {
     min-height: 30px;
     padding: 4px 10px;
     border: 0;
 }
 
-QFrame#coloringPanel QComboBox QAbstractItemView::item:hover {
+QFrame#coloringPanel QComboBox QAbstractItemView::item:hover,
+QFrame#controllableHoleFillingPanel QComboBox QAbstractItemView::item:hover {
     color: #FFFFFF;
     background: #383936;
 }
 
-QFrame#coloringPanel QComboBox QAbstractItemView::item:selected {
+QFrame#coloringPanel QComboBox QAbstractItemView::item:selected,
+QFrame#controllableHoleFillingPanel QComboBox QAbstractItemView::item:selected {
     color: #FFFFFF;
     background: #6252D2;
 }

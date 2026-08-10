@@ -6,6 +6,7 @@
 #include <QDateTime>
 #include <QFileInfo>
 #include <QScopedValueRollback>
+#include <QSet>
 
 #include "../core/reference_resolver.h"
 #include "../core/renderer_adapter.h"
@@ -133,6 +134,63 @@ QString suggestedWorkspaceUid(const QStringList& paths)
         return info.completeBaseName().trimmed();
     }
     return {};
+}
+
+MeshId nextMeshId(const QVector<MeshEntry>& meshes)
+{
+    MeshId result = 1;
+    for (const MeshEntry& mesh : meshes)
+        result = std::max(result, mesh.id + 1);
+    return result;
+}
+
+QString uniqueReconstructionLayerName(
+    const QString& sourceName,
+    const QVector<MeshEntry>& meshes)
+{
+    QSet<QString> names;
+    for (const MeshEntry& mesh : meshes)
+        names.insert(mesh.displayName);
+
+    const QString base =
+        sourceName + QStringLiteral(" Reconstructed");
+    if (!names.contains(base))
+        return base;
+    for (int suffix = 2;; ++suffix) {
+        const QString candidate =
+            QStringLiteral("%1 %2").arg(base).arg(suffix);
+        if (!names.contains(candidate))
+            return candidate;
+    }
+}
+
+QString uniquePatchLayerName(
+    const QString& sourceName,
+    const QVector<MeshEntry>& meshes)
+{
+    QSet<QString> names;
+    for (const MeshEntry& mesh : meshes)
+        names.insert(mesh.displayName);
+
+    const QString base = sourceName + QStringLiteral(" Patch");
+    if (!names.contains(base))
+        return base;
+    for (int suffix = 2;; ++suffix) {
+        const QString candidate =
+            QStringLiteral("%1 %2").arg(base).arg(suffix);
+        if (!names.contains(candidate))
+            return candidate;
+    }
+}
+
+void clearGeometryDependentState(QVector<MeshEntry>* meshes)
+{
+    for (MeshEntry& mesh : *meshes) {
+        mesh.presentation = {};
+        mesh.score = 0.0;
+        mesh.hasScore = false;
+        mesh.analysisSummary = {};
+    }
 }
 } // namespace
 
@@ -700,6 +758,300 @@ OperationResult WorkspaceController::clearColoring()
         return cleared;
     publishOverlayUpdates(committedAnalysisOverlays());
     publishWorkspaceChanged();
+    return OperationResult::success();
+}
+
+OperationResult WorkspaceController::fillHoles(
+    const controllable_hole_filling::FillRequest& request,
+    controllable_hole_filling::FillSummary* summary)
+{
+    using namespace controllable_hole_filling;
+
+    if (summary != nullptr)
+        *summary = {};
+    if (handlingCallback_) {
+        return OperationResult::failure(
+            QStringLiteral("Hole filling is unavailable during a renderer callback."));
+    }
+    if (replacingWorkspace_) {
+        return OperationResult::failure(
+            QStringLiteral("Hole filling is unavailable during workspace replacement."));
+    }
+    if (cameraCommandInProgress_) {
+        return OperationResult::failure(
+            QStringLiteral("Hole filling is unavailable during a camera-pose command."));
+    }
+    if (state_.phase() != WorkspacePhase::Ready || repository_ == nullptr) {
+        return OperationResult::failure(
+            QStringLiteral("Hole filling requires an idle ready workspace."));
+    }
+    const MeshEntry* target = state_.mesh(request.meshId);
+    if (target == nullptr) {
+        return OperationResult::failure(
+            QStringLiteral("The hole-filling target does not exist."));
+    }
+    if (request.outputMode == OutputMode::NewLayer &&
+        state_.meshes().size() >= 8) {
+        return OperationResult::failure(
+            QStringLiteral("A workspace cannot contain more than 8 mesh layers."));
+    }
+
+    const IMeshGeometryView* geometry = nullptr;
+    const OperationResult snapshot =
+        repository_->snapshotGeometry(target->resourceId, &geometry);
+    if (!snapshot.ok)
+        return snapshot;
+    if (geometry == nullptr) {
+        return OperationResult::failure(
+            QStringLiteral("The hole-filling target has no geometry."));
+    }
+
+    const Engine engine;
+    const FillResult fill = engine.fill(*geometry, request.config);
+    if (!fill.result.ok)
+        return fill.result;
+
+    const bool newLayer =
+        request.outputMode == OutputMode::NewLayer;
+    const TriangleMesh& generated = fill.mesh;
+    QVector<MeshEntry> updatedMeshes = state_.meshes();
+    clearGeometryDependentState(&updatedMeshes);
+    const QString layerName =
+        newLayer
+            ? uniqueReconstructionLayerName(target->displayName, updatedMeshes)
+            : target->displayName;
+    MeshResourceId stagedResourceId = 0;
+    const OperationResult staged = repository_->createMesh(
+        newLayer ? QString() : target->sourcePath,
+        layerName,
+        generated.vertices,
+        generated.faces,
+        &stagedResourceId);
+    if (!staged.ok)
+        return staged;
+
+    MeshId selectedMeshId = request.meshId;
+    MeshResourceId replacedResourceId = 0;
+    if (newLayer) {
+        MeshEntry patchEntry;
+        patchEntry.id = nextMeshId(updatedMeshes);
+        patchEntry.resourceId = stagedResourceId;
+        patchEntry.displayName = layerName;
+        updatedMeshes.append(patchEntry);
+        selectedMeshId = patchEntry.id;
+    }
+    else {
+        for (MeshEntry& mesh : updatedMeshes) {
+            if (mesh.id != request.meshId)
+                continue;
+            replacedResourceId = mesh.resourceId;
+            mesh.resourceId = stagedResourceId;
+            break;
+        }
+    }
+
+    const OperationResult workspaceValidation =
+        state_.validateWorkspace(updatedMeshes, state_.referenceId());
+    if (!workspaceValidation.ok) {
+        repository_->removeMesh(stagedResourceId);
+        return workspaceValidation;
+    }
+
+    QScopedValueRollback<bool> replacementGuard(replacingWorkspace_, true);
+    const SceneDescriptor scene = makeSceneDescriptor(
+        state_.generation() + 1,
+        updatedMeshes,
+        state_.referenceId(),
+        state_.layoutMode(),
+        renderer_.captureCamera(),
+        state_.gridNormalizationEnabled());
+    const OperationResult prepared =
+        renderer_.prepareScene(scene, *repository_);
+    if (!prepared.ok) {
+        renderer_.discardPreparedScene();
+        repository_->removeMesh(stagedResourceId);
+        return prepared;
+    }
+
+    disconnectRendererEvents();
+    renderer_.commitPreparedScene();
+    connectRendererEvents();
+    colorService_.reset();
+    const OperationResult committed = state_.commitGeometryChange(
+        std::move(updatedMeshes),
+        state_.referenceId(),
+        selectedMeshId);
+    Q_ASSERT_X(
+        committed.ok,
+        "WorkspaceController::fillHoles",
+        "a synchronously prevalidated geometry change must succeed");
+    if (!committed.ok) {
+        state_.enterFatalError();
+        return OperationResult::failure(
+            QStringLiteral("The prepared hole-filling result could not be committed."));
+    }
+    if (replacedResourceId != 0)
+        repository_->removeMesh(replacedResourceId);
+
+    renderer_.setReferenceMesh(state_.referenceId());
+    renderer_.setSelectedMesh(state_.selectedMeshId());
+    createColorService();
+    publishWorkspaceChanged();
+
+    if (summary != nullptr) {
+        summary->vertexCount = generated.vertices.size();
+        summary->faceCount = generated.faces.size();
+        summary->activeCellCount = fill.activeCellCount;
+        summary->elapsedMilliseconds = fill.elapsedMilliseconds;
+        summary->outputLayerName = layerName;
+    }
+    return OperationResult::success();
+}
+
+OperationResult WorkspaceController::fillPythonHoles(
+    const python_hole_filling::FillRequest& request,
+    python_hole_filling::FillSummary* summary)
+{
+    using namespace python_hole_filling;
+
+    if (summary != nullptr)
+        *summary = {};
+    if (handlingCallback_) {
+        return OperationResult::failure(
+            QStringLiteral("Hole filling is unavailable during a renderer callback."));
+    }
+    if (replacingWorkspace_) {
+        return OperationResult::failure(
+            QStringLiteral("Hole filling is unavailable during workspace replacement."));
+    }
+    if (cameraCommandInProgress_) {
+        return OperationResult::failure(
+            QStringLiteral("Hole filling is unavailable during a camera-pose command."));
+    }
+    if (state_.phase() != WorkspacePhase::Ready || repository_ == nullptr) {
+        return OperationResult::failure(
+            QStringLiteral("Hole filling requires an idle ready workspace."));
+    }
+    const MeshEntry* target = state_.mesh(request.meshId);
+    if (target == nullptr) {
+        return OperationResult::failure(
+            QStringLiteral("The hole-filling target does not exist."));
+    }
+    if (request.outputMode == OutputMode::NewLayer &&
+        state_.meshes().size() >= 8) {
+        return OperationResult::failure(
+            QStringLiteral("A workspace cannot contain more than 8 mesh layers."));
+    }
+
+    const IMeshGeometryView* geometry = nullptr;
+    const OperationResult snapshot =
+        repository_->snapshotGeometry(target->resourceId, &geometry);
+    if (!snapshot.ok)
+        return snapshot;
+    if (geometry == nullptr) {
+        return OperationResult::failure(
+            QStringLiteral("The hole-filling target has no geometry."));
+    }
+
+    const Engine engine;
+    const FillResult fill = engine.fill(*geometry, request.config);
+    if (!fill.result.ok)
+        return fill.result;
+
+    const bool newLayer =
+        request.outputMode == OutputMode::NewLayer;
+    const TriangleMesh& generated =
+        newLayer ? fill.patch : fill.merged;
+    QVector<MeshEntry> updatedMeshes = state_.meshes();
+    clearGeometryDependentState(&updatedMeshes);
+    const QString layerName =
+        newLayer
+            ? uniquePatchLayerName(target->displayName, updatedMeshes)
+            : target->displayName;
+    MeshResourceId stagedResourceId = 0;
+    const OperationResult staged = repository_->createMesh(
+        newLayer ? QString() : target->sourcePath,
+        layerName,
+        generated.vertices,
+        generated.faces,
+        &stagedResourceId);
+    if (!staged.ok)
+        return staged;
+
+    MeshId selectedMeshId = request.meshId;
+    MeshResourceId replacedResourceId = 0;
+    if (newLayer) {
+        MeshEntry patchEntry;
+        patchEntry.id = nextMeshId(updatedMeshes);
+        patchEntry.resourceId = stagedResourceId;
+        patchEntry.displayName = layerName;
+        updatedMeshes.append(patchEntry);
+        selectedMeshId = patchEntry.id;
+    }
+    else {
+        for (MeshEntry& mesh : updatedMeshes) {
+            if (mesh.id != request.meshId)
+                continue;
+            replacedResourceId = mesh.resourceId;
+            mesh.resourceId = stagedResourceId;
+            break;
+        }
+    }
+
+    const OperationResult workspaceValidation =
+        state_.validateWorkspace(updatedMeshes, state_.referenceId());
+    if (!workspaceValidation.ok) {
+        repository_->removeMesh(stagedResourceId);
+        return workspaceValidation;
+    }
+
+    QScopedValueRollback<bool> replacementGuard(replacingWorkspace_, true);
+    const SceneDescriptor scene = makeSceneDescriptor(
+        state_.generation() + 1,
+        updatedMeshes,
+        state_.referenceId(),
+        state_.layoutMode(),
+        renderer_.captureCamera(),
+        state_.gridNormalizationEnabled());
+    const OperationResult prepared =
+        renderer_.prepareScene(scene, *repository_);
+    if (!prepared.ok) {
+        renderer_.discardPreparedScene();
+        repository_->removeMesh(stagedResourceId);
+        return prepared;
+    }
+
+    disconnectRendererEvents();
+    renderer_.commitPreparedScene();
+    connectRendererEvents();
+    colorService_.reset();
+    const OperationResult committed = state_.commitGeometryChange(
+        std::move(updatedMeshes),
+        state_.referenceId(),
+        selectedMeshId);
+    Q_ASSERT_X(
+        committed.ok,
+        "WorkspaceController::fillPythonHoles",
+        "a synchronously prevalidated geometry change must succeed");
+    if (!committed.ok) {
+        state_.enterFatalError();
+        return OperationResult::failure(
+            QStringLiteral("The prepared hole-filling result could not be committed."));
+    }
+    if (replacedResourceId != 0)
+        repository_->removeMesh(replacedResourceId);
+
+    renderer_.setReferenceMesh(state_.referenceId());
+    renderer_.setSelectedMesh(state_.selectedMeshId());
+    createColorService();
+    publishWorkspaceChanged();
+
+    if (summary != nullptr) {
+        summary->patchedHoleCount = fill.patchedHoleCount;
+        summary->patchVertexCount = fill.patch.vertices.size();
+        summary->patchFaceCount = fill.patch.faces.size();
+        summary->outputLayerName = layerName;
+    }
     return OperationResult::success();
 }
 

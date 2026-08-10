@@ -96,6 +96,7 @@ include(
 include("${MESHCOMPARE_MESHLAB_SRC_DIR}/cmake/meshlab_tools.cmake")
 
 find_package(OpenGL REQUIRED)
+find_package(Threads REQUIRED)
 find_package(
 	Qt5 5.15
 	COMPONENTS Core Gui Widgets OpenGL Xml Network

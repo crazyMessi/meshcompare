@@ -76,6 +76,61 @@ StagedWorkspace failedStage(
     return {OperationResult::failure(error), nullptr, {}, std::move(fileErrors)};
 }
 
+StagedWorkspace stagedOpenCube()
+{
+    std::unique_ptr<MeshLabMeshRepository> repository(
+        new MeshLabMeshRepository);
+    MeshModel* mesh = repository->allocateMesh(
+        QStringLiteral("/tmp/open-cube.obj"),
+        QStringLiteral("open-cube.obj"));
+    const CMeshO::CoordType positions[] = {
+        CMeshO::CoordType(0, 0, 0),
+        CMeshO::CoordType(1, 0, 0),
+        CMeshO::CoordType(1, 1, 0),
+        CMeshO::CoordType(0, 1, 0),
+        CMeshO::CoordType(0, 0, 1),
+        CMeshO::CoordType(1, 0, 1),
+        CMeshO::CoordType(1, 1, 1),
+        CMeshO::CoordType(0, 1, 1),
+    };
+    std::vector<CMeshO::VertexPointer> vertices(8);
+    CMeshO::VertexIterator vertex =
+        vcg::tri::Allocator<CMeshO>::AddVertices(mesh->cm, 8);
+    for (int index = 0; index < 8; ++index, ++vertex) {
+        vertices[static_cast<std::size_t>(index)] = &*vertex;
+        vertex->P() = positions[index];
+    }
+    const std::array<int, 3> faces[] = {
+        {{0, 3, 2}},
+        {{0, 2, 1}},
+        {{0, 1, 5}},
+        {{0, 5, 4}},
+        {{1, 2, 6}},
+        {{1, 6, 5}},
+        {{2, 3, 7}},
+        {{2, 7, 6}},
+        {{3, 0, 4}},
+        {{3, 4, 7}},
+    };
+    CMeshO::FaceIterator face =
+        vcg::tri::Allocator<CMeshO>::AddFaces(mesh->cm, 10);
+    for (const std::array<int, 3>& indices : faces) {
+        face->V(0) = vertices[static_cast<std::size_t>(indices[0])];
+        face->V(1) = vertices[static_cast<std::size_t>(indices[1])];
+        face->V(2) = vertices[static_cast<std::size_t>(indices[2])];
+        ++face;
+    }
+    mesh->updateDataMask();
+
+    MeshEntry source = entry(1, QStringLiteral("open-cube.obj"));
+    source.resourceId = repository->resourceIdFor(*mesh);
+    return {OperationResult::success(),
+            std::move(repository),
+            {source},
+            {},
+            SceneLayoutMode::Overlay};
+}
+
 OperationResult installPresentations(
     WorkspaceState& state,
     FakeRendererAdapter& renderer,
@@ -152,6 +207,107 @@ private slots:
         QCOMPARE(state.meshes().size(), 1);
         QCOMPARE(state.referenceId(), MeshId(1));
         QCOMPARE(renderer.lastPreparedScene().meshes.size(), 1);
+    }
+
+    void holeFillingCanCreateANewReconstructedLayer()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(stagedOpenCube());
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        WorkspaceController controller(
+            state, importer, renderer, comparer, cameraStore_);
+        QVERIFY(controller.importMeshes({QStringLiteral("open-cube.obj")})
+                    .result.ok);
+
+        controllable_hole_filling::FillRequest request;
+        request.meshId = 1;
+        request.config.resolution = 32;
+        request.config.cclIterations = 2;
+        request.outputMode =
+            controllable_hole_filling::OutputMode::NewLayer;
+        controllable_hole_filling::FillSummary summary;
+
+        const OperationResult result =
+            controller.fillHoles(request, &summary);
+
+        QVERIFY2(result.ok, qPrintable(result.error));
+        QCOMPARE(state.generation(), quint64(2));
+        QCOMPARE(state.meshes().size(), 2);
+        QCOMPARE(state.selectedMeshId(), MeshId(2));
+        QCOMPARE(state.meshes().back().displayName,
+                 QStringLiteral("open-cube.obj Reconstructed"));
+        QVERIFY(summary.vertexCount > 0);
+        QVERIFY(summary.faceCount > 0);
+        QVERIFY(summary.activeCellCount > 0);
+        QCOMPARE(renderer.lastPreparedScene().generation, quint64(2));
+        QCOMPARE(renderer.lastPreparedScene().meshes.size(), 2);
+        QCOMPARE(renderer.selectedMeshId(), MeshId(2));
+    }
+
+    void holeFillingCanReplaceTheCurrentMeshResource()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(stagedOpenCube());
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        WorkspaceController controller(
+            state, importer, renderer, comparer, cameraStore_);
+        QVERIFY(controller.importMeshes({QStringLiteral("open-cube.obj")})
+                    .result.ok);
+        const MeshResourceId originalResource =
+            state.meshes().front().resourceId;
+
+        controllable_hole_filling::FillRequest request;
+        request.meshId = 1;
+        request.config.resolution = 32;
+        request.config.cclIterations = 2;
+        request.outputMode =
+            controllable_hole_filling::OutputMode::CurrentMesh;
+
+        const OperationResult result =
+            controller.fillHoles(request);
+
+        QVERIFY2(result.ok, qPrintable(result.error));
+        QCOMPARE(state.generation(), quint64(2));
+        QCOMPARE(state.meshes().size(), 1);
+        QCOMPARE(state.selectedMeshId(), MeshId(1));
+        QVERIFY(state.meshes().front().resourceId != originalResource);
+        QCOMPARE(
+            renderer.lastPreparedScene().meshes.front().resourceId,
+            state.meshes().front().resourceId);
+    }
+
+    void failedHoleFillingScenePreparationPreservesTheCurrentMesh()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(stagedOpenCube());
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        WorkspaceController controller(
+            state, importer, renderer, comparer, cameraStore_);
+        QVERIFY(controller.importMeshes({QStringLiteral("open-cube.obj")})
+                    .result.ok);
+        const MeshResourceId originalResource =
+            state.meshes().front().resourceId;
+        renderer.failNextPrepare(QStringLiteral("GPU upload failed"));
+
+        controllable_hole_filling::FillRequest request;
+        request.meshId = 1;
+        request.config.resolution = 32;
+        request.config.cclIterations = 2;
+        request.outputMode =
+            controllable_hole_filling::OutputMode::CurrentMesh;
+
+        const OperationResult result =
+            controller.fillHoles(request);
+
+        QVERIFY(!result.ok);
+        QCOMPARE(result.error, QStringLiteral("GPU upload failed"));
+        QCOMPARE(state.generation(), quint64(1));
+        QCOMPARE(state.meshes().size(), 1);
+        QCOMPARE(state.meshes().front().resourceId, originalResource);
+        QCOMPARE(renderer.committedGeneration(), quint64(1));
     }
 
     void failedRendererPreparationPreservesTheOldWorkspace()

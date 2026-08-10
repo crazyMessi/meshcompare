@@ -11,6 +11,8 @@
 #include "camera_commands.h"
 #include "coloring_commands.h"
 #include "../core/meshcompare_types.h"
+#include "../plugins/controllable_hole_filling/controllable_hole_filling.h"
+#include "../plugins/controllable_hole_filling/python_patch.h"
 #include "../services/mesh_color_service.h"
 
 class ICameraPoseStore;
@@ -34,7 +36,9 @@ QString resolveWorkspaceUuid(
 
 class WorkspaceController final : public QObject,
                                   public IColoringCommands,
-                                  public ICameraCommands
+                                  public ICameraCommands,
+                                  public controllable_hole_filling::ICommands,
+                                  public python_hole_filling::ICommands
 {
     Q_OBJECT
 
@@ -62,6 +66,12 @@ public:
         MeshId meshId,
         const QColor& color) override;
     OperationResult clearColoring() override;
+    OperationResult fillHoles(
+        const controllable_hole_filling::FillRequest& request,
+        controllable_hole_filling::FillSummary* summary = nullptr) override;
+    OperationResult fillPythonHoles(
+        const python_hole_filling::FillRequest& request,
+        python_hole_filling::FillSummary* summary = nullptr) override;
     CameraPanelSnapshot cameraPanelSnapshot() const override;
     QString cameraPoseLibraryPath() const override;
     CameraScreenshotLibrarySnapshot cameraScreenshotLibrarySnapshot() const override;

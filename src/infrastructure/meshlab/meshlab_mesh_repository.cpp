@@ -5,6 +5,9 @@
 #include <unordered_map>
 
 #include <common/ml_document/mesh_document.h>
+#include <vcg/complex/allocate.h>
+#include <vcg/complex/algorithms/update/bounding.h>
+#include <vcg/complex/algorithms/update/normal.h>
 
 namespace
 {
@@ -201,6 +204,95 @@ void MeshLabMeshRepository::removeMesh(MeshResourceId resourceId)
         return;
     views_.erase(resourceId);
     document_->delMesh(static_cast<unsigned int>(resourceId - 1));
+}
+
+OperationResult MeshLabMeshRepository::createMesh(
+    const QString& sourcePath,
+    const QString& displayName,
+    const QVector<MeshPoint3D>& vertices,
+    const QVector<std::array<int, 3>>& faces,
+    MeshResourceId* resourceId)
+{
+    if (resourceId == nullptr) {
+        return OperationResult::failure(
+            QStringLiteral("No mesh resource output was provided."));
+    }
+    *resourceId = 0;
+    if (vertices.isEmpty() || faces.isEmpty()) {
+        return OperationResult::failure(
+            QStringLiteral("A generated mesh must contain vertices and triangles."));
+    }
+    for (const MeshPoint3D& point : vertices) {
+        if (!std::isfinite(point[0]) ||
+            !std::isfinite(point[1]) ||
+            !std::isfinite(point[2])) {
+            return OperationResult::failure(
+                QStringLiteral("Generated mesh vertices must be finite."));
+        }
+    }
+    for (const std::array<int, 3>& face : faces) {
+        for (int index : face) {
+            if (index < 0 || index >= vertices.size()) {
+                return OperationResult::failure(
+                    QStringLiteral("Generated mesh contains an invalid face index."));
+            }
+        }
+        if (face[0] == face[1] ||
+            face[1] == face[2] ||
+            face[2] == face[0]) {
+            return OperationResult::failure(
+                QStringLiteral("Generated mesh contains a degenerate face."));
+        }
+    }
+
+    MeshModel* model = allocateMesh(sourcePath, displayName);
+    if (model == nullptr) {
+        return OperationResult::failure(
+            QStringLiteral("The generated mesh layer could not be allocated."));
+    }
+    const MeshResourceId allocatedId = resourceIdFor(*model);
+    try {
+        std::vector<CMeshO::VertexPointer> modelVertices(
+            static_cast<std::size_t>(vertices.size()));
+        CMeshO::VertexIterator vertex =
+            vcg::tri::Allocator<CMeshO>::AddVertices(
+                model->cm,
+                static_cast<std::size_t>(vertices.size()));
+        for (int index = 0; index < vertices.size(); ++index, ++vertex) {
+            modelVertices[static_cast<std::size_t>(index)] = &*vertex;
+            const MeshPoint3D& point = vertices[index];
+            vertex->P() =
+                CMeshO::CoordType(point[0], point[1], point[2]);
+        }
+
+        CMeshO::FaceIterator face =
+            vcg::tri::Allocator<CMeshO>::AddFaces(
+                model->cm,
+                static_cast<std::size_t>(faces.size()));
+        for (const std::array<int, 3>& indices : faces) {
+            face->V(0) =
+                modelVertices[static_cast<std::size_t>(indices[0])];
+            face->V(1) =
+                modelVertices[static_cast<std::size_t>(indices[1])];
+            face->V(2) =
+                modelVertices[static_cast<std::size_t>(indices[2])];
+            ++face;
+        }
+
+        model->cm.Tr.SetIdentity();
+        vcg::tri::UpdateBounding<CMeshO>::Box(model->cm);
+        vcg::tri::UpdateNormal<CMeshO>::PerFaceNormalized(model->cm);
+        vcg::tri::UpdateNormal<CMeshO>::PerVertexAngleWeighted(model->cm);
+        model->updateDataMask();
+    }
+    catch (...) {
+        removeMesh(allocatedId);
+        return OperationResult::failure(
+            QStringLiteral("The generated mesh layer could not be populated."));
+    }
+
+    *resourceId = allocatedId;
+    return OperationResult::success();
 }
 
 MeshModel* MeshLabMeshRepository::mesh(MeshResourceId resourceId) const

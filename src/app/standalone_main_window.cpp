@@ -7,6 +7,7 @@
 #include "app_theme.h"
 #include "workspace_controller.h"
 #include "../core/workspace_state.h"
+#include "../plugins/controllable_hole_filling/python_patch_panel.h"
 
 #include <algorithm>
 
@@ -238,6 +239,7 @@ void StandaloneMainWindow::refreshWorkspace()
         state_.phase() == WorkspacePhase::Ready;
     coloringButton_->setEnabled(actionsEnabled);
     cameraButton_->setEnabled(actionsEnabled);
+    holeFillingButton_->setEnabled(viewSwitchingEnabled);
     overlayViewButton_->setEnabled(viewSwitchingEnabled);
     gridViewButton_->setEnabled(viewSwitchingEnabled);
     overlayViewButton_->setChecked(
@@ -267,6 +269,8 @@ void StandaloneMainWindow::refreshWorkspace()
         coloringPanel_->refreshFromState();
     if (cameraPanel_ != nullptr && !cameraPanel_->isHidden())
         cameraPanel_->refreshFromState();
+    if (holeFillingPanel_ != nullptr && !holeFillingPanel_->isHidden())
+        holeFillingPanel_->refreshFromState();
 }
 
 void StandaloneMainWindow::bindColoringCommands(IColoringCommands& commands)
@@ -305,6 +309,27 @@ void StandaloneMainWindow::unbindCameraCommands()
 {
     delete cameraPanel_;
     cameraPanel_ = nullptr;
+}
+
+void StandaloneMainWindow::bindHoleFillingCommands(
+    python_hole_filling::ICommands& commands)
+{
+    unbindHoleFillingCommands();
+    holeFillingPanel_ = new python_hole_filling::Panel(
+        state_, commands, centralWidget());
+    holeFillingPanel_->hide();
+    connect(
+        holeFillingPanel_,
+        &python_hole_filling::Panel::operationFailed,
+        this,
+        &StandaloneMainWindow::presentPanelFailure);
+    refreshWorkspace();
+}
+
+void StandaloneMainWindow::unbindHoleFillingCommands()
+{
+    delete holeFillingPanel_;
+    holeFillingPanel_ = nullptr;
 }
 
 void StandaloneMainWindow::presentAnalysisProgress(
@@ -377,12 +402,20 @@ bool StandaloneMainWindow::eventFilter(QObject* watched, QEvent* event)
             !containsGlobalPosition(cameraButton_, globalPosition)) {
             cameraPanel_->hide();
         }
+        if (holeFillingPanel_ != nullptr &&
+            holeFillingPanel_->isVisible() &&
+            !belongsToPanelInteraction(globalPosition, holeFillingPanel_) &&
+            !containsGlobalPosition(holeFillingButton_, globalPosition)) {
+            holeFillingPanel_->hide();
+        }
     }
     else if (event->type() == QEvent::ApplicationDeactivate) {
         if (coloringPanel_ != nullptr)
             coloringPanel_->hide();
         if (cameraPanel_ != nullptr)
             cameraPanel_->hide();
+        if (holeFillingPanel_ != nullptr)
+            holeFillingPanel_->hide();
     }
     return QMainWindow::eventFilter(watched, event);
 }
@@ -414,6 +447,8 @@ void StandaloneMainWindow::resizeEvent(QResizeEvent* event)
         positionColoringPanel();
     if (cameraPanel_ != nullptr && !cameraPanel_->isHidden())
         positionCameraPanel();
+    if (holeFillingPanel_ != nullptr && !holeFillingPanel_->isHidden())
+        positionHoleFillingPanel();
 }
 
 QFrame* StandaloneMainWindow::buildNoticeBanner(QWidget* parent)
@@ -538,6 +573,10 @@ QWidget* StandaloneMainWindow::buildCommandBar(QWidget* parent)
         tr("Camera") + QStringLiteral("  ▾"),
         commandBar);
     cameraButton_->setObjectName("cameraButton");
+    holeFillingButton_ = new QPushButton(
+        tr("Hole Filling") + QStringLiteral("  ▾"),
+        commandBar);
+    holeFillingButton_->setObjectName("holeFillingButton");
     auto* viewLabel = new QLabel(tr("View:"), commandBar);
     viewLabel->setObjectName("viewModeLabel");
     overlayViewButton_ = new QPushButton(tr("Overlay"), commandBar);
@@ -569,6 +608,7 @@ QWidget* StandaloneMainWindow::buildCommandBar(QWidget* parent)
     layersButton_->setPopupMode(QToolButton::InstantPopup);
     coloringButton_->setEnabled(false);
     cameraButton_->setEnabled(false);
+    holeFillingButton_->setEnabled(false);
     overlayViewButton_->setEnabled(false);
     gridViewButton_->setEnabled(false);
     normalizeGridButton_->setEnabled(false);
@@ -593,6 +633,7 @@ QWidget* StandaloneMainWindow::buildCommandBar(QWidget* parent)
     layout->addWidget(importMeshesButton_);
     layout->addWidget(coloringButton_);
     layout->addWidget(cameraButton_);
+    layout->addWidget(holeFillingButton_);
     layout->addWidget(toolbarDivider(commandBar));
     layout->addWidget(viewLabel);
     layout->addWidget(overlayViewButton_);
@@ -623,6 +664,11 @@ QWidget* StandaloneMainWindow::buildCommandBar(QWidget* parent)
         &QPushButton::clicked,
         this,
         &StandaloneMainWindow::toggleCameraPanel);
+    connect(
+        holeFillingButton_,
+        &QPushButton::clicked,
+        this,
+        &StandaloneMainWindow::toggleHoleFillingPanel);
     connect(overlayViewButton_, &QPushButton::clicked, this, [this] {
         if (state_.layoutMode() != SceneLayoutMode::Overlay)
             emit layoutModeRequested(SceneLayoutMode::Overlay);
@@ -690,6 +736,8 @@ void StandaloneMainWindow::toggleColoringPanel()
 
     if (cameraPanel_ != nullptr)
         cameraPanel_->hide();
+    if (holeFillingPanel_ != nullptr)
+        holeFillingPanel_->hide();
     coloringPanel_->refreshFromState();
     positionColoringPanel();
     coloringPanel_->show();
@@ -718,6 +766,8 @@ void StandaloneMainWindow::toggleCameraPanel()
 
     if (coloringPanel_ != nullptr)
         coloringPanel_->hide();
+    if (holeFillingPanel_ != nullptr)
+        holeFillingPanel_->hide();
     cameraPanel_->refreshFromState();
     positionCameraPanel();
     cameraPanel_->show();
@@ -734,6 +784,41 @@ void StandaloneMainWindow::positionCameraPanel()
     const int maximumX = qMax(0, centralWidget()->width() - cameraPanel_->width());
     const int maximumY = qMax(0, centralWidget()->height() - cameraPanel_->height());
     cameraPanel_->move(
+        qBound(0, anchor.x(), maximumX),
+        qBound(0, anchor.y(), maximumY));
+}
+
+void StandaloneMainWindow::toggleHoleFillingPanel()
+{
+    if (holeFillingPanel_ == nullptr)
+        return;
+    if (!holeFillingPanel_->isHidden()) {
+        holeFillingPanel_->hide();
+        return;
+    }
+
+    if (coloringPanel_ != nullptr)
+        coloringPanel_->hide();
+    if (cameraPanel_ != nullptr)
+        cameraPanel_->hide();
+    holeFillingPanel_->refreshFromState();
+    positionHoleFillingPanel();
+    holeFillingPanel_->show();
+    holeFillingPanel_->raise();
+}
+
+void StandaloneMainWindow::positionHoleFillingPanel()
+{
+    if (holeFillingPanel_ == nullptr || centralWidget() == nullptr)
+        return;
+    holeFillingPanel_->adjustSize();
+    const QPoint anchor = holeFillingButton_->mapTo(
+        centralWidget(), QPoint(0, holeFillingButton_->height() + 4));
+    const int maximumX =
+        qMax(0, centralWidget()->width() - holeFillingPanel_->width());
+    const int maximumY =
+        qMax(0, centralWidget()->height() - holeFillingPanel_->height());
+    holeFillingPanel_->move(
         qBound(0, anchor.x(), maximumX),
         qBound(0, anchor.y(), maximumY));
 }

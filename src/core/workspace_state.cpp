@@ -202,6 +202,43 @@ OperationResult WorkspaceState::commitWorkspace(
     return OperationResult::success();
 }
 
+OperationResult WorkspaceState::commitGeometryChange(
+    QVector<MeshEntry> meshes,
+    MeshId referenceId,
+    MeshId selectedMeshId)
+{
+    if (phase_ != WorkspacePhase::Ready) {
+        return OperationResult::failure(
+            QStringLiteral("Geometry changes require an idle ready workspace."));
+    }
+    const OperationResult validation =
+        validateWorkspace(meshes, referenceId);
+    if (!validation.ok)
+        return validation;
+
+    bool hasSelection = false;
+    for (MeshEntry& mesh : meshes) {
+        mesh.isReference = mesh.id == referenceId;
+        mesh.presentation = {};
+        mesh.score = 0.0;
+        mesh.hasScore = false;
+        mesh.analysisSummary = {};
+        hasSelection = hasSelection || mesh.id == selectedMeshId;
+    }
+    if (!hasSelection) {
+        return OperationResult::failure(
+            QStringLiteral("Selected mesh does not exist in the changed workspace."));
+    }
+
+    meshes_ = std::move(meshes);
+    referenceId_ = referenceId;
+    selectedMeshId_ = selectedMeshId;
+    phase_ = WorkspacePhase::Ready;
+    phaseBeforeLoading_ = WorkspacePhase::Ready;
+    ++generation_;
+    return OperationResult::success();
+}
+
 OperationResult WorkspaceState::setLayoutMode(SceneLayoutMode layoutMode)
 {
     if (phase_ != WorkspacePhase::Ready || meshes_.isEmpty()) {
