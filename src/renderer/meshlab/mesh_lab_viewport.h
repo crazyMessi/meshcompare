@@ -13,6 +13,7 @@
 
 #include "glarea_setting.h"
 #include "viewport_dependencies.h"
+#include "viewport_trackball_gesture.h"
 
 class QDomDocument;
 class QPaintEvent;
@@ -113,6 +114,7 @@ private:
     GLAreaSetting renderSettings_;
     vcg::Trackball trackball_;
     vcg::Trackball trackballLight_;
+    ViewportTrackballGesture defaultTrackballGesture_;
     float fov_ = 60.0f;
     float perspectiveFov_ = 60.0f;
     float nearPlane_ = 0.1f;

@@ -690,7 +690,6 @@ void MeshLabViewport::setView()
     scale.SetScale(4.0f, 4.0f, 4.0f);
     const vcg::Matrix44f trackballMatrix =
         scale * translation * trackball_.Matrix() * (-translation);
-
     const bool orthographic = usesOrthographicProjection();
     const float cameraDist = cameraDistance();
     nearPlane_ = cameraDist * clipRatioNear_;
@@ -1360,7 +1359,8 @@ void MeshLabViewport::mousePressEvent(QMouseEvent* event)
                                 (event->modifiers() & Qt::ControlModifier) &&
                                 event->button() == Qt::LeftButton);
     if (activeDefaultTrackball_) {
-        trackball_.MouseDown(
+        defaultTrackballGesture_.mouseDown(
+            trackball_,
             QT2VCG_X(this, event),
             QT2VCG_Y(this, event),
             QT2VCG(event->button(), event->modifiers()));
@@ -1380,7 +1380,8 @@ void MeshLabViewport::mouseMoveEvent(QMouseEvent* event)
         return;
 
     if (activeDefaultTrackball_) {
-        trackball_.MouseMove(QT2VCG_X(this, event), QT2VCG_Y(this, event));
+        defaultTrackballGesture_.mouseMove(
+            trackball_, QT2VCG_X(this, event), QT2VCG_Y(this, event));
         notifyCameraChanged();
     }
     else {
@@ -1392,7 +1393,8 @@ void MeshLabViewport::mouseMoveEvent(QMouseEvent* event)
 void MeshLabViewport::mouseReleaseEvent(QMouseEvent* event)
 {
     if (activeDefaultTrackball_) {
-        trackball_.MouseUp(
+        defaultTrackballGesture_.mouseUp(
+            trackball_,
             QT2VCG_X(this, event),
             QT2VCG_Y(this, event),
             QT2VCG(event->button(), event->modifiers()));

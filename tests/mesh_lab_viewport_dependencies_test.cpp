@@ -22,6 +22,7 @@
 
 #include "renderer/meshlab/glarea_setting.h"
 #include "renderer/meshlab/mesh_lab_viewport.h"
+#include "renderer/meshlab/viewport_trackball_gesture.h"
 #include "fakes/fake_viewport_callbacks.h"
 
 class TestRenderScene
@@ -201,6 +202,25 @@ class MeshLabViewportDependenciesTest : public QObject
     Q_OBJECT
 
 private slots:
+    void trackballGestureClearsModifiersFromThePressState()
+    {
+        vcg::Trackball trackball;
+        ViewportTrackballGesture gesture;
+        gesture.mouseDown(
+            trackball,
+            80,
+            80,
+            vcg::Trackball::BUTTON_LEFT | vcg::Trackball::KEY_CTRL);
+        gesture.mouseMove(trackball, 140, 100);
+        gesture.mouseUp(trackball, 140, 100, vcg::Trackball::BUTTON_LEFT);
+
+        const vcg::Quaternionf rotationAfterPan = trackball.track.rot;
+        gesture.mouseDown(trackball, 180, 120, vcg::Trackball::BUTTON_LEFT);
+        gesture.mouseMove(trackball, 230, 150);
+
+        QVERIFY(trackball.track.rot != rotationAfterPan);
+    }
+
     void cameraChangesUseInjectedCallbacks()
     {
         TestRenderScene scene;
@@ -1063,6 +1083,100 @@ private slots:
         QCOMPARE(callbacks.cameraChangeCount(), 1);
         QCOMPARE(callbacks.lastCameraViewportId(), 5);
         QVERIFY(callbacks.lastCameraPose().viewStateXml != before.viewStateXml);
+    }
+
+    void releasingControlBeforePanButtonDoesNotDisableNextRotation()
+    {
+        TestRenderScene scene;
+        MeshModel* mesh = scene.document().addNewMesh(
+            QString(),
+            QStringLiteral("gesture-probe"),
+            false);
+        vcg::tri::Allocator<CMeshO>::AddVertices(mesh->cm, 3);
+        mesh->cm.vert[0].P() = CMeshO::CoordType(0, 0, 0);
+        mesh->cm.vert[1].P() = CMeshO::CoordType(1, 0, 0);
+        mesh->cm.vert[2].P() = CMeshO::CoordType(0, 1, 0);
+        vcg::tri::Allocator<CMeshO>::AddFaces(mesh->cm, 1);
+        mesh->cm.face[0].V(0) = &mesh->cm.vert[0];
+        mesh->cm.face[0].V(1) = &mesh->cm.vert[1];
+        mesh->cm.face[0].V(2) = &mesh->cm.vert[2];
+        mesh->updateBoxAndNormals();
+
+        FakeViewportCallbacks callbacks;
+        ViewportDependencies deps{
+            scene.document(),
+            scene.sharedContext(),
+            scene.settings(),
+            callbacks,
+            6,
+            mesh->id(),
+            1,
+            1,
+            QStringLiteral("GT"),
+            true,
+            QString()};
+        MeshLabViewport viewport(nullptr, deps);
+        viewport.resize(320, 240);
+        viewport.show();
+        QTest::qWait(20);
+        const OperationResult initialized =
+            viewport.initializeForScenePreparation();
+        QVERIFY2(initialized.ok, qPrintable(initialized.error));
+        viewport.repaint();
+        QApplication::processEvents();
+
+        QMouseEvent panPress(
+            QEvent::MouseButtonPress,
+            QPointF(80, 80),
+            Qt::LeftButton,
+            Qt::LeftButton,
+            Qt::ControlModifier);
+        QMouseEvent panMove(
+            QEvent::MouseMove,
+            QPointF(140, 100),
+            Qt::NoButton,
+            Qt::LeftButton,
+            Qt::ControlModifier);
+        // Users commonly release Control before releasing the mouse button.
+        QMouseEvent panRelease(
+            QEvent::MouseButtonRelease,
+            QPointF(140, 100),
+            Qt::LeftButton,
+            Qt::NoButton,
+            Qt::NoModifier);
+
+        QApplication::sendEvent(&viewport, &panPress);
+        QApplication::sendEvent(&viewport, &panMove);
+        QApplication::sendEvent(&viewport, &panRelease);
+        const CameraPose afterPan = viewport.captureCamera();
+
+        QMouseEvent rotatePress(
+            QEvent::MouseButtonPress,
+            QPointF(180, 120),
+            Qt::LeftButton,
+            Qt::LeftButton,
+            Qt::NoModifier);
+        QMouseEvent rotateMove(
+            QEvent::MouseMove,
+            QPointF(230, 150),
+            Qt::NoButton,
+            Qt::LeftButton,
+            Qt::NoModifier);
+        QMouseEvent rotateRelease(
+            QEvent::MouseButtonRelease,
+            QPointF(230, 150),
+            Qt::LeftButton,
+            Qt::NoButton,
+            Qt::NoModifier);
+
+        QApplication::sendEvent(&viewport, &rotatePress);
+        QApplication::sendEvent(&viewport, &rotateMove);
+        QApplication::sendEvent(&viewport, &rotateRelease);
+
+        QVERIFY(maximumCameraAttributeDifference(
+                    viewport.captureCamera(),
+                    afterPan,
+                    QStringLiteral("RotationMatrix")) > 1e-3);
     }
 
     void doubleClickRecentersOnThePickedSurfacePoint()
