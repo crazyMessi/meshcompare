@@ -19,6 +19,13 @@ namespace
 {
 QString analysisScoreLabel(const MeshEntry& mesh);
 
+int visibleMeshCount(const QVector<MeshEntry>& meshes)
+{
+    return static_cast<int>(std::count_if(
+        meshes.cbegin(), meshes.cend(),
+        [](const MeshEntry& mesh) { return mesh.visible; }));
+}
+
 SceneDescriptor makeSceneDescriptor(
     quint64 generation,
     const QVector<MeshEntry>& entries,
@@ -265,15 +272,15 @@ WorkspaceImportOutcome WorkspaceController::importMeshes(const QStringList& path
 {
     if (handlingCallback_) {
         return failureOutcome(OperationResult::failure(QStringLiteral(
-            "Workspace replacement is unavailable during a renderer callback.")));
+            "Mesh import is unavailable during a renderer callback.")));
     }
     if (replacingWorkspace_) {
         return failureOutcome(OperationResult::failure(
-            QStringLiteral("A workspace replacement is already in progress.")));
+            QStringLiteral("A workspace update is already in progress.")));
     }
     if (cameraCommandInProgress_) {
         return failureOutcome(OperationResult::failure(QStringLiteral(
-            "Workspace replacement is unavailable during a camera-pose command.")));
+            "Mesh import is unavailable during a camera-pose command.")));
     }
     QScopedValueRollback<bool> replacementGuard(replacingWorkspace_, true);
 
@@ -291,7 +298,7 @@ WorkspaceImportOutcome WorkspaceController::importMeshes(const QStringList& path
             QStringLiteral("Import staging returned no mesh repository.")));
     }
 
-    const ReferenceResolution reference = resolveReference(staged.entries);
+    ReferenceResolution reference = resolveReference(staged.entries);
     const OperationResult validation =
         state_.validateWorkspace(staged.entries, reference.referenceId);
     if (!validation.ok) {
@@ -299,15 +306,63 @@ WorkspaceImportOutcome WorkspaceController::importMeshes(const QStringList& path
         return failureOutcome(validation);
     }
 
+    const bool appending = repository_ != nullptr && !state_.meshes().isEmpty();
+    QVector<MeshEntry> sceneEntries;
+    QVector<MeshResourceId> addedResources;
+    MeshLabMeshRepository* sceneRepository = staged.repository.get();
+    const auto discardAddedResources = [&] {
+        for (MeshResourceId resourceId : addedResources)
+            repository_->removeMesh(resourceId);
+    };
+    if (appending) {
+        sceneEntries = state_.meshes();
+        sceneRepository = repository_.get();
+        reference = {state_.referenceId(), {}};
+        MeshId id = nextMeshId(sceneEntries);
+        int visibleCount = visibleMeshCount(sceneEntries);
+        for (MeshEntry& entry : staged.entries) {
+            MeshResourceId retainedId = 0;
+            const OperationResult retained = repository_->retainMesh(
+                *staged.repository, entry.resourceId, &retainedId);
+            if (!retained.ok) {
+                discardAddedResources();
+                state_.cancelLoading();
+                return failureOutcome(retained);
+            }
+            addedResources.append(retainedId);
+            entry.id = id++;
+            entry.resourceId = retainedId;
+            entry.isReference = false;
+            entry.visible = visibleCount < meshcompare::MaxVisibleMeshLayers;
+            if (entry.visible)
+                ++visibleCount;
+            sceneEntries.append(entry);
+        }
+    }
+    else {
+        sceneEntries = staged.entries;
+    }
+
+    const OperationResult combinedValidation =
+        state_.validateWorkspace(sceneEntries, reference.referenceId);
+    if (!combinedValidation.ok) {
+        discardAddedResources();
+        state_.cancelLoading();
+        return failureOutcome(combinedValidation);
+    }
+
     const SceneDescriptor scene = makeSceneDescriptor(
         state_.generation() + 1,
-        staged.entries,
+        sceneEntries,
         reference.referenceId,
-        staged.layoutMode);
+        appending ? state_.layoutMode() : staged.layoutMode,
+        appending ? renderer_.captureCamera() : CameraPose{},
+        appending && state_.gridNormalizationEnabled());
     const OperationResult prepared =
-        renderer_.prepareScene(scene, *staged.repository);
+        renderer_.prepareScene(scene, *sceneRepository);
     if (!prepared.ok) {
         renderer_.discardPreparedScene();
+        discardAddedResources();
         state_.cancelLoading();
         return failureOutcome(prepared);
     }
@@ -322,12 +377,15 @@ WorkspaceImportOutcome WorkspaceController::importMeshes(const QStringList& path
     if (replacesCommittedWorkspace)
         connectRendererEvents();
     colorService_.reset();
-    repository_ = std::move(staged.repository);
+    if (!appending)
+        repository_ = std::move(staged.repository);
     const OperationResult committed =
-        state_.commitWorkspace(
-            std::move(staged.entries),
-            reference.referenceId,
-            staged.layoutMode);
+        appending
+            ? state_.commitAppendedMeshes(std::move(staged.entries))
+            : state_.commitWorkspace(
+                  std::move(staged.entries),
+                  reference.referenceId,
+                  staged.layoutMode);
     Q_ASSERT_X(
         committed.ok,
         "WorkspaceController::importMeshes",
@@ -340,11 +398,14 @@ WorkspaceImportOutcome WorkspaceController::importMeshes(const QStringList& path
 
     renderer_.setReferenceMesh(state_.referenceId());
     renderer_.setSelectedMesh(state_.selectedMeshId());
-    suggestedWorkspaceUid_ = suggestedWorkspaceUid(paths);
-    workspaceUidManuallyAssigned_ = false;
-    workspaceUuid_ =
-        resolveWorkspaceUuid(state_.meshes(), state_.referenceId());
-    const QString cameraNotice = restoreLatestCameraPose();
+    QString cameraNotice;
+    if (!appending) {
+        suggestedWorkspaceUid_ = suggestedWorkspaceUid(paths);
+        workspaceUidManuallyAssigned_ = false;
+        workspaceUuid_ =
+            resolveWorkspaceUuid(state_.meshes(), state_.referenceId());
+        cameraNotice = restoreLatestCameraPose();
+    }
     createColorService();
     publishWorkspaceChanged();
     return {OperationResult::success(),
@@ -506,14 +567,15 @@ OperationResult WorkspaceController::setMeshVisible(MeshId meshId, bool visible)
     }
     if (target->visible == visible)
         return OperationResult::success();
-    if (!visible) {
-        int visibleCount = 0;
-        for (const MeshEntry& mesh : state_.meshes())
-            visibleCount += mesh.visible ? 1 : 0;
-        if (visibleCount <= 1) {
-            return OperationResult::failure(
-                QStringLiteral("At least one mesh layer must remain visible."));
-        }
+    const int visibleCount = visibleMeshCount(state_.meshes());
+    if (!visible && visibleCount <= 1) {
+        return OperationResult::failure(
+            QStringLiteral("At least one mesh layer must remain visible."));
+    }
+    if (visible && visibleCount >= meshcompare::MaxVisibleMeshLayers) {
+        return OperationResult::failure(
+            QStringLiteral("Hide a layer before showing another; at most %1 layers can be visible.")
+                .arg(meshcompare::MaxVisibleMeshLayers));
     }
 
     if (gridMode) {
@@ -791,9 +853,10 @@ OperationResult WorkspaceController::fillHoles(
             QStringLiteral("The hole-filling target does not exist."));
     }
     if (request.outputMode == OutputMode::NewLayer &&
-        state_.meshes().size() >= 8) {
+        visibleMeshCount(state_.meshes()) >= meshcompare::MaxVisibleMeshLayers) {
         return OperationResult::failure(
-            QStringLiteral("A workspace cannot contain more than 8 mesh layers."));
+            QStringLiteral("Hide a layer before creating another; at most %1 layers can be visible.")
+                .arg(meshcompare::MaxVisibleMeshLayers));
     }
 
     const IMeshGeometryView* geometry = nullptr;
@@ -938,9 +1001,10 @@ OperationResult WorkspaceController::fillPythonHoles(
             QStringLiteral("The hole-filling target does not exist."));
     }
     if (request.outputMode == OutputMode::NewLayer &&
-        state_.meshes().size() >= 8) {
+        visibleMeshCount(state_.meshes()) >= meshcompare::MaxVisibleMeshLayers) {
         return OperationResult::failure(
-            QStringLiteral("A workspace cannot contain more than 8 mesh layers."));
+            QStringLiteral("Hide a layer before creating another; at most %1 layers can be visible.")
+                .arg(meshcompare::MaxVisibleMeshLayers));
     }
 
     const IMeshGeometryView* geometry = nullptr;
@@ -1084,7 +1148,8 @@ CameraPanelSnapshot WorkspaceController::cameraPanelSnapshot() const
              saved.savedAtUtc,
              saved.tags,
              saved.screenshotPath,
-             saved.uuid});
+             saved.uuid,
+             saved.note});
     return snapshot;
 }
 
@@ -1118,7 +1183,8 @@ WorkspaceController::cameraScreenshotLibrarySnapshot() const
              saved.savedAtUtc,
              saved.tags,
              saved.screenshotPath,
-             saved.uuid});
+             saved.uuid,
+             saved.note});
     }
     return snapshot;
 }
@@ -1171,10 +1237,47 @@ OperationResult WorkspaceController::saveCurrentCameraPoseWithScreenshot(
     return saveCurrentCameraPoseImpl(&screenshot, savedViewId, tags);
 }
 
+OperationResult WorkspaceController::saveCurrentCameraPoseWithNote(
+    QString* savedViewId,
+    const QStringList& tags,
+    const QString& note)
+{
+    return saveCurrentCameraPoseImpl(nullptr, savedViewId, tags, note);
+}
+
+OperationResult WorkspaceController::saveCurrentCameraPoseWithScreenshotAndNote(
+    QImage& screenshot,
+    QString* savedViewId,
+    const QStringList& tags,
+    const QString& note)
+{
+    return saveCurrentCameraPoseImpl(&screenshot, savedViewId, tags, note);
+}
+
+OperationResult WorkspaceController::setCameraPoseDetailsForWorkspace(
+    const QString& workspaceUuid,
+    const QString& viewId,
+    const QStringList& tags,
+    const QString& note)
+{
+    if (handlingCallback_ || replacingWorkspace_ || cameraCommandInProgress_) {
+        return OperationResult::failure(QStringLiteral(
+            "View details cannot be changed during another camera command."));
+    }
+    const QString normalizedUid = CameraPoseStore::normalizeUuid(workspaceUuid);
+    if (normalizedUid.isEmpty() || viewId.isEmpty()) {
+        return OperationResult::failure(QStringLiteral(
+            "Select a saved view to edit its tags and note."));
+    }
+    QScopedValueRollback<bool> commandGuard(cameraCommandInProgress_, true);
+    return cameraStore_.setDetails(normalizedUid, viewId, tags, note);
+}
+
 OperationResult WorkspaceController::saveCurrentCameraPoseImpl(
     QImage* screenshot,
     QString* savedViewId,
-    const QStringList& tags)
+    const QStringList& tags,
+    const QString& note)
 {
     const OperationResult validation = validateCameraMutation();
     if (!validation.ok) {
@@ -1199,7 +1302,7 @@ OperationResult WorkspaceController::saveCurrentCameraPoseImpl(
     const CameraPose pose = renderer_.captureCamera();
     QString committedViewId;
     const OperationResult saved = cameraStore_.saveWithScreenshot(
-        workspaceUuid_, pose, captured, &committedViewId, tags);
+        workspaceUuid_, pose, captured, &committedViewId, tags, nullptr, note);
     if (!saved.ok) {
         publishCameraSaveFinished(saved);
         return saved;
@@ -1255,6 +1358,41 @@ OperationResult WorkspaceController::setCameraPoseTags(
 
     QScopedValueRollback<bool> commandGuard(cameraCommandInProgress_, true);
     return cameraStore_.setTags(workspaceUuid_, viewId, tags);
+}
+
+OperationResult WorkspaceController::setCameraPoseNote(
+    const QString& viewId,
+    const QString& note)
+{
+    const OperationResult validation = validateCameraMutation();
+    if (!validation.ok)
+        return validation;
+    return setCameraPoseNoteForWorkspace(workspaceUuid_, viewId, note);
+}
+
+OperationResult WorkspaceController::setCameraPoseNoteForWorkspace(
+    const QString& workspaceUuid,
+    const QString& viewId,
+    const QString& note)
+{
+    // Notes belong to saved library entries, so editing one from Browse does
+    // not require loading or switching the current mesh workspace.
+    if (handlingCallback_ || replacingWorkspace_ || cameraCommandInProgress_) {
+        return OperationResult::failure(QStringLiteral(
+            "Camera notes cannot be changed during another camera command."));
+    }
+    const QString normalizedUid = CameraPoseStore::normalizeUuid(workspaceUuid);
+    if (normalizedUid.isEmpty()) {
+        return OperationResult::failure(
+            QStringLiteral("Select a saved workspace to update its note."));
+    }
+    if (viewId.isEmpty()) {
+        return OperationResult::failure(
+            QStringLiteral("Select a saved camera pose to update its note."));
+    }
+
+    QScopedValueRollback<bool> commandGuard(cameraCommandInProgress_, true);
+    return cameraStore_.setNote(normalizedUid, viewId, note);
 }
 
 OperationResult WorkspaceController::deleteCameraPose(const QString& viewId)

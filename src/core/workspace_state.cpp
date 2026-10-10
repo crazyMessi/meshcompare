@@ -154,9 +154,17 @@ OperationResult WorkspaceState::validateWorkspace(
     const QVector<MeshEntry>& meshes,
     MeshId referenceId) const
 {
-    if (meshes.isEmpty() || meshes.size() > 8)
+    if (meshes.isEmpty())
         return OperationResult::failure(
-            QStringLiteral("A workspace must contain between 1 and 8 meshes."));
+            QStringLiteral("A workspace must contain at least one mesh."));
+
+    int visibleCount = 0;
+    for (const MeshEntry& mesh : meshes)
+        visibleCount += mesh.visible ? 1 : 0;
+    if (visibleCount == 0 || visibleCount > meshcompare::MaxVisibleMeshLayers)
+        return OperationResult::failure(
+            QStringLiteral("A workspace must display between 1 and %1 mesh layers.")
+                .arg(meshcompare::MaxVisibleMeshLayers));
 
     QSet<MeshId> meshIds;
     for (const MeshEntry& mesh : meshes) {
@@ -196,6 +204,33 @@ OperationResult WorkspaceState::commitWorkspace(
     selectedMeshId_ = meshes_.front().id;
     layoutMode_ = layoutMode;
     gridNormalizationEnabled_ = false;
+    phase_ = WorkspacePhase::Ready;
+    phaseBeforeLoading_ = WorkspacePhase::Ready;
+    ++generation_;
+    return OperationResult::success();
+}
+
+OperationResult WorkspaceState::commitAppendedMeshes(QVector<MeshEntry> meshes)
+{
+    if (meshes_.isEmpty() ||
+        (phase_ != WorkspacePhase::Ready && phase_ != WorkspacePhase::Loading)) {
+        return OperationResult::failure(
+            QStringLiteral("Adding meshes requires an existing ready workspace."));
+    }
+    if (meshes.isEmpty()) {
+        return OperationResult::failure(
+            QStringLiteral("At least one mesh must be added."));
+    }
+
+    for (MeshEntry& mesh : meshes)
+        mesh.isReference = false;
+    QVector<MeshEntry> combined = meshes_;
+    combined += meshes;
+    const OperationResult validation = validateWorkspace(combined, referenceId_);
+    if (!validation.ok)
+        return validation;
+
+    meshes_ = std::move(combined);
     phase_ = WorkspacePhase::Ready;
     phaseBeforeLoading_ = WorkspacePhase::Ready;
     ++generation_;
@@ -285,6 +320,11 @@ OperationResult WorkspaceState::setMeshVisible(MeshId id, bool visible)
     if (!visible && visibleCount <= 1) {
         return OperationResult::failure(
             QStringLiteral("At least one mesh layer must remain visible."));
+    }
+    if (visible && visibleCount >= meshcompare::MaxVisibleMeshLayers) {
+        return OperationResult::failure(
+            QStringLiteral("Hide a layer before showing another; at most %1 layers can be visible.")
+                .arg(meshcompare::MaxVisibleMeshLayers));
     }
 
     target->visible = visible;

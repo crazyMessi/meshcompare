@@ -156,7 +156,7 @@ private slots:
                  QStringList({QStringLiteral("uuid-a"), QStringLiteral("uuid-b")}));
     }
 
-    void commitAcceptsOneMeshAndRejectsEmptyOrTooMany()
+    void commitAcceptsOneMeshAndRejectsEmptyOrTooManyVisible()
     {
         WorkspaceState singleState;
         singleState.beginLoading();
@@ -184,6 +184,42 @@ private slots:
         QVERIFY(!tooManyResult.error.isEmpty());
         QCOMPARE(state.generation(), quint64(0));
         QCOMPARE(state.meshes().size(), 0);
+    }
+
+    void largeWorkspacePreservesHiddenLayersAndLimitsVisibility()
+    {
+        QVector<MeshEntry> meshes;
+        for (MeshId id = 1; id <= 20; ++id) {
+            MeshEntry mesh = makeEntry(id);
+            mesh.visible = id <= 8;
+            meshes.append(mesh);
+        }
+        WorkspaceState state;
+        QVERIFY(state.commitWorkspace(meshes, 20).ok);
+        QCOMPARE(state.meshes().size(), 20);
+        QCOMPARE(state.referenceId(), MeshId(20));
+        QVERIFY(!state.mesh(20)->visible);
+
+        const OperationResult full = state.setMeshVisible(20, true);
+        QVERIFY(!full.ok);
+        QVERIFY(!state.mesh(20)->visible);
+        QVERIFY(state.setMeshVisible(1, false).ok);
+        QVERIFY(state.setMeshVisible(20, true).ok);
+        QVERIFY(state.mesh(20)->visible);
+        QVERIFY(!state.mesh(1)->visible);
+        QCOMPARE(state.generation(), quint64(1));
+
+        QVERIFY(state.setLayoutMode(SceneLayoutMode::Overlay).ok);
+        QVERIFY(!state.setMeshVisible(1, true).ok);
+        QVERIFY(state.setMeshVisible(20, false).ok);
+        QVERIFY(state.setMeshVisible(1, true).ok);
+        QCOMPARE(state.meshes().size(), 20);
+
+        for (MeshEntry& mesh : meshes)
+            mesh.visible = false;
+        QVERIFY(!state.commitWorkspace(meshes, 20).ok);
+        QCOMPARE(state.generation(), quint64(1));
+        QVERIFY(state.mesh(1)->visible);
     }
 
     void gridNormalizationRequiresAReadyWorkspaceAndResetsOnImport()

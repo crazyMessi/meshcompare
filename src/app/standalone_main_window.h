@@ -76,7 +76,6 @@ private:
     QFrame* buildNoticeBanner(QWidget* parent);
     QFrame* buildStatusBar(QWidget* parent);
     void rebuildLayersMenu();
-    bool confirmWorkspaceReplacement();
     void toggleColoringPanel();
     void positionColoringPanel();
     void toggleCameraPanel();
@@ -102,6 +101,7 @@ private:
     QToolButton* diagnosticsButton_ = nullptr;
     QFrame* viewportFrame_ = nullptr;
     QWidget* viewportHost_ = nullptr;
+    QLabel* layerVisibilityNotice_ = nullptr;
     QWidget* noticeArea_ = nullptr;
     QFrame* noticeBanner_ = nullptr;
     QLabel* noticeLabel_ = nullptr;

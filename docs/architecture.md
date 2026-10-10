@@ -1,7 +1,7 @@
 # Standalone Mesh Comparison Application Design
 
 Date: 2026-07-14
-Last revised: 2026-07-17
+Last revised: 2026-09-20
 Status: Interactive design approved; adaptive viewport-layout revision approved
 
 ## 1. Background and Evidence
@@ -21,7 +21,7 @@ The final product direction is not a reskinned MeshLab. It is a new standalone a
 
 The first release serves four core workflows:
 
-1. Import 1–8 meshes in one batch and automatically create synchronized comparison viewports.
+1. Import meshes in one or more batches and create synchronized comparison viewports for the visible selection (up to eight layers).
 2. Apply Distance-to-Reference or Double Layer analytical coloring.
 3. Assign a uniform color to the currently selected mesh.
 4. Save, list, apply, and automatically restore camera poses by workspace UID,
@@ -55,20 +55,20 @@ One window holds one set of meshes for comparison. The application state is one 
 - `Analyzing`: a background analysis is running.
 - `FatalError`: the renderer cannot initialize and the application cannot continue.
 
-Whenever the workspace is non-empty, starting another batch import asks for confirmation. The new import will replace the current meshes and temporary coloring results. The application does not maintain an “unexported result” flag.
+Opening files from the toolbar, Finder, or a drop adds their layers to the current workspace without confirmation. Existing meshes, visibility, Reference, selection, coloring, camera, layout, Grid normalization, and workspace UID are preserved. The application does not maintain an “unexported result” flag.
 
 ### 4.2 Batch Import
 
-The empty state provides a drop target and an “Import Meshes” button. The user chooses 1–8 files at once. A successful import enters comparison mode immediately, without an intermediate Layer Dialog.
+The empty state provides a drop target and an “Open” button. The user can choose multiple files at once, with no fixed import-count limit. In an empty workspace, imports of eight layers or fewer show every layer by default. Larger imports show the first eight, with all remaining layers available in Layers. Subsequent imports preserve existing visibility and show new layers in import order until eight layers are visible; any remaining new layers start hidden. A persistent notice shows visible and total layer counts whenever any layers are hidden, and updates with the selection. A successful import enters comparison mode immediately, without an intermediate Layer Dialog.
 
 Import is transactional:
 
 1. Parse files into a staged `MeshRepository`.
 2. Validate the count, formats, non-empty triangle faces, and renderable attributes.
 3. Assign a stable `MeshId`, display name, and UUID candidates to each mesh.
-4. Resolve the Reference mesh.
-5. Ask the Renderer Adapter to prepare the viewports and GPU resources.
-6. Replace the active workspace only after every step succeeds.
+4. Retain the current Reference, or resolve the Reference for an empty workspace.
+5. Ask the Renderer Adapter to prepare the combined scene and GPU resources.
+6. Commit the added layers only after every step succeeds, preserving existing presentation and camera state.
 
 If any file fails to parse or validate, or if GPU preparation fails, all staged resources are released and the old workspace remains unchanged.
 
@@ -76,7 +76,7 @@ The first release preserves the mesh file types supported by the current MeshLab
 
 ### 4.3 Reference Selection
 
-Reference resolution follows these rules:
+Reference resolution for an initially empty workspace follows these rules. Adding layers to an existing workspace preserves its Reference:
 
 1. If a filename or mesh label contains `gt`, case-insensitively, select the
    first match in import order. Parent-directory names do not participate.
@@ -132,11 +132,23 @@ The coloring panel is a temporary panel opened from the top command bar. It cont
 
 Each mesh has exactly one current presentation state:
 
-- `Default`.
+- `Default`: original vertex/face colors and base-color textures, or gray for
+  meshes with no source appearance.
 - `UniformColor`.
 - `VertexColor`.
 
 Uniform color applies only to the currently selected mesh. It overrides the default material through rendering options and does not modify vertices, faces, or geometry.
+
+The geometry provider preserves immutable source vertex colors, face colors,
+texture images, and per-corner texture coordinates. The renderer uploads those
+textures and keeps source color buffers separate from temporary presentations.
+Clear Coloring restores the complete source appearance, including after Grid
+rebuilds or appending meshes. GLB supports base-color factors, vertex colors,
+base-color textures, texture transforms and wrap modes, and unlit layers. This
+is a base-color viewer, not a physically based material renderer.
+GLB opaque materials ignore image and vertex alpha. Other alpha modes use
+basic blending without per-material cutoffs or transparent-face sorting.
+Lighting is disabled only when every primitive in a GLB layer is unlit.
 
 Distance uses the current Reference and processes every non-Reference mesh. It
 computes the exact unsigned distance from each target vertex to the closest
@@ -144,8 +156,8 @@ Reference triangle. The presentation maps the clamped
 `distance / maximumDistance` value through Matplotlib's 256-entry Viridis table
 using either a Square root curve or a Linear curve. Square root remains the
 default to preserve the established visual emphasis on small deviations;
-`maximumDistance` defaults to `0.04`. The Reference presents its source vertex
-colors when available and otherwise uses RGBA `(180, 180, 180, 255)`.
+`maximumDistance` defaults to `0.04`. The Reference presents its original
+appearance, including textures, while the targets display the distance colors.
 
 Double Layer is Reference-independent and processes every mesh, including the
 current Reference. Each mesh uses 500,000 deterministic area-uniform samples by
@@ -206,6 +218,17 @@ as before, and legacy pose collections remain compatible.
 
 Saving a pose persists it immediately; there is no unsaved camera list. If automatic restore fails, the default camera remains active and the application shows a non-blocking notice.
 
+Each saved view can have an optional plain-text `note` in the camera library.
+Tags and the note belong to one form. New captures commit both fields with the
+pose and screenshot; Camera and the nonmodal screenshot browser use one
+explicit Save Changes action for existing views. Updates replace the JSON
+atomically, including any tag-dependent screenshot relocation, and preserve
+the camera pose and capture timestamp. Notes preserve Unicode and line breaks;
+missing notes in older libraries read as empty. Both snapshots carry the note.
+Edits are scoped to the selected workspace UID and view ID, so editing another
+workspace does not load its models or change the current camera. Both editors
+preserve unsaved form drafts during selection and data refreshes.
+
 The new application uses its own AppLocalData directory and camera library file. On first launch, if the new library does not exist and the customized MeshLab application's legacy `meshlab_lizd_camera_poses.json` does exist, the application copies and imports it. The legacy file is never deleted or modified. Existing schema 2 data and MeshLab view-state XML remain compatible.
 
 ### 4.7 Minimal Diagnostic Options
@@ -259,7 +282,7 @@ Owns only the window layout, transient panels, and user-input forwarding. It own
 
 #### `WorkspaceController`
 
-Owns the single-workspace state machine and command orchestration: import, replacement confirmation, Reference selection, coloring, camera restore, task cancellation, and shutdown ordering.
+Owns the single-workspace state machine and command orchestration: transactional import and append, Reference selection, coloring, camera restore, task cancellation, and shutdown ordering.
 
 #### `WorkspaceState`
 
@@ -351,15 +374,15 @@ The MeshLab backend never calls `StandaloneMainWindow`. It reports state only th
 
 ### 7.1 Import
 
-`Import command → staged MeshRepository → validation → Reference resolution → renderer.prepareScene → renderer.commitScene → WorkspaceState commit → camera auto-restore`
+`Import command → staged MeshRepository → validation → combine existing and imported layers → renderer.prepareScene → renderer.commitScene → WorkspaceState commit`
 
-The old workspace remains usable until commit. If preparing new GPU resources exceeds available memory, the operation fails and preserves the old workspace.
+The old workspace remains intact until commit. Existing Reference, selection, coloring, visibility, camera, layout, normalization, and workspace UID survive an append. Only the first import resolves a new Reference and workspace UID and attempts camera auto-restore. If preparing new GPU resources exceeds available memory, the operation fails and preserves the old workspace.
 
 ### 7.2 Analytical Coloring
 
 `Analyze command → immutable geometry snapshots → cached or background raw field → staged per-vertex colors and typed summary → validation → workspace and renderer commit`
 
-Each background task carries a workspace generation ID. After workspace replacement or cancellation, an old task can never commit results into the new workspace.
+Each background task carries a workspace generation ID. After an import or cancellation, an old task can never commit stale results into the workspace.
 
 ### 7.3 Camera
 
@@ -376,14 +399,14 @@ Automatic restore flow:
 ## 8. Error Handling
 
 - Import errors are grouped by file and never create a partial workspace.
-- Counts outside 1–8, meshes without valid triangle faces, and unsupported formats produce specific explanations.
+- Empty imports, meshes without valid triangle faces, and unsupported formats produce specific explanations. Visibility changes keep between one and eight layers visible, independently of the total imported count.
 - GPU preparation failure releases staged resources and preserves the old workspace.
 - Invalid analysis parameters are rejected before a task starts.
 - If any target analysis fails, the batch's new results are not committed.
 - A damaged camera library, missing pose, or restore failure preserves the current camera and produces a non-blocking notice.
 - Failure to initialize the shared OpenGL context is a startup-level error. The application shows copyable diagnostics and exits safely.
 
-Workspace replacement and application shutdown follow a fixed order: stop and join background analysis → disconnect viewport callbacks → destroy child viewports → release shared GPU resources → release the mesh repository. This avoids stale viewer and context access previously seen in the legacy code.
+Scene changes first stop and join background analysis, disconnect viewport callbacks, destroy the old child viewports, and release their shared GPU resources. Imports prepare the combined scene before releasing the previous scene, and retain both existing and added mesh resources in the workspace. Application shutdown clears the renderer before releasing the mesh repository. This avoids stale viewer and context access previously seen in the legacy code.
 
 ## 9. Testing Strategy
 
@@ -412,11 +435,11 @@ The same contract suite must also run against `MeshLabRendererAdapter`.
 - Uploading shared OpenGL resources once and referencing them correctly from every viewport.
 - Camera synchronization, capture, and restore.
 - Switching among default, uniform-color, and analytical vertex-color presentations.
-- Repeated workspace replacement and application shutdown without crashes, use-after-free, or stale contexts.
+- Repeated imports into the current workspace and application shutdown without crashes, use-after-free, or stale contexts.
 
 ### 9.4 UI and Render Regression Tests
 
-- Confirmation before replacing a non-empty workspace.
+- Opening and dropping files into a non-empty workspace without confirmation.
 - Transient coloring and camera panels.
 - Analysis progress, cancellation, and score badges.
 - Screenshot regression with fixed meshes, camera, and render settings, allowing a small cross-GPU pixel tolerance.
@@ -427,7 +450,7 @@ The same contract suite must also run against `MeshLabRendererAdapter`.
 The implementation is complete only when all of the following are true:
 
 1. The new application target does not link the old `MainWindow`, MDI, `MultiViewer_Container`, Filter Dock, or Layer Dialog.
-2. A batch of 1–8 meshes imports directly into synchronized comparison viewports.
+2. A batch of meshes imports directly, with up to eight initially visible in synchronized comparison viewports and all other layers selectable in Layers.
 3. Automatic `gt` Reference selection and manual Reference changes both work.
 4. Distance processes every non-Reference mesh, while Double Layer processes every mesh in one operation.
 5. The selected mesh can use a uniform color, and coloring can be cleared.

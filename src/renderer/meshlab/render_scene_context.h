@@ -92,6 +92,9 @@ private:
     QPointer<MLSceneGLSharedDataContext> sharedContext_;
     QHash<MeshId, int> modelIds_;
     QHash<MeshId, ColorPresentation> presentations_;
+    // Immutable source payloads survive analytical and user color overrides.
+    QHash<MeshId, ColorPresentation> sourceColors_;
+    QHash<MeshId, std::shared_ptr<const MLRenderingData>> sourceRenderingData_;
     QHash<MeshId, std::shared_ptr<const MLRenderingData>> renderingData_;
     std::unique_ptr<IRenderPresentationPublisher> ownedPublisher_;
     IRenderPresentationPublisher* publisher_ = nullptr;

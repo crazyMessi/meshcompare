@@ -11,6 +11,7 @@
 #include <QFileOpenEvent>
 #include <QFrame>
 #include <QLabel>
+#include <QListWidget>
 #include <QMdiArea>
 #include <QMenuBar>
 #include <QMenu>
@@ -18,10 +19,12 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QPlainTextEdit>
 #include <QSharedPointer>
 #include <QSignalSpy>
 #include <QTabBar>
 #include <QTimer>
+#include <QTemporaryDir>
 #include <QToolButton>
 #include <QUrl>
 
@@ -115,6 +118,8 @@ private:
 class WindowCameraCommands final : public ICameraCommands
 {
 public:
+    QString screenshotPath;
+    int applyCount = 0;
     CameraPanelSnapshot cameraPanelSnapshot() const override
     {
         CameraPanelSnapshot snapshot;
@@ -124,6 +129,8 @@ public:
         snapshot.poses = {
             {QStringLiteral("view_001"),
              QStringLiteral("2026-07-15T01:00:00.000Z")}};
+        snapshot.poses[0].screenshotPath = screenshotPath;
+        snapshot.poses[0].workspaceUuid = snapshot.workspaceUuid;
         return snapshot;
     }
 
@@ -149,11 +156,37 @@ public:
     }
     OperationResult applyCameraPose(const QString&) override
     {
+        ++applyCount;
+        return OperationResult::success();
+    }
+    OperationResult saveCurrentCameraPoseWithNote(
+        QString* id, const QStringList& tags, const QString&) override
+    {
+        return saveCurrentCameraPose(id, tags);
+    }
+    OperationResult saveCurrentCameraPoseWithScreenshotAndNote(
+        QImage& screenshot, QString* id, const QStringList& tags,
+        const QString&) override
+    {
+        return saveCurrentCameraPoseWithScreenshot(screenshot, id, tags);
+    }
+    OperationResult setCameraPoseDetailsForWorkspace(
+        const QString&, const QString&, const QStringList&, const QString&) override
+    {
         return OperationResult::success();
     }
     OperationResult setCameraPoseTags(
         const QString&,
         const QStringList&) override
+    {
+        return OperationResult::success();
+    }
+    OperationResult setCameraPoseNote(const QString&, const QString&) override
+    {
+        return OperationResult::success();
+    }
+    OperationResult setCameraPoseNoteForWorkspace(
+        const QString&, const QString&, const QString&) override
     {
         return OperationResult::success();
     }
@@ -233,6 +266,28 @@ private slots:
             openedPaths,
             QStringList({QStringLiteral("/tmp/first.obj"),
                          QStringLiteral("/tmp/second.obj")}));
+    }
+
+    void finderOpenAddsToExistingWindowWithoutConfirmation()
+    {
+        WorkspaceState state;
+        QVERIFY(makeReady(state).ok);
+        StandaloneMainWindow window(state);
+        QSignalSpy importSpy(&window, &StandaloneMainWindow::importRequested);
+        FileOpenEventBridge bridge(*qApp);
+        bridge.setOpenHandler([&window](const QStringList& paths) {
+            window.requestImport(paths);
+        });
+        const auto probe =
+            clickNextMessageBoxRole(QMessageBox::RejectRole, &window);
+        QFileOpenEvent event(QStringLiteral("/tmp/new.obj"));
+
+        QVERIFY(QApplication::sendEvent(qApp, &event));
+
+        QTRY_COMPARE(importSpy.size(), 1);
+        QVERIFY(!probe->found);
+        QCOMPARE(importSpy.takeFirst().front().toStringList(),
+                 QStringList({QStringLiteral("/tmp/new.obj")}));
     }
 
     void hasOnlyTheMinimalShell()
@@ -402,6 +457,178 @@ private slots:
         QVERIFY(!first->isEnabled());
     }
 
+    void layersMenuSwitchesToLaterImportedLayers_data()
+    {
+        QTest::addColumn<int>("layoutMode");
+        QTest::newRow("grid")
+            << static_cast<int>(SceneLayoutMode::ComparisonGrid);
+        QTest::newRow("overlay")
+            << static_cast<int>(SceneLayoutMode::Overlay);
+    }
+
+    void layersMenuSwitchesToLaterImportedLayers()
+    {
+        QFETCH(int, layoutMode);
+        WorkspaceState state;
+        QVector<MeshEntry> meshes;
+        for (MeshId id = 1; id <= 12; ++id) {
+            MeshEntry mesh = entry(id);
+            mesh.visible = id <= meshcompare::MaxVisibleMeshLayers;
+            meshes.append(mesh);
+        }
+        state.beginLoading();
+        QVERIFY(state.commitWorkspace(
+            meshes, 1, static_cast<SceneLayoutMode>(layoutMode)).ok);
+        StandaloneMainWindow window(state);
+        auto* layersButton = window.findChild<QToolButton*>("layersButton");
+        auto* layersMenu = window.findChild<QMenu*>("layersMenu");
+        QVERIFY(layersButton != nullptr);
+        QVERIFY(layersMenu != nullptr);
+        QCOMPARE(layersButton->text(), QStringLiteral("Layers 8/12"));
+        connect(
+            &window,
+            &StandaloneMainWindow::meshVisibilityRequested,
+            [&](MeshId meshId, bool visible) {
+                QVERIFY(state.setMeshVisible(meshId, visible).ok);
+                window.refreshWorkspace();
+            });
+        const auto rebuildMenu = [&] {
+            layersMenu->popup(QPoint(20, 20));
+            QApplication::processEvents();
+            layersMenu->hide();
+        };
+
+        rebuildMenu();
+        int layerActionCount = 0;
+        for (QAction* action : layersMenu->actions()) {
+            if (action->isCheckable())
+                ++layerActionCount;
+        }
+        QCOMPARE(layerActionCount, 12);
+        auto* hint = window.findChild<QAction*>("meshVisibilityLimitHint");
+        QVERIFY(hint != nullptr);
+        QVERIFY(!hint->isEnabled());
+        QVERIFY(hint->text().contains(QStringLiteral("Uncheck one")));
+        auto* first = window.findChild<QAction*>("meshVisibilityAction_1");
+        auto* later = window.findChild<QAction*>("meshVisibilityAction_12");
+        QVERIFY(first != nullptr);
+        QVERIFY(later != nullptr);
+        QVERIFY(first->isChecked());
+        QVERIFY(first->isEnabled());
+        QVERIFY(!later->isChecked());
+        QVERIFY(!later->isEnabled());
+
+        first->trigger();
+        QApplication::processEvents();
+        QVERIFY(!state.mesh(1)->visible);
+        QCOMPARE(layersButton->text(), QStringLiteral("Layers 7/12"));
+
+        rebuildMenu();
+        later = window.findChild<QAction*>("meshVisibilityAction_12");
+        QVERIFY(later != nullptr);
+        QVERIFY(later->isEnabled());
+        later->trigger();
+        QApplication::processEvents();
+        QVERIFY(state.mesh(12)->visible);
+        QVERIFY(!state.mesh(1)->visible);
+        QCOMPARE(layersButton->text(), QStringLiteral("Layers 8/12"));
+
+        rebuildMenu();
+        first = window.findChild<QAction*>("meshVisibilityAction_1");
+        later = window.findChild<QAction*>("meshVisibilityAction_12");
+        QVERIFY(first != nullptr);
+        QVERIFY(later != nullptr);
+        QVERIFY(!first->isEnabled());
+        QVERIFY(!first->isChecked());
+        QVERIFY(later->isEnabled());
+        QVERIFY(later->isChecked());
+    }
+
+    void layerSubsetNoticeTracksCurrentVisibility()
+    {
+        WorkspaceState state;
+        StandaloneMainWindow window(state);
+        auto* notice = window.findChild<QLabel*>("layerVisibilityNotice");
+        QVERIFY(notice != nullptr);
+        QVERIFY(notice->isHidden());
+
+        QVector<MeshEntry> meshes;
+        for (MeshId id = 1; id <= 7; ++id)
+            meshes.append(entry(id));
+        state.beginLoading();
+        QVERIFY(state.commitWorkspace(meshes, 1).ok);
+        window.presentImportOutcome({OperationResult::success(), {}, {}});
+
+        QVERIFY(notice->isHidden());
+        QVERIFY(notice->text().isEmpty());
+        QVERIFY(state.setMeshVisible(7, false).ok);
+        window.refreshWorkspace();
+        QVERIFY(!notice->isHidden());
+        QCOMPARE(notice->text(), QStringLiteral(
+            "Showing 6 of 7 layers (1 hidden). Use Layers to change what is shown."));
+        QVERIFY(state.setMeshVisible(1, false).ok);
+        window.refreshWorkspace();
+        QCOMPARE(notice->text(), QStringLiteral(
+            "Showing 5 of 7 layers (2 hidden). Use Layers to change what is shown."));
+
+        QVERIFY(state.setLayoutMode(SceneLayoutMode::Overlay).ok);
+        window.refreshWorkspace();
+        QVERIFY(!notice->isHidden());
+        QVERIFY(state.setMeshVisible(1, true).ok);
+        QVERIFY(state.setMeshVisible(7, true).ok);
+        window.refreshWorkspace();
+        QVERIFY(notice->isHidden());
+        QVERIFY(notice->text().isEmpty());
+
+        QVERIFY(state.setMeshVisible(7, false).ok);
+        window.refreshWorkspace();
+        QVERIFY(!notice->isHidden());
+        state = WorkspaceState{};
+        window.refreshWorkspace();
+        QVERIFY(notice->isHidden());
+        QVERIFY(notice->text().isEmpty());
+    }
+
+    void layerSubsetNoticeCoexistsWithDismissibleStatusNotices()
+    {
+        WorkspaceState state;
+        QVERIFY(makeReady(state).ok);
+        QVERIFY(state.setMeshVisible(2, false).ok);
+        StandaloneMainWindow window(state);
+        auto* layerNotice = window.findChild<QLabel*>("layerVisibilityNotice");
+        auto* noticeArea = window.findChild<QWidget*>("noticeArea");
+        auto* noticeLabel = window.findChild<QLabel*>("noticeLabel");
+        auto* dismiss = window.findChild<QToolButton*>("dismissNoticeButton");
+        QVERIFY(layerNotice != nullptr);
+        QVERIFY(noticeArea != nullptr);
+        QVERIFY(noticeLabel != nullptr);
+        QVERIFY(dismiss != nullptr);
+        const QString expected = QStringLiteral(
+            "Showing 1 of 2 layers (1 hidden). Use Layers to change what is shown.");
+
+        window.presentImportOutcome(
+            {OperationResult::success(), {}, QStringLiteral("Camera pose warning")});
+        QVERIFY(!layerNotice->isHidden());
+        QCOMPARE(layerNotice->text(), expected);
+        QVERIFY(!noticeArea->isHidden());
+        QCOMPARE(noticeLabel->text(), QStringLiteral("Camera pose warning"));
+        dismiss->click();
+        QVERIFY(noticeArea->isHidden());
+        QVERIFY(!layerNotice->isHidden());
+
+        window.showStatusMessage(QStringLiteral("Analysis failed"));
+        window.refreshWorkspace();
+        QVERIFY(!noticeArea->isHidden());
+        QCOMPARE(noticeLabel->text(), QStringLiteral("Analysis failed"));
+        QCOMPARE(layerNotice->text(), expected);
+        QVERIFY(!layerNotice->isHidden());
+
+        window.presentImportOutcome({OperationResult::success(), {}, {}});
+        QVERIFY(noticeArea->isHidden());
+        QVERIFY(!layerNotice->isHidden());
+        QCOMPARE(layerNotice->text(), expected);
+    }
+
     void layersControlDoesNotReserveViewportWidth()
     {
         WorkspaceState state;
@@ -440,7 +667,7 @@ private slots:
         QCOMPARE(window.menuBar()->actions().size(), 0);
     }
 
-    void replacementConfirmationAppearsOnceAndEmitsOneOrderedBatch()
+    void importIntoExistingWorkspaceEmitsOneOrderedBatchWithoutConfirmation()
     {
         WorkspaceState state;
         const OperationResult ready = makeReady(state);
@@ -448,20 +675,20 @@ private slots:
         StandaloneMainWindow window(state);
         QSignalSpy importSpy(&window, &StandaloneMainWindow::importRequested);
         const auto probe =
-            clickNextMessageBoxRole(QMessageBox::AcceptRole, &window);
+            clickNextMessageBoxRole(QMessageBox::RejectRole, &window);
         const QStringList paths = {
             QStringLiteral("/tmp/first.obj"), QStringLiteral("/tmp/second.obj")};
 
         window.requestImport(paths);
+        QApplication::processEvents();
 
-        QVERIFY(probe->found);
-        QVERIFY(probe->requestedRoleFound);
-        QCOMPARE(probe->dialogCount, 1);
+        QVERIFY(!probe->found);
+        QCOMPARE(probe->dialogCount, 0);
         QCOMPARE(importSpy.size(), 1);
         QCOMPARE(importSpy.takeFirst().front().toStringList(), paths);
     }
 
-    void cancellingReplacementDoesNotEmitAnImport()
+    void emptyImportRequestDoesNotEmitAnImportOrShowConfirmation()
     {
         WorkspaceState state;
         const OperationResult ready = makeReady(state);
@@ -471,20 +698,31 @@ private slots:
         const auto probe =
             clickNextMessageBoxRole(QMessageBox::RejectRole, &window);
 
-        window.requestImport(
-            {QStringLiteral("/tmp/first.obj"), QStringLiteral("/tmp/second.obj")});
+        window.requestImport({});
+        QApplication::processEvents();
 
-        QVERIFY(probe->found);
-        QVERIFY(probe->requestedRoleFound);
-        QCOMPARE(probe->dialogCount, 1);
+        QVERIFY(!probe->found);
+        QCOMPARE(probe->dialogCount, 0);
         QCOMPARE(importSpy.size(), 0);
+    }
+
+    void allLocalDropEmitsOneOrderedBatchAndMixedDropIsRejected_data()
+    {
+        QTest::addColumn<bool>("populated");
+        QTest::newRow("empty-workspace") << false;
+        QTest::newRow("existing-workspace") << true;
     }
 
     void allLocalDropEmitsOneOrderedBatchAndMixedDropIsRejected()
     {
+        QFETCH(bool, populated);
         WorkspaceState state;
+        if (populated)
+            QVERIFY(makeReady(state).ok);
         StandaloneMainWindow window(state);
         QSignalSpy importSpy(&window, &StandaloneMainWindow::importRequested);
+        const auto probe =
+            clickNextMessageBoxRole(QMessageBox::RejectRole, &window);
         QMimeData localMime;
         const QList<QUrl> localUrls = {
             QUrl::fromLocalFile(QStringLiteral("/tmp/first.obj")),
@@ -507,7 +745,9 @@ private slots:
             Qt::LeftButton,
             Qt::NoModifier);
         QApplication::sendEvent(&window, &localDrop);
+        QApplication::processEvents();
         QVERIFY(localDrop.isAccepted());
+        QVERIFY(!probe->found);
         QCOMPARE(importSpy.size(), 1);
         QCOMPARE(importSpy.takeFirst().front().toStringList(),
                  QStringList({QStringLiteral("/tmp/first.obj"),
@@ -612,7 +852,8 @@ private slots:
             {OperationResult::success(), {}, {}});
 
         QVERIFY(noticeArea->isHidden());
-        QCOMPARE(status->text(), QStringLiteral("Imported 2 meshes."));
+        QCOMPARE(status->text(),
+                 QStringLiteral("Import complete. Workspace contains 2 meshes."));
     }
 
     void successfulOutcomeRefreshesMeshCountAndWorkspaceActions()
@@ -649,7 +890,8 @@ private slots:
         QVERIFY(meshCount != nullptr);
         QVERIFY(status != nullptr);
         QCOMPARE(meshCount->text(), QStringLiteral("1 mesh"));
-        QCOMPARE(status->text(), QStringLiteral("Imported 1 mesh."));
+        QCOMPARE(status->text(),
+                 QStringLiteral("Import complete. Workspace contains 1 mesh."));
     }
 
     void coloringPanelFloatsBelowTheButtonWithoutResizingTheViewportHost()
@@ -811,6 +1053,49 @@ private slots:
         QVERIFY(window.findChild<CameraPanel*>(QStringLiteral("cameraPanel")) == nullptr);
         QTest::mouseClick(cameraButton, Qt::LeftButton);
         QCOMPARE(host->geometry(), viewportGeometry);
+    }
+
+    void modelessPreviewKeepsCameraPanelUsableAndApplyIsNotAnError()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        WindowCameraCommands cameraCommands;
+        cameraCommands.screenshotPath = directory.filePath(QStringLiteral("view.png"));
+        QImage image(20, 12, QImage::Format_RGB32);
+        image.fill(Qt::green);
+        QVERIFY(image.save(cameraCommands.screenshotPath));
+        WorkspaceState state;
+        QVERIFY(makeReady(state).ok);
+        StandaloneMainWindow window(state);
+        window.resize(1200, 900);
+        window.bindCameraCommands(cameraCommands);
+        window.show();
+        QApplication::processEvents();
+        QSignalSpy failures(&window, &StandaloneMainWindow::operationFailed);
+        auto* cameraButton = window.findChild<QPushButton*>(QStringLiteral("cameraButton"));
+        auto* panel = window.findChild<CameraPanel*>(QStringLiteral("cameraPanel"));
+        QVERIFY(cameraButton != nullptr);
+        QVERIFY(panel != nullptr);
+        QTest::mouseClick(cameraButton, Qt::LeftButton);
+        auto* views = panel->findChild<QListWidget*>(QStringLiteral("cameraPoseList"));
+        auto* browse = panel->findChild<QPushButton*>(QStringLiteral("browseCameraScreenshotsButton"));
+        auto* apply = panel->findChild<QPushButton*>(QStringLiteral("applyCameraPoseButton"));
+        QVERIFY(views != nullptr && browse != nullptr && apply != nullptr);
+        views->setCurrentRow(0);
+        QTest::mouseClick(browse, Qt::LeftButton);
+        auto* browser = panel->findChild<QWidget*>(QStringLiteral("screenshotBrowser"));
+        auto* note = panel->findChild<QPlainTextEdit*>(QStringLiteral("screenshotPreviewNote"));
+        QVERIFY(browser != nullptr && note != nullptr);
+        browser->move(panel->mapToGlobal(QPoint(panel->width() + 20, 0)));
+        QApplication::processEvents();
+        QVERIFY(QApplication::activeModalWidget() == nullptr);
+        QTest::mouseClick(note->viewport(), Qt::LeftButton);
+        QVERIFY(panel->isVisible());
+        QVERIFY(browser->isVisible());
+        QTest::mouseClick(apply, Qt::LeftButton);
+        QCOMPARE(cameraCommands.applyCount, 1);
+        QCOMPARE(failures.count(), 0);
+        QVERIFY(panel->isVisible());
     }
 
     void transientPanelsDismissWhenClickingOutside()

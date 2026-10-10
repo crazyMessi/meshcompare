@@ -35,6 +35,7 @@ const QString SavedAtUtcKey = QStringLiteral("saved_at_utc");
 const QString ParametersKey = QStringLiteral("parameters");
 const QString ViewStateXmlKey = QStringLiteral("meshlab_view_state_xml");
 const QString TagsKey = QStringLiteral("tags");
+const QString NoteKey = QStringLiteral("note");
 const QString ScreenshotPathKey = QStringLiteral("screenshot_path");
 const QString ScreenshotDirectoryName =
 	QStringLiteral("camera_pose_screenshots");
@@ -52,6 +53,7 @@ struct ParsedView
 	QStringList tags;
 	QString screenshotRelativePath;
 	CameraPose pose;
+	QString note;
 };
 
 struct ParsedCollection
@@ -249,6 +251,13 @@ OperationResult parseLibraryRoot(const QJsonObject& root, ParsedLibrary* destina
 							"The camera-pose library contains invalid pose tags."));
 					view.tags.append(tagValue.toString());
 				}
+			}
+			if (viewObject.contains(NoteKey)) {
+				const QJsonValue noteValue = viewObject.value(NoteKey);
+				if (!noteValue.isString())
+					return failure(QStringLiteral(
+						"The camera-pose library contains an invalid view note."));
+				view.note = noteValue.toString();
 			}
 			if (viewObject.contains(ScreenshotPathKey)) {
 				const QJsonValue screenshotValue =
@@ -590,6 +599,7 @@ SavedCameraPose savedPose(
 	result.screenshotPath = absoluteScreenshotPath(
 		storagePath, view.screenshotRelativePath);
 	result.pose = view.pose;
+	result.note = view.note;
 	return result;
 }
 
@@ -751,6 +761,106 @@ OperationResult invalidUuidResult()
 		"UID must be a non-empty identifier of at most 255 characters."));
 }
 
+OperationResult updatePoseDetails(
+	const QString& storagePath,
+	const QString& uuid,
+	const QString& viewId,
+	const QStringList* tags,
+	const QString* note)
+{
+	const QString normalizedUuid = CameraPoseStore::normalizeUuid(uuid);
+	if (normalizedUuid.isEmpty())
+		return invalidUuidResult();
+	if (viewId.isEmpty())
+		return failure(QStringLiteral("The camera-pose view ID is empty."));
+
+	ParsedLibrary library;
+	const OperationResult readResult = readLibraryFile(storagePath, true, &library);
+	if (!readResult.ok)
+		return readResult;
+	const auto collectionIt = library.collections.constFind(normalizedUuid);
+	if (collectionIt == library.collections.constEnd())
+		return failure(QStringLiteral("No saved camera poses exist for this UID."));
+
+	int viewIndex = -1;
+	for (int index = 0; index < collectionIt.value().views.size(); ++index) {
+		if (collectionIt.value().views.at(index).viewId == viewId) {
+			viewIndex = index;
+			break;
+		}
+	}
+	if (viewIndex < 0)
+		return failure(QStringLiteral("The selected saved camera pose no longer exists."));
+
+	const ParsedView& original = collectionIt.value().views.at(viewIndex);
+	if (tags == nullptr && note != nullptr && original.note == *note)
+		return OperationResult::success();
+
+	QJsonArray views = collectionAsArray(collectionIt.value());
+	QJsonObject view = views.at(viewIndex).toObject();
+	const QStringList normalizedTags =
+		tags != nullptr ? meshcompare::normalizeCameraPoseTags(*tags) : original.tags;
+	const QString oldRelativePath =
+		collectionIt.value().views.at(viewIndex).screenshotRelativePath;
+	QString newRelativePath = oldRelativePath;
+	QString oldAbsolutePath;
+	QString newAbsolutePath;
+	bool screenshotMoved = false;
+	if (tags != nullptr && !oldRelativePath.isEmpty()) {
+		const OperationResult oldPathResult = resolveScreenshotPath(
+			storagePath, oldRelativePath, &oldAbsolutePath);
+		if (!oldPathResult.ok)
+			return oldPathResult;
+		if (!QFileInfo(oldAbsolutePath).isFile()) {
+			return failure(QStringLiteral(
+				"The screenshot mapped to this camera pose no longer exists."));
+		}
+		newRelativePath = screenshotRelativePath(
+			normalizedUuid, viewId, normalizedTags);
+		const OperationResult newPathResult = resolveScreenshotPath(
+			storagePath, newRelativePath, &newAbsolutePath);
+		if (!newPathResult.ok)
+			return newPathResult;
+		if (newAbsolutePath != oldAbsolutePath) {
+			if (pathEntryExists(newAbsolutePath)) {
+				return failure(QStringLiteral(
+					"The new screenshot classification already contains this pose."));
+			}
+			if (!QDir().mkpath(QFileInfo(newAbsolutePath).absolutePath())) {
+				return failure(QStringLiteral(
+					"Unable to create the new screenshot classification directory."));
+			}
+			if (!QFile::rename(oldAbsolutePath, newAbsolutePath)) {
+				return failure(QStringLiteral(
+					"Unable to move the screenshot to its new tag classification."));
+			}
+			screenshotMoved = true;
+		}
+		view.insert(ScreenshotPathKey, newRelativePath);
+	}
+	if (tags != nullptr)
+		view.insert(TagsKey, QJsonArray::fromStringList(normalizedTags));
+	if (note != nullptr) {
+		if (note->isEmpty())
+			view.remove(NoteKey);
+		else
+			view.insert(NoteKey, *note);
+	}
+	views[viewIndex] = view;
+	QJsonObject poses = library.poses;
+	poses.remove(collectionIt.value().sourceKey);
+	poses.insert(normalizedUuid, views);
+	library.root.insert(PosesKey, poses);
+	const OperationResult writeResult =
+		writeLibraryFile(storagePath, library.root);
+	if (!writeResult.ok && screenshotMoved
+		&& !QFile::rename(newAbsolutePath, oldAbsolutePath)) {
+		return failure(writeResult.error + QStringLiteral(
+			" Screenshot rollback also failed; the pose still references its original path."));
+	}
+	return writeResult;
+}
+
 struct PreparedPoseSave
 {
 	ParsedLibrary library;
@@ -897,7 +1007,8 @@ OperationResult CameraPoseStore::saveWithScreenshot(
 	const QImage& screenshot,
 	QString* viewId,
 	const QStringList& tags,
-	QString* screenshotPath)
+	QString* screenshotPath,
+	const QString& note)
 {
 	PreparedPoseSave prepared;
 	const OperationResult preparedResult = preparePoseSave(
@@ -924,6 +1035,8 @@ OperationResult CameraPoseStore::saveWithScreenshot(
 		return imageResult;
 
 	prepared.newView.insert(ScreenshotPathKey, relativePath);
+	if (!note.isEmpty())
+		prepared.newView.insert(NoteKey, note);
 	const QString newViewId = prepared.newViewId;
 	const OperationResult writeResult =
 		commitPoseSave(storagePath_, std::move(prepared));
@@ -1007,88 +1120,24 @@ OperationResult CameraPoseStore::setTags(
 	const QString& viewId,
 	const QStringList& tags)
 {
-	const QString normalizedUuid = normalizeUuid(uuid);
-	if (normalizedUuid.isEmpty())
-		return invalidUuidResult();
-	if (viewId.isEmpty())
-		return failure(QStringLiteral("The camera-pose view ID is empty."));
+	return updatePoseDetails(storagePath_, uuid, viewId, &tags, nullptr);
+}
 
-	ParsedLibrary library;
-	const OperationResult readResult = readLibraryFile(storagePath_, true, &library);
-	if (!readResult.ok)
-		return readResult;
-	const auto collectionIt = library.collections.constFind(normalizedUuid);
-	if (collectionIt == library.collections.constEnd())
-		return failure(QStringLiteral("No saved camera poses exist for this UID."));
+OperationResult CameraPoseStore::setNote(
+	const QString& uuid,
+	const QString& viewId,
+	const QString& note)
+{
+	return updatePoseDetails(storagePath_, uuid, viewId, nullptr, &note);
+}
 
-	int viewIndex = -1;
-	for (int index = 0; index < collectionIt.value().views.size(); ++index) {
-		if (collectionIt.value().views.at(index).viewId == viewId) {
-			viewIndex = index;
-			break;
-		}
-	}
-	if (viewIndex < 0)
-		return failure(QStringLiteral("The selected saved camera pose no longer exists."));
-
-	QJsonArray views = collectionAsArray(collectionIt.value());
-	QJsonObject view = views.at(viewIndex).toObject();
-	const QStringList normalizedTags =
-		meshcompare::normalizeCameraPoseTags(tags);
-	const QString oldRelativePath =
-		collectionIt.value().views.at(viewIndex).screenshotRelativePath;
-	QString newRelativePath = oldRelativePath;
-	QString oldAbsolutePath;
-	QString newAbsolutePath;
-	bool screenshotMoved = false;
-	if (!oldRelativePath.isEmpty()) {
-		const OperationResult oldPathResult = resolveScreenshotPath(
-			storagePath_, oldRelativePath, &oldAbsolutePath);
-		if (!oldPathResult.ok)
-			return oldPathResult;
-		if (!QFileInfo(oldAbsolutePath).isFile()) {
-			return failure(QStringLiteral(
-				"The screenshot mapped to this camera pose no longer exists."));
-		}
-		newRelativePath = screenshotRelativePath(
-			normalizedUuid, viewId, normalizedTags);
-		const OperationResult newPathResult = resolveScreenshotPath(
-			storagePath_, newRelativePath, &newAbsolutePath);
-		if (!newPathResult.ok)
-			return newPathResult;
-		if (newAbsolutePath != oldAbsolutePath) {
-			if (pathEntryExists(newAbsolutePath)) {
-				return failure(QStringLiteral(
-					"The new screenshot classification already contains this pose."));
-			}
-			if (!QDir().mkpath(QFileInfo(newAbsolutePath).absolutePath())) {
-				return failure(QStringLiteral(
-					"Unable to create the new screenshot classification directory."));
-			}
-			if (!QFile::rename(oldAbsolutePath, newAbsolutePath)) {
-				return failure(QStringLiteral(
-					"Unable to move the screenshot to its new tag classification."));
-			}
-			screenshotMoved = true;
-		}
-		view.insert(ScreenshotPathKey, newRelativePath);
-	}
-	view.insert(
-		TagsKey,
-		QJsonArray::fromStringList(normalizedTags));
-	views[viewIndex] = view;
-	QJsonObject poses = library.poses;
-	poses.remove(collectionIt.value().sourceKey);
-	poses.insert(normalizedUuid, views);
-	library.root.insert(PosesKey, poses);
-	const OperationResult writeResult =
-		writeLibraryFile(storagePath_, library.root);
-	if (!writeResult.ok && screenshotMoved
-		&& !QFile::rename(newAbsolutePath, oldAbsolutePath)) {
-		return failure(writeResult.error + QStringLiteral(
-			" Screenshot rollback also failed; the pose still references its original path."));
-	}
-	return writeResult;
+OperationResult CameraPoseStore::setDetails(
+	const QString& uuid,
+	const QString& viewId,
+	const QStringList& tags,
+	const QString& note)
+{
+	return updatePoseDetails(storagePath_, uuid, viewId, &tags, &note);
 }
 
 OperationResult CameraPoseStore::remove(const QString& uuid, const QString& viewId)

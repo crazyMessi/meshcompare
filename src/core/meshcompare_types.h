@@ -7,6 +7,10 @@
 using MeshId = quint64;
 using MeshResourceId = quint64;
 
+namespace meshcompare {
+constexpr int MaxVisibleMeshLayers = 8;
+}
+
 enum class WorkspacePhase { Empty, Loading, Ready, Analyzing, FatalError };
 enum class ColorMode {
     Default,

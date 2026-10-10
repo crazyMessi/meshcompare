@@ -4,6 +4,7 @@
 #include <cmath>
 #include <exception>
 #include <memory>
+#include <limits>
 #include <vector>
 
 #include <QSet>
@@ -60,6 +61,8 @@ public:
     }
 };
 
+vcg::Color4b meshColor(const QColor& color);
+
 bool isFinite(const MeshPoint3D& value)
 {
     return std::isfinite(value[0]) && std::isfinite(value[1]) &&
@@ -98,7 +101,20 @@ OperationResult copyGeometry(
         vertices[static_cast<std::size_t>(index)] = &*vertex;
         vertex->P() = CMeshO::CoordType(position[0], position[1], position[2]);
         vertex->N() = CMeshO::CoordType(normal[0], normal[1], normal[2]);
+        if (geometry.hasVertexColors()) {
+            const QColor color = geometry.vertexColor(index);
+            if (!color.isValid())
+                return OperationResult::failure(QStringLiteral("Invalid source vertex color."));
+            vertex->C() = meshColor(color);
+        }
     }
+
+    if (geometry.hasVertexColors())
+        model->updateDataMask(MeshModel::MM_VERTCOLOR);
+    if (geometry.hasFaceColors())
+        model->updateDataMask(MeshModel::MM_FACECOLOR);
+    if (geometry.hasFaceTexCoords())
+        model->updateDataMask(MeshModel::MM_WEDGTEXCOORD);
 
     CMeshO::FaceIterator face =
         vcg::tri::Allocator<CMeshO>::AddFaces(model->cm, static_cast<std::size_t>(faceCount));
@@ -113,18 +129,62 @@ OperationResult copyGeometry(
         face->V(0) = vertices[static_cast<std::size_t>(indices[0])];
         face->V(1) = vertices[static_cast<std::size_t>(indices[1])];
         face->V(2) = vertices[static_cast<std::size_t>(indices[2])];
+        if (geometry.hasFaceColors()) {
+            const QColor color = geometry.faceColor(index);
+            if (!color.isValid())
+                return OperationResult::failure(QStringLiteral("Invalid source face color."));
+            face->C() = meshColor(color);
+        }
+        if (geometry.hasFaceTexCoords()) {
+            const auto coordinates = geometry.faceTexCoords(index);
+            for (int corner = 0; corner < 3; ++corner) {
+                const MeshTexCoord& coordinate = coordinates[corner];
+                if (!std::isfinite(coordinate.u) || !std::isfinite(coordinate.v) ||
+                    coordinate.textureIndex < -1 ||
+                    coordinate.textureIndex >= geometry.textureCount() ||
+                    coordinate.textureIndex > std::numeric_limits<short>::max() ||
+                    coordinate.textureIndex != coordinates[0].textureIndex) {
+                    return OperationResult::failure(QStringLiteral("Invalid source texture coordinates."));
+                }
+                face->WT(corner).U() = coordinate.u;
+                face->WT(corner).V() = coordinate.v;
+                face->WT(corner).N() = static_cast<short>(coordinate.textureIndex);
+            }
+        }
     }
 
     vcg::tri::UpdateBounding<CMeshO>::Box(model->cm);
     if (model->cm.FN() > 0)
         vcg::tri::UpdateNormal<CMeshO>::PerFaceNormalized(model->cm);
     model->updateDataMask();
-    // Source vertex colors remain available through the resource provider for
-    // callers that explicitly construct a ColorPresentation. A fresh render
-    // scene still starts in Default (LightGray), so do not advertise the
-    // renderer-private built-in color storage until a presentation opts in.
-    model->clearDataMask(MeshModel::MM_VERTCOLOR);
+    if (!geometry.hasVertexColors())
+        model->clearDataMask(MeshModel::MM_VERTCOLOR);
     sharedContext.meshInserted(model->id());
+    // MeshLab initializes its texture container with a zero-name sentinel.
+    // Clear it so imported texture index zero maps to the first uploaded image.
+    sharedContext.deAllocateTexturesPerMesh(model->id());
+    for (int index = 0; index < geometry.textureCount(); ++index) {
+        QImage image = geometry.textureImage(index);
+        if (image.isNull()) {
+            // Unavailable source images have no textured faces, but their
+            // reserved slots keep subsequent wedge texture indices stable.
+            image = QImage(1, 1, QImage::Format_ARGB32);
+            image.fill(Qt::white);
+        }
+        const GLuint texture = sharedContext.allocateTexturePerMesh(model->id(), image, 256);
+        if (texture == 0)
+            return OperationResult::failure(QStringLiteral("A source texture could not be uploaded."));
+        QGLContext* previousContext = const_cast<QGLContext*>(QGLContext::currentContext());
+        sharedContext.makeCurrent();
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, geometry.textureWrapS(index));
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, geometry.textureWrapT(index));
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        sharedContext.doneCurrent();
+        if (previousContext != nullptr)
+            previousContext->makeCurrent();
+    }
 
     modelIds.insert(sceneMesh.id, model->id());
     return OperationResult::success();
@@ -235,40 +295,42 @@ OperationResult validatePresentation(
 }
 
 MLRenderingData desiredRenderingData(
-    MeshModel& model,
-    const ColorPresentation& presentation,
-    std::size_t minFacesForSmoothRendering)
+    const MLRenderingData& source,
+    const ColorPresentation& presentation)
 {
-    MLRenderingData result;
-    MLPoliciesStandAloneFunctions::suggestedDefaultPerViewRenderingData(
-        &model, result, minFacesForSmoothRendering);
-
-    MLRenderingData::RendAtts solidAttributes;
-    result.get(MLRenderingData::PR_SOLID, solidAttributes);
-    if (presentation.mode == ColorMode::Default) {
-        // Callers stage Default only while the transient analytical component
-        // is actually disabled, so MeshLab derives its complete normal default
-        // policy rather than a post-edited face-color variant.
-        Q_ASSERT(!model.hasDataMask(MeshModel::MM_FACECOLOR));
+    MLRenderingData result = source;
+    if (presentation.mode == ColorMode::Default)
         return result;
-    }
 
-    solidAttributes[MLRenderingData::ATT_NAMES::ATT_VERTPOSITION] = true;
-    solidAttributes[MLRenderingData::ATT_NAMES::ATT_VERTCOLOR] =
-        !presentation.vertexColors.isEmpty();
-    solidAttributes[MLRenderingData::ATT_NAMES::ATT_FACECOLOR] =
-        !presentation.faceColors.isEmpty();
-    solidAttributes[MLRenderingData::ATT_NAMES::ATT_VERTTEXTURE] = false;
-    solidAttributes[MLRenderingData::ATT_NAMES::ATT_WEDGETEXTURE] = false;
-    result.set(MLRenderingData::PR_SOLID, solidAttributes);
+    // User colors and analysis intentionally replace source texture/tint in
+    // both triangle and point-cloud views. The source snapshot is never edited.
+    for (const auto modality : {MLRenderingData::PR_SOLID, MLRenderingData::PR_POINTS}) {
+        if (!result.isPrimitiveActive(modality))
+            continue;
+        MLRenderingData::RendAtts attributes;
+        result.get(modality, attributes);
+        attributes[MLRenderingData::ATT_NAMES::ATT_VERTCOLOR] =
+            !presentation.vertexColors.isEmpty();
+        attributes[MLRenderingData::ATT_NAMES::ATT_FACECOLOR] =
+            !presentation.faceColors.isEmpty();
+        attributes[MLRenderingData::ATT_NAMES::ATT_VERTTEXTURE] = false;
+        attributes[MLRenderingData::ATT_NAMES::ATT_WEDGETEXTURE] = false;
+        result.set(modality, attributes);
+    }
 
     MLPerViewGLOptions options;
     result.get(options);
     options._persolid_mesh_color_enabled = false;
+    options._perpoint_mesh_color_enabled = false;
+    options._persolid_noshading = false;
+    options._perpoint_noshading = false;
     options._persolid_fixed_color_enabled =
         presentation.mode == ColorMode::UniformColor;
-    if (presentation.mode == ColorMode::UniformColor)
+    options._perpoint_fixed_color_enabled = options._persolid_fixed_color_enabled;
+    if (presentation.mode == ColorMode::UniformColor) {
         options._persolid_fixed_color = meshColor(presentation.uniformColor);
+        options._perpoint_fixed_color = options._persolid_fixed_color;
+    }
     result.set(options);
     return result;
 }
@@ -332,46 +394,6 @@ void restoreCpuPresentation(PreparedPresentationMutation& mutation) noexcept
     }
 }
 
-class ScopedColorMaskRemoval final
-{
-public:
-    explicit ScopedColorMaskRemoval(
-        PreparedPresentationMutation& mutation)
-        : mutation_(mutation),
-          faceActive_(mutation.hadFaceColorMask),
-          vertexActive_(mutation.hadVertexColorMask)
-    {
-        if (faceActive_) {
-            Q_ASSERT(mutation_.model->hasDataMask(MeshModel::MM_FACECOLOR));
-            Q_ASSERT(mutation_.model->cm.face.IsColorEnabled());
-            Q_ASSERT(mutation_.model->cm.face.CV.size() ==
-                     mutation_.model->cm.face.size());
-            const std::size_t priorCapacity =
-                mutation_.model->cm.face.CV.capacity();
-            mutation_.model->clearDataMask(MeshModel::MM_FACECOLOR);
-            Q_ASSERT(!mutation_.model->hasDataMask(MeshModel::MM_FACECOLOR));
-            Q_ASSERT(!mutation_.model->cm.face.IsColorEnabled());
-            Q_ASSERT(mutation_.model->cm.face.CV.capacity() == priorCapacity);
-        }
-        if (vertexActive_)
-            mutation_.model->clearDataMask(MeshModel::MM_VERTCOLOR);
-    }
-
-    ~ScopedColorMaskRemoval()
-    {
-        if (faceActive_ || vertexActive_)
-            restoreCpuPresentation(mutation_);
-    }
-
-    ScopedColorMaskRemoval(const ScopedColorMaskRemoval&) = delete;
-    ScopedColorMaskRemoval& operator=(
-        const ScopedColorMaskRemoval&) = delete;
-
-private:
-    PreparedPresentationMutation& mutation_;
-    bool faceActive_ = false;
-    bool vertexActive_ = false;
-};
 } // namespace
 
 RenderSceneContext::RenderSceneContext(const RenderSceneSettings& settings)
@@ -478,10 +500,29 @@ OperationResult RenderSceneContext::addResources(
                 model,
                 defaultRendering,
                 settings_.minFacesForSmoothRendering);
+            MLPerViewGLOptions options;
+            defaultRendering.get(options);
+            options._persolid_noshading = geometry->isUnlit();
+            options._perpoint_noshading = geometry->isUnlit();
+            if (geometry->hasFaceTexCoords() && geometry->textureCount() > 0)
+                options._persolid_fixed_color = vcg::Color4b(vcg::Color4b::White);
+            defaultRendering.set(options);
+            ColorPresentation sourceColors;
+            if (geometry->hasVertexColors()) {
+                sourceColors.vertexColors.reserve(geometry->vertexCount());
+                for (int index = 0; index < geometry->vertexCount(); ++index)
+                    sourceColors.vertexColors.append(geometry->vertexColor(index));
+            }
+            if (geometry->hasFaceColors()) {
+                sourceColors.faceColors.reserve(geometry->faceCount());
+                for (int index = 0; index < geometry->faceCount(); ++index)
+                    sourceColors.faceColors.append(geometry->faceColor(index));
+            }
+            sourceColors_.insert(sceneMesh.id, std::move(sourceColors));
+            const auto source = std::make_shared<const MLRenderingData>(defaultRendering);
+            sourceRenderingData_.insert(sceneMesh.id, source);
             presentations_.insert(sceneMesh.id, ColorPresentation{});
-            renderingData_.insert(
-                sceneMesh.id,
-                std::make_shared<const MLRenderingData>(defaultRendering));
+            renderingData_.insert(sceneMesh.id, source);
         }
     }
     catch (const MLException& exception) {
@@ -543,15 +584,17 @@ OperationResult RenderSceneContext::setColorPresentations(
             mutation.meshId = update.meshId;
             mutation.modelId = modelIds_.value(update.meshId);
             mutation.model = document_->getMesh(mutation.modelId);
+            const ColorPresentation& colors = update.presentation.mode == ColorMode::Default
+                ? sourceColors_[update.meshId] : update.presentation;
             mutation.hadFaceColorMask =
                 mutation.model->hasDataMask(MeshModel::MM_FACECOLOR);
             mutation.faceColorsChanged = mutation.hadFaceColorMask ||
-                                         !update.presentation.faceColors.isEmpty();
+                                         !colors.faceColors.isEmpty();
             mutation.hadVertexColorMask =
                 mutation.model->hasDataMask(MeshModel::MM_VERTCOLOR);
             mutation.vertexColorsChanged =
                 mutation.hadVertexColorMask ||
-                !update.presentation.vertexColors.isEmpty();
+                !colors.vertexColors.isEmpty();
             if (mutation.hadFaceColorMask) {
                 mutation.priorFaceColors.reserve(
                     static_cast<std::size_t>(liveFaceCount(*mutation.model)));
@@ -561,8 +604,8 @@ OperationResult RenderSceneContext::setColorPresentations(
                 }
             }
             mutation.desiredFaceColors.reserve(
-                static_cast<std::size_t>(update.presentation.faceColors.size()));
-            for (const QColor& color : update.presentation.faceColors)
+                static_cast<std::size_t>(colors.faceColors.size()));
+            for (const QColor& color : colors.faceColors)
                 mutation.desiredFaceColors.push_back(meshColor(color));
             if (mutation.hadVertexColorMask) {
                 mutation.priorVertexColors.reserve(
@@ -573,8 +616,8 @@ OperationResult RenderSceneContext::setColorPresentations(
                 }
             }
             mutation.desiredVertexColors.reserve(
-                static_cast<std::size_t>(update.presentation.vertexColors.size()));
-            for (const QColor& color : update.presentation.vertexColors)
+                static_cast<std::size_t>(colors.vertexColors.size()));
+            for (const QColor& color : colors.vertexColors)
                 mutation.desiredVertexColors.push_back(meshColor(color));
 
             const auto prior = renderingData_.constFind(update.meshId);
@@ -584,36 +627,14 @@ OperationResult RenderSceneContext::setColorPresentations(
             prepared.push_back(std::move(mutation));
         }
 
-        // Derive all immutable rendering candidates before publication.  For a
-        // transition away from analysis, temporarily remove MM_FACECOLOR so
-        // suggestedDefaultPerViewRenderingData observes the same mask that the
-        // committed Default/Uniform presentation will have.  The scoped restore
-        // reuses retained OCF capacity and also runs if candidate allocation
-        // throws.
+        // Rendering candidates are derived from the immutable imported
+        // appearance, without temporarily mutating the committed CPU model.
         for (PreparedPresentationMutation& mutation : prepared) {
-            const auto presentationIt =
-                candidatePresentations.constFind(mutation.meshId);
-            Q_ASSERT(presentationIt != candidatePresentations.cend());
-            const ColorPresentation& presentation = presentationIt.value();
-            const bool restoresDefault =
-                presentation.mode == ColorMode::Default;
-            if (restoresDefault) {
-                ScopedColorMaskRemoval withoutTransientColors(mutation);
-                mutation.desiredRenderingData =
-                    std::make_shared<const MLRenderingData>(desiredRenderingData(
-                        *mutation.model,
-                        presentation,
-                        settings_.minFacesForSmoothRendering));
-            }
-            else {
-                mutation.desiredRenderingData =
-                    std::make_shared<const MLRenderingData>(desiredRenderingData(
-                        *mutation.model,
-                        presentation,
-                        settings_.minFacesForSmoothRendering));
-            }
-            candidateRenderingData[mutation.meshId] =
-                mutation.desiredRenderingData;
+            mutation.desiredRenderingData =
+                std::make_shared<const MLRenderingData>(desiredRenderingData(
+                    *sourceRenderingData_[mutation.meshId],
+                    candidatePresentations[mutation.meshId]));
+            candidateRenderingData[mutation.meshId] = mutation.desiredRenderingData;
         }
 
         std::vector<std::size_t> touched;
@@ -622,11 +643,7 @@ OperationResult RenderSceneContext::setColorPresentations(
             for (std::size_t index = 0; index < prepared.size(); ++index) {
                 PreparedPresentationMutation& mutation = prepared[index];
                 touched.push_back(index);
-                const auto presentationIt =
-                    candidatePresentations.constFind(mutation.meshId);
-                Q_ASSERT(presentationIt != candidatePresentations.cend());
-                const ColorPresentation& presentation = presentationIt.value();
-                if (!presentation.faceColors.isEmpty()) {
+                if (!mutation.desiredFaceColors.empty()) {
                     mutation.model->updateDataMask(MeshModel::MM_FACECOLOR);
                     std::size_t colorIndex = 0;
                     for (CFaceO& face : mutation.model->cm.face) {
@@ -639,7 +656,7 @@ OperationResult RenderSceneContext::setColorPresentations(
                     MeshCompareRenderDetail::ensureFaceColorDisabled(
                         *mutation.model);
                 }
-                if (!presentation.vertexColors.isEmpty()) {
+                if (!mutation.desiredVertexColors.empty()) {
                     mutation.model->updateDataMask(MeshModel::MM_VERTCOLOR);
                     std::size_t colorIndex = 0;
                     for (CVertexO& vertex : mutation.model->cm.vert) {

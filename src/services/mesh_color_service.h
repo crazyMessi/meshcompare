@@ -130,7 +130,6 @@ private:
     quint64 activeGeneration_ = 0;
     SurfaceComparisonMetric activeMetric_ = SurfaceComparisonMetric::PrecisionAtThreshold;
     MeshId activeReferenceId_ = 0;
-    QVector<QColor> activeReferenceVertexColors_;
     QHash<MeshId, DistanceCacheEntry> distanceCache_;
     QHash<MeshId, DoubleLayerCacheEntry> doubleLayerCache_;
     quint64 cacheGeneration_ = 0;

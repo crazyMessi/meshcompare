@@ -798,7 +798,14 @@ void MeshLabViewport::drawAssignedMesh()
 
         const Matrix44m transform = meshRenderTransform(*mesh);
         sharedContext_.setMeshTransformationMatrix(meshModelId, transform);
+        glPushAttrib(GL_COLOR_BUFFER_BIT | GL_TEXTURE_BIT | GL_ENABLE_BIT);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glEnable(GL_ALPHA_TEST);
+        glAlphaFunc(GL_GREATER, 0.0f);
+        glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
         sharedContext_.draw(meshModelId, context());
+        glPopAttrib();
         if (normalsDiagnostic_)
             drawNormals(*mesh, transform);
     }

@@ -25,8 +25,10 @@ namespace
 class FakeGeometryView final : public IMeshGeometryView
 {
 public:
-    explicit FakeGeometryView(bool hasVertexColors = false)
-        : hasVertexColors_(hasVertexColors)
+    explicit FakeGeometryView(bool hasVertexColors = false, bool hasFaceColors = false,
+                              bool textured = false)
+        : hasVertexColors_(hasVertexColors), hasFaceColors_(hasFaceColors),
+          textured_(textured)
     {
     }
 
@@ -49,18 +51,38 @@ public:
     }
     int faceCount() const override { return 1; }
     std::array<int, 3> faceVertexIndices(int) const override { return {{0, 1, 2}}; }
+    bool hasFaceColors() const override { return hasFaceColors_; }
+    QColor faceColor(int) const override { return QColor(40, 180, 100, 200); }
+    bool hasFaceTexCoords() const override { return textured_; }
+    std::array<MeshTexCoord, 3> faceTexCoords(int) const override
+    {
+        return {{{0.0, 0.0, 0}, {1.0, 0.0, 0}, {0.0, 1.0, 0}}};
+    }
+    int textureCount() const override { return textured_ ? 1 : 0; }
+    QImage textureImage(int) const override
+    {
+        QImage image(2, 2, QImage::Format_ARGB32);
+        image.fill(QColor(220, 40, 170, 128));
+        return image;
+    }
+    bool isUnlit() const override { return textured_; }
+    int textureWrapS(int) const override { return GL_CLAMP_TO_EDGE; }
+    int textureWrapT(int) const override { return GL_MIRRORED_REPEAT; }
 
 private:
     bool hasVertexColors_ = false;
+    bool hasFaceColors_ = false;
+    bool textured_ = false;
 };
 
 class FakeResourceProvider final : public IMeshResourceProvider
 {
 public:
-    explicit FakeResourceProvider(bool hasVertexColors = false)
-        : geometry_(hasVertexColors)
+    explicit FakeResourceProvider(bool hasVertexColors = false, bool hasFaceColors = false,
+                                  bool textured = false)
+        : geometry_(hasVertexColors, hasFaceColors, textured)
     {
-        for (MeshResourceId id = 1; id <= 8; ++id)
+        for (MeshResourceId id = 1; id <= 16; ++id)
             available_.append(id);
     }
 
@@ -461,6 +483,84 @@ private slots:
         QVERIFY(host.isAncestorOf(factory.lastParent()));
     }
 
+    void largeSceneCanReplaceVisibleLayersAndRestoreTheirPresentation()
+    {
+        FakeViewportFactory factory;
+        QWidget host;
+        MeshLabRendererAdapter adapter(factory);
+        QVERIFY(adapter.mount(&host).ok);
+        FakeResourceProvider resources;
+        SceneDescriptor descriptor = scene(1, {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12});
+        for (int index = 8; index < descriptor.meshes.size(); ++index)
+            descriptor.meshes[index].visible = false;
+        descriptor.meshes.last().presentation =
+            distancePresentation(0.08, DistanceColorMapping::Linear);
+        descriptor.meshes.last().analysisLabel = QStringLiteral("P 0.942");
+
+        const OperationResult initialResult =
+            adapter.prepareScene(descriptor, resources);
+        QVERIFY2(initialResult.ok, qPrintable(initialResult.error));
+        adapter.commitPreparedScene();
+        QCOMPARE(factory.creationCount(), 8);
+        QVERIFY(adapter.restoreCamera({QStringLiteral("<large-scene-camera/>")}).ok);
+        QVERIFY(adapter.setColorPresentations(
+                    {{12, descriptor.meshes.last().presentation}}).ok);
+
+        descriptor.generation = 2;
+        descriptor.initialCamera = adapter.captureCamera();
+        descriptor.meshes[0].visible = false;
+        descriptor.meshes.last().visible = true;
+        const int firstReplacementViewport = factory.creationCount();
+        const OperationResult replacementResult =
+            adapter.prepareScene(descriptor, resources);
+        QVERIFY2(replacementResult.ok, qPrintable(replacementResult.error));
+        adapter.commitPreparedScene();
+
+        QCOMPARE(adapter.committedGeneration(), quint64(2));
+        QCOMPARE(factory.creationCount() - firstReplacementViewport, 8);
+        FakeViewport& lastViewport =
+            factory.viewport(firstReplacementViewport + 7);
+        QCOMPARE(lastViewport.scoreLabel(), QStringLiteral("P 0.942"));
+        QCOMPARE(lastViewport.colorLegend(), descriptor.meshes.last().presentation.colorLegend);
+        QCOMPARE(lastViewport.camera().viewStateXml, QStringLiteral("<large-scene-camera/>"));
+        MeshId selectedMeshId = 0;
+        RendererEvents events;
+        events.selectedMeshChanged = [&](MeshId id) { selectedMeshId = id; };
+        adapter.setEvents(events);
+        lastViewport.emitActivated();
+        QCOMPARE(selectedMeshId, MeshId(12));
+        QVERIFY(lastViewport.selected());
+    }
+
+    void largeOverlayRetainsHiddenResourcesAndRejectsNinthVisibleLayer()
+    {
+        FakeViewportFactory factory;
+        QWidget host;
+        MeshLabRendererAdapter adapter(factory);
+        QVERIFY(adapter.mount(&host).ok);
+        FakeResourceProvider resources;
+        SceneDescriptor descriptor = scene(1, {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12});
+        descriptor.layoutMode = SceneLayoutMode::Overlay;
+        for (int index = 8; index < descriptor.meshes.size(); ++index)
+            descriptor.meshes[index].visible = false;
+
+        const OperationResult result = adapter.prepareScene(descriptor, resources);
+        QVERIFY2(result.ok, qPrintable(result.error));
+        adapter.commitPreparedScene();
+        QCOMPARE(factory.creationCount(), 1);
+        QCOMPARE(factory.viewport(0).hiddenMeshCount(), 4);
+        QVERIFY(!adapter.setMeshVisible(12, true).ok);
+        QCOMPARE(factory.viewport(0).label(), QStringLiteral("Overlay · 8/12 visible"));
+        QCOMPARE(factory.viewport(0).hiddenMeshCount(), 4);
+        QVERIFY(adapter.setMeshVisible(1, false).ok);
+        QVERIFY(adapter.setMeshVisible(12, true).ok);
+        QVERIFY(adapter.setAnalysisOverlays({{12, QStringLiteral("P 0.942")}}).ok);
+        QCOMPARE(factory.viewport(0).label(), QStringLiteral("Overlay · 8/12 visible"));
+        QCOMPARE(factory.viewport(0).scoreLabel(), QStringLiteral("mesh-12: P 0.942"));
+        QCOMPARE(factory.viewport(0).hiddenMeshCount(), 4);
+        QCOMPARE(factory.creationCount(), 1);
+    }
+
     void preparedLayoutRestoresItsPresentationCameraAndAnalysisLabels()
     {
         FakeViewportFactory factory;
@@ -858,25 +958,128 @@ private slots:
         QCOMPARE(int(options._persolid_fixed_color[3]), color.alpha());
     }
 
-    void sourceVertexColorsDoNotChangeTheDefaultLightGrayPresentation()
+    void sourceVertexColorsAreDefaultAndRestoredAfterOverrides()
     {
         FakeResourceProvider resources(true);
         RenderSceneContext context;
         QVERIFY(context.addResources(scene(1, {1, 2}), resources).ok);
-
         MeshModel* model = modelFor(context, 2);
-        QVERIFY(model != nullptr);
-        QVERIFY(!model->hasDataMask(MeshModel::MM_VERTCOLOR));
-        const MLRenderingData* renderingData =
-            context.currentRenderingData(2);
-        QVERIFY(renderingData != nullptr);
-        verifySolidUsesOnlyExpectedColor(*renderingData, false);
+        const QVector<QColor> source = {QColor(Qt::red), QColor(Qt::green), QColor(Qt::blue)};
+        QVERIFY(model->hasDataMask(MeshModel::MM_VERTCOLOR));
+        QCOMPARE(liveVertexColors(*model), source);
+        verifySolidUsesVertexColors(*context.currentRenderingData(2));
         MLPerViewGLOptions options;
-        QVERIFY(renderingData->get(options));
-        QVERIFY(options._persolid_fixed_color_enabled);
-        QCOMPARE(
-            options._persolid_fixed_color,
-            vcg::Color4b(vcg::Color4b::LightGray));
+        QVERIFY(context.currentRenderingData(2)->get(options));
+        QVERIFY(!options._persolid_fixed_color_enabled);
+        const RenderingSignature original = renderingSignature(*context.currentRenderingData(2));
+        for (const ColorPresentation& override : {
+                 uniformPresentation(Qt::white),
+                 analysisPresentation(ColorMode::PrecisionResult, Qt::yellow),
+                 vertexAnalysisPresentation(ColorMode::VertexColor,
+                     {QColor(Qt::cyan), QColor(Qt::magenta), QColor(Qt::yellow)})}) {
+            QVERIFY(context.setColorPresentations({{2, override}}).ok);
+            QVERIFY(context.setColorPresentations({{2, ColorPresentation{}}}).ok);
+            QVERIFY(model->hasDataMask(MeshModel::MM_VERTCOLOR));
+            QVERIFY(!model->hasDataMask(MeshModel::MM_FACECOLOR));
+            QCOMPARE(liveVertexColors(*model), source);
+            verifySameRenderingSignature(renderingSignature(*context.currentRenderingData(2)), original);
+        }
+    }
+
+    void sourceFaceColorsAndTexturesSurviveOverrides()
+    {
+        FakeResourceProvider resources(false, true, true);
+        RenderSceneContext context;
+        QVERIFY(context.addResources(scene(1, {1}), resources).ok);
+        MeshModel* model = modelFor(context, 1);
+        QVERIFY(model->hasDataMask(MeshModel::MM_FACECOLOR));
+        QVERIFY(model->hasDataMask(MeshModel::MM_WEDGTEXCOORD));
+        QCOMPARE(model->cm.face[0].WT(1).U(), 1.0f);
+        QCOMPARE(model->cm.face[0].WT(2).V(), 1.0f);
+        QCOMPARE(model->cm.face[0].WT(0).N(), short(0));
+        const QColor source = firstLiveFaceColor(*model);
+        const RenderingSignature original = renderingSignature(*context.currentRenderingData(1));
+        QVERIFY(original.faceColor);
+        QVERIFY(original.wedgeTexture);
+        MLPerViewGLOptions options;
+        QVERIFY(context.currentRenderingData(1)->get(options));
+        QVERIFY(options._persolid_noshading);
+        const GLuint texture = context.sharedContext().getTextureId(model->id(), 0);
+        QVERIFY(texture != 0);
+        context.sharedContext().makeCurrent();
+        glBindTexture(GL_TEXTURE_2D, texture);
+        GLint alphaBits = 0, wrapS = 0, wrapT = 0;
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_ALPHA_SIZE, &alphaBits);
+        glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, &wrapS);
+        glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, &wrapT);
+        context.sharedContext().doneCurrent();
+        QVERIFY(alphaBits > 0);
+        QCOMPARE(wrapS, GLint(GL_CLAMP_TO_EDGE));
+        QCOMPARE(wrapT, GLint(GL_MIRRORED_REPEAT));
+        for (const ColorPresentation& override : {
+                 uniformPresentation(Qt::green),
+                 analysisPresentation(ColorMode::NormalAgreementResult, Qt::blue)}) {
+            QVERIFY(context.setColorPresentations({{1, override}}).ok);
+            QVERIFY(!renderingSignature(*context.currentRenderingData(1)).wedgeTexture);
+            QVERIFY(context.setColorPresentations({{1, ColorPresentation{}}}).ok);
+            QCOMPARE(firstLiveFaceColor(*model), source);
+            verifySameRenderingSignature(renderingSignature(*context.currentRenderingData(1)), original);
+            QVERIFY(context.currentRenderingData(1)->get(options));
+            QVERIFY(options._persolid_noshading);
+        }
+    }
+
+    void textureUploadHonorsRequestedLimitAndRejectsEmptyImages()
+    {
+        FakeResourceProvider resources;
+        RenderSceneContext context;
+        QVERIFY(context.addResources(scene(1, {1}), resources).ok);
+        const int modelId = context.modelIdFor(1);
+        QCOMPARE(context.sharedContext().allocateTexturePerMesh(modelId, QImage(), 1), GLuint(0));
+        QCOMPARE(context.sharedContext().getTextureId(modelId, 0), GLuint(0));
+        QImage image(2048, 2, QImage::Format_ARGB32);
+        image.fill(Qt::red);
+        QCOMPARE(context.sharedContext().allocateTexturePerMesh(modelId, image, 0), GLuint(0));
+        const GLuint texture = context.sharedContext().allocateTexturePerMesh(modelId, image, 1);
+        QVERIFY(texture != 0);
+        QCOMPARE(context.sharedContext().getTextureId(modelId, 0), texture);
+        context.sharedContext().makeCurrent();
+        glBindTexture(GL_TEXTURE_2D, texture);
+        GLint width = 0, maximum = 0;
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maximum);
+        context.sharedContext().doneCurrent();
+        QVERIFY(width > 0);
+        QVERIFY(width <= maximum);
+        QVERIFY(width <= 512);
+        if (maximum >= 512)
+            QCOMPARE(width, 512);
+    }
+
+    void failedSourceAppearanceRestorationRollsBackBothMeshes()
+    {
+        FakeResourceProvider resources(true, true, true);
+        ThrowOnSecondPresentationPublisher publisher;
+        RenderSceneContext context(RenderSceneSettings{}, publisher);
+        QVERIFY(context.addResources(scene(1, {1, 2}), resources).ok);
+        QVERIFY(context.setColorPresentations({
+            {1, uniformPresentation(Qt::yellow)},
+            {2, analysisPresentation(ColorMode::PrecisionResult, Qt::cyan)}}).ok);
+        const RenderingSignature first = renderingSignature(*context.currentRenderingData(1));
+        const RenderingSignature second = renderingSignature(*context.currentRenderingData(2));
+        publisher.arm();
+        QVERIFY(!context.setColorPresentations({{1, ColorPresentation{}}, {2, ColorPresentation{}}}).ok);
+        QCOMPARE(context.colorPresentation(1)->mode, ColorMode::UniformColor);
+        QCOMPARE(context.colorPresentation(2)->mode, ColorMode::PrecisionResult);
+        QVERIFY(!modelFor(context, 1)->hasDataMask(MeshModel::MM_VERTCOLOR));
+        QVERIFY(!modelFor(context, 1)->hasDataMask(MeshModel::MM_FACECOLOR));
+        QCOMPARE(firstLiveFaceColor(*modelFor(context, 2)), QColor(Qt::cyan));
+        verifySameRenderingSignature(renderingSignature(*context.currentRenderingData(1)), first);
+        verifySameRenderingSignature(renderingSignature(*context.currentRenderingData(2)), second);
+        QVERIFY(context.setColorPresentations({{1, ColorPresentation{}}, {2, ColorPresentation{}}}).ok);
+        QVERIFY(modelFor(context, 1)->hasDataMask(MeshModel::MM_VERTCOLOR));
+        QVERIFY(modelFor(context, 2)->hasDataMask(MeshModel::MM_FACECOLOR));
+        QVERIFY(renderingSignature(*context.currentRenderingData(2)).wedgeTexture);
     }
 
     void precisionAndNormalPresentationsUseRendererPrivateFaceColors()
@@ -1238,18 +1441,19 @@ private slots:
         QVERIFY(adapter.prepareScene(scene(1, {1, 2}), resources).ok);
         adapter.commitPreparedScene();
         const int creationCount = factory.creationCount();
+        const int initialRepaints = factory.viewport(0).repaintCount();
 
         QVERIFY(adapter.setColorPresentations(
                     {{2, uniformPresentation(QColor(Qt::green))}}).ok);
 
         QCOMPARE(factory.creationCount(), creationCount);
-        QCOMPARE(factory.viewport(0).repaintCount(), 1);
-        QCOMPARE(factory.viewport(1).repaintCount(), 1);
+        QCOMPARE(factory.viewport(0).repaintCount(), initialRepaints + 1);
+        QCOMPARE(factory.viewport(1).repaintCount(), initialRepaints + 1);
         QVERIFY(!adapter.setColorPresentations(
                      {{99, uniformPresentation(QColor(Qt::red))}}).ok);
         QCOMPARE(factory.creationCount(), creationCount);
-        QCOMPARE(factory.viewport(0).repaintCount(), 1);
-        QCOMPARE(factory.viewport(1).repaintCount(), 1);
+        QCOMPARE(factory.viewport(0).repaintCount(), initialRepaints + 1);
+        QCOMPARE(factory.viewport(1).repaintCount(), initialRepaints + 1);
     }
 
     void distanceLegendRestoresAndUpdatesWithColorPresentations()
@@ -1294,6 +1498,7 @@ private slots:
         FakeResourceProvider resources;
         QVERIFY(adapter.prepareScene(scene(1, {1, 2}), resources).ok);
         adapter.commitPreparedScene();
+        const int initialRepaints = factory.viewport(0).repaintCount();
 
         const OperationResult result = adapter.setColorPresentations(
             {{2,
@@ -1302,8 +1507,8 @@ private slots:
                   {QColor(Qt::red), QColor(Qt::green), QColor(Qt::blue)})}});
 
         QVERIFY2(result.ok, qPrintable(result.error));
-        QCOMPARE(factory.viewport(0).repaintCount(), 1);
-        QCOMPARE(factory.viewport(1).repaintCount(), 1);
+        QCOMPARE(factory.viewport(0).repaintCount(), initialRepaints + 1);
+        QCOMPARE(factory.viewport(1).repaintCount(), initialRepaints + 1);
     }
 };
 

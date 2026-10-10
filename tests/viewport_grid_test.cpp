@@ -477,6 +477,137 @@ private slots:
         QCOMPARE(grid.meshIdForViewport(1), descriptor.meshes[3].id);
     }
 
+    void gridSupportsManyLayersWithOnlyEightVisible()
+    {
+        QWidget host;
+        TestRenderScene renderScene;
+        GridFakeViewportFactory factory;
+        RecordingCallbacks callbacks;
+        ViewportGrid grid(factory, callbacks);
+        SceneDescriptor descriptor = scene(16);
+        for (int index = 8; index < descriptor.meshes.size(); ++index)
+            descriptor.meshes[index].visible = false;
+
+        const OperationResult result = grid.create(
+            &host, descriptor, renderScene.dependencies(), descriptor.referenceId);
+
+        QVERIFY2(result.ok, qPrintable(result.error));
+        QCOMPARE(factory.creationCount(), 8);
+        QCOMPARE(grid.viewportCount(), 8);
+        for (int index = 0; index < grid.viewportCount(); ++index) {
+            QCOMPARE(
+                grid.meshIdForViewport(index + 1),
+                descriptor.meshes.at(index).id);
+        }
+    }
+
+    void gridCanDisplayAndSelectLayersBeyondTheEighth()
+    {
+        QWidget host;
+        TestRenderScene renderScene;
+        GridFakeViewportFactory factory;
+        RecordingCallbacks callbacks;
+        ViewportGrid grid(factory, callbacks);
+        SceneDescriptor descriptor = scene(16);
+        for (int index = 0; index < descriptor.meshes.size(); ++index)
+            descriptor.meshes[index].visible = index >= 8;
+        descriptor.meshes[15].presentation =
+            distancePresentation(0.08, DistanceColorMapping::Linear);
+        const MeshId lastMeshId = descriptor.meshes.last().id;
+
+        const OperationResult result = grid.create(
+            &host, descriptor, renderScene.dependencies(), lastMeshId);
+
+        QVERIFY2(result.ok, qPrintable(result.error));
+        QCOMPARE(grid.viewportCount(), 8);
+        QCOMPARE(grid.meshIdForViewport(1), descriptor.meshes.at(8).id);
+        QCOMPARE(grid.meshIdForViewport(8), lastMeshId);
+        QVERIFY(factory.viewport(7).selected());
+        QVERIFY(!factory.viewport(0).reference());
+        QCOMPARE(
+            factory.viewport(7).colorLegend(),
+            descriptor.meshes.last().presentation.colorLegend);
+        factory.viewport(7).emitActivated();
+        QCOMPARE(callbacks.activatedViewportId, 8);
+        QCOMPARE(grid.meshIdForViewport(callbacks.activatedViewportId), lastMeshId);
+    }
+
+    void layoutsRejectInvalidVisibleCounts_data()
+    {
+        QTest::addColumn<bool>("overlay");
+        QTest::addColumn<int>("visibleCount");
+        QTest::newRow("grid-zero-visible") << false << 0;
+        QTest::newRow("grid-nine-visible") << false << 9;
+        QTest::newRow("overlay-zero-visible") << true << 0;
+        QTest::newRow("overlay-nine-visible") << true << 9;
+    }
+
+    void layoutsRejectInvalidVisibleCounts()
+    {
+        QFETCH(bool, overlay);
+        QFETCH(int, visibleCount);
+        QWidget host;
+        TestRenderScene renderScene;
+        GridFakeViewportFactory factory;
+        RecordingCallbacks callbacks;
+        ViewportGrid grid(factory, callbacks);
+        SceneDescriptor descriptor = scene(16);
+        if (overlay)
+            descriptor.layoutMode = SceneLayoutMode::Overlay;
+        for (int index = 0; index < descriptor.meshes.size(); ++index)
+            descriptor.meshes[index].visible = index < visibleCount;
+
+        const OperationResult result = grid.create(
+            &host, descriptor, renderScene.dependencies(), descriptor.referenceId);
+
+        QVERIFY(!result.ok);
+        QVERIFY(result.error.contains(QStringLiteral("visible meshes")));
+        QCOMPARE(factory.creationCount(), 0);
+        QCOMPARE(grid.viewportCount(), 0);
+    }
+
+    void overlayCanSwapVisibleLayersBeyondTheEighth()
+    {
+        QWidget host;
+        TestRenderScene renderScene;
+        GridFakeViewportFactory factory;
+        RecordingCallbacks callbacks;
+        ViewportGrid grid(factory, callbacks);
+        SceneDescriptor descriptor = scene(16);
+        descriptor.layoutMode = SceneLayoutMode::Overlay;
+        for (int index = 8; index < descriptor.meshes.size(); ++index)
+            descriptor.meshes[index].visible = false;
+        descriptor.meshes.last().presentation =
+            distancePresentation(0.08, DistanceColorMapping::Linear);
+
+        const OperationResult result = grid.create(
+            &host, descriptor, renderScene.dependencies(), descriptor.referenceId);
+
+        QVERIFY2(result.ok, qPrintable(result.error));
+        QCOMPARE(grid.viewportCount(), 1);
+        QCOMPARE(factory.boundModelIds(0).size(), 16);
+        QCOMPARE(factory.viewport(0).label(), QStringLiteral("Overlay · 8/16 visible"));
+        QVERIFY(!factory.viewport(0).meshVisible(116));
+        QVERIFY(!grid.setMeshVisible(116, true).ok);
+        QVERIFY(!factory.viewport(0).meshVisible(116));
+        QVERIFY(grid.setMeshVisible(101, true).ok);
+
+        QVERIFY(grid.setMeshVisible(101, false).ok);
+        QVERIFY(grid.setMeshVisible(116, true).ok);
+        QVERIFY(!factory.viewport(0).meshVisible(101));
+        QVERIFY(factory.viewport(0).meshVisible(116));
+        QCOMPARE(factory.viewport(0).label(), QStringLiteral("Overlay · 8/16 visible"));
+        QCOMPARE(
+            factory.viewport(0).colorLegend(),
+            descriptor.meshes.last().presentation.colorLegend);
+        for (MeshId meshId = 102; meshId <= 108; ++meshId)
+            QVERIFY(grid.setMeshVisible(meshId, false).ok);
+        QVERIFY(!grid.setMeshVisible(116, false).ok);
+        QVERIFY(factory.viewport(0).meshVisible(116));
+        QCOMPARE(factory.viewport(0).label(), QStringLiteral("Overlay · 1/16 visible"));
+        QCOMPARE(factory.creationCount(), 1);
+    }
+
     void overlayCreatesOneViewportBoundToEveryMeshInImportOrder()
     {
         QWidget host;

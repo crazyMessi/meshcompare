@@ -1075,16 +1075,7 @@ public:
 		materials.push_back(currentMaterial);  // add last read material
 
 		stream.close();
-		// Sometimes some materials have texture and no texture
-		// in this case for sake of uniformity we just use the first texture.
-		if(!textures.empty()) {
-			for(size_t i=0;i<materials.size();++i) {
-				if(materials[i].map_Kd.empty()) {
-					materials[i].map_Kd=textures[0];
-					materials[i].index=0;
-				}
-			}
-		}
+		// Materials without map_Kd retain index -1 and render their diffuse color.
 
 		return true;
 	}

@@ -11,7 +11,6 @@
 
 #include <algorithm>
 
-#include <QAbstractButton>
 #include <QAction>
 #include <QApplication>
 #include <QButtonGroup>
@@ -86,7 +85,9 @@ bool canChangeLayerVisibility(
         state.phase() == WorkspacePhase::Ready;
     return actionsEnabled &&
            gridVisibilityChangeEnabled &&
-           (!mesh.visible || visibleCount > 1);
+           (mesh.visible
+                ? visibleCount > 1
+                : visibleCount < meshcompare::MaxVisibleMeshLayers);
 }
 
 bool belongsTo(const QObject* object, const QObject* ancestor)
@@ -123,10 +124,14 @@ bool belongsToPanelInteraction(
         containsGlobalPosition(popup, globalPosition)) {
         return true;
     }
-    const QWidget* modal = QApplication::activeModalWidget();
-    return modal != nullptr &&
-           belongsTo(modal, panel) &&
-           containsGlobalPosition(modal, globalPosition);
+    // A panel can own a modeless window, such as the screenshot browser.
+    // Interacting there must not dismiss its originating panel.
+    for (const QWidget* window : QApplication::topLevelWidgets()) {
+        if (belongsTo(window, panel) &&
+            containsGlobalPosition(window, globalPosition))
+            return true;
+    }
+    return false;
 }
 
 QFrame* toolbarDivider(QWidget* parent)
@@ -161,6 +166,17 @@ StandaloneMainWindow::StandaloneMainWindow(WorkspaceState& state, QWidget* paren
     viewportLayout->setContentsMargins(0, 0, 0, 0);
     viewportLayout->setSpacing(0);
 
+    layerVisibilityNotice_ = new QLabel(viewportFrame_);
+    layerVisibilityNotice_->setObjectName(QStringLiteral("layerVisibilityNotice"));
+    layerVisibilityNotice_->setWordWrap(true);
+    layerVisibilityNotice_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    layerVisibilityNotice_->setStyleSheet(QStringLiteral(
+        "QLabel#layerVisibilityNotice {"
+        "background: #292A27; color: #F2C2B4;"
+        "border-bottom: 1px solid #48443F;"
+        "padding: 8px 14px; font-weight: 600; }"));
+    layerVisibilityNotice_->hide();
+
     noticeArea_ = new QWidget(viewportFrame_);
     noticeArea_->setObjectName(QStringLiteral("noticeArea"));
     auto* noticeAreaLayout = new QHBoxLayout(noticeArea_);
@@ -174,6 +190,7 @@ StandaloneMainWindow::StandaloneMainWindow(WorkspaceState& state, QWidget* paren
     viewportHost_ = new QWidget(viewportFrame_);
     viewportHost_->setObjectName("viewportHost");
     viewportHost_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    viewportLayout->addWidget(layerVisibilityNotice_);
     viewportLayout->addWidget(noticeArea_);
     viewportLayout->addWidget(viewportHost_, 1);
 
@@ -194,8 +211,6 @@ QWidget* StandaloneMainWindow::viewportHost() const
 void StandaloneMainWindow::requestImport(const QStringList& paths)
 {
     if (paths.isEmpty())
-        return;
-    if (!state_.meshes().isEmpty() && !confirmWorkspaceReplacement())
         return;
     emit importRequested(paths);
 }
@@ -228,7 +243,8 @@ void StandaloneMainWindow::presentImportOutcome(const WorkspaceImportOutcome& ou
         showStatusMessage(outcome.notice);
     else
         showPassiveStatusMessage(
-            tr("Imported %1.").arg(meshCountText(state_.meshes().size())));
+            tr("Import complete. Workspace contains %1.")
+                .arg(meshCountText(state_.meshes().size())));
 }
 
 void StandaloneMainWindow::refreshWorkspace()
@@ -247,6 +263,15 @@ void StandaloneMainWindow::refreshWorkspace()
     gridViewButton_->setChecked(
         state_.layoutMode() == SceneLayoutMode::ComparisonGrid);
     const int visibleCount = visibleMeshCount(state_);
+    const int hiddenCount = state_.meshes().size() - visibleCount;
+    layerVisibilityNotice_->setText(
+        hiddenCount > 0
+            ? tr("Showing %1 of %2 layers (%3 hidden). Use Layers to change what is shown.")
+                  .arg(visibleCount)
+                  .arg(state_.meshes().size())
+                  .arg(hiddenCount)
+            : QString());
+    layerVisibilityNotice_->setVisible(hiddenCount > 0);
     const bool grid = state_.layoutMode() == SceneLayoutMode::ComparisonGrid;
     normalizeGridButton_->setEnabled(viewSwitchingEnabled && grid);
     normalizeGridButton_->setChecked(state_.gridNormalizationEnabled());
@@ -261,8 +286,10 @@ void StandaloneMainWindow::refreshWorkspace()
             : tr("Layers"));
     layersButton_->setToolTip(
         grid
-            ? tr("Choose which mesh layers appear in Grid")
-            : tr("Choose which mesh layers are visible in Overlay"));
+            ? tr("Choose up to %1 mesh layers to show in Grid")
+                  .arg(meshcompare::MaxVisibleMeshLayers)
+            : tr("Choose up to %1 mesh layers to show in Overlay")
+                  .arg(meshcompare::MaxVisibleMeshLayers));
     meshCountLabel_->setText(meshCountText(state_.meshes().size()));
     updateWorkspaceStatus();
     if (coloringPanel_ != nullptr)
@@ -302,6 +329,11 @@ void StandaloneMainWindow::bindCameraCommands(ICameraCommands& commands)
         &CameraPanel::statusMessage,
         this,
         &StandaloneMainWindow::presentPanelFailure);
+    connect(
+        cameraPanel_,
+        &CameraPanel::confirmationMessage,
+        this,
+        &StandaloneMainWindow::showPassiveStatusMessage);
     refreshWorkspace();
 }
 
@@ -492,7 +524,7 @@ QFrame* StandaloneMainWindow::buildStatusBar(QWidget* parent)
     layout->setSpacing(12);
 
     statusLabel_ = new QLabel(
-        tr("Open a 1–8 layer MeshLab project or import 1–8 meshes to begin."),
+        tr("Open a MeshLab project or import meshes to begin."),
         bar);
     statusLabel_->setObjectName(QStringLiteral("statusLabel"));
     statusLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -564,6 +596,8 @@ QWidget* StandaloneMainWindow::buildCommandBar(QWidget* parent)
     auto* brandLabel = new QLabel(tr("Mesh Compare"), commandBar);
     brandLabel->setObjectName(QStringLiteral("brandLabel"));
     importMeshesButton_ = new QPushButton(tr("Open"), commandBar);
+    importMeshesButton_->setToolTip(
+        tr("Add meshes or a MeshLab project to this workspace."));
     importMeshesButton_->setObjectName("importMeshesButton");
     coloringButton_ = new QPushButton(
         tr("Coloring") + QStringLiteral("  ▾"),
@@ -707,6 +741,18 @@ void StandaloneMainWindow::rebuildLayersMenu()
         return;
     }
 
+    if (state_.meshes().size() > meshcompare::MaxVisibleMeshLayers) {
+        QAction* hint = layersMenu_->addAction(
+            visibleCount >= meshcompare::MaxVisibleMeshLayers
+                ? tr("%1 layers visible. Uncheck one to show another.")
+                      .arg(meshcompare::MaxVisibleMeshLayers)
+                : tr("Choose up to %1 visible layers.")
+                      .arg(meshcompare::MaxVisibleMeshLayers));
+        hint->setObjectName(QStringLiteral("meshVisibilityLimitHint"));
+        hint->setEnabled(false);
+        layersMenu_->addSeparator();
+    }
+
     for (const MeshEntry& mesh : state_.meshes()) {
         QAction* action = layersMenu_->addAction(mesh.displayName);
         action->setObjectName(
@@ -821,18 +867,4 @@ void StandaloneMainWindow::positionHoleFillingPanel()
     holeFillingPanel_->move(
         qBound(0, anchor.x(), maximumX),
         qBound(0, anchor.y(), maximumY));
-}
-
-bool StandaloneMainWindow::confirmWorkspaceReplacement()
-{
-    QMessageBox box(
-        QMessageBox::Question,
-        tr("Replace Current Workspace?"),
-        tr("This will replace the current meshes and temporary coloring results."),
-        QMessageBox::Cancel,
-        this);
-    QAbstractButton* replaceButton =
-        box.addButton(tr("Replace"), QMessageBox::AcceptRole);
-    box.exec();
-    return box.clickedButton() == replaceButton;
 }

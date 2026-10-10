@@ -2,7 +2,9 @@
 
 #include <array>
 #include <cmath>
+#include <exception>
 #include <unordered_map>
+#include <utility>
 
 #include <common/ml_document/mesh_document.h>
 #include <vcg/complex/allocate.h>
@@ -39,8 +41,21 @@ double squaredLength(const MeshPoint3D& value)
 class MeshLabGeometryView final : public IMeshGeometryView
 {
 public:
-    explicit MeshLabGeometryView(const MeshModel& mesh)
+    MeshLabGeometryView(
+        const MeshModel& mesh,
+        bool unlit,
+        const QVector<int>& wrapS,
+        const QVector<int>& wrapT)
+        : unlit_(unlit)
     {
+        textures_.reserve(static_cast<int>(mesh.cm.textures.size()));
+        for (const std::string& name : mesh.cm.textures)
+            textures_.append(mesh.getTexture(name));
+        for (int index = 0; index < textures_.size(); ++index) {
+            wrapS_.append(validTextureWrap(wrapS.value(index, 10497)));
+            wrapT_.append(validTextureWrap(wrapT.value(index, 10497)));
+        }
+
         const Scalarm determinant = mesh.cm.Tr.Determinant();
         const bool invertible =
             std::isfinite(static_cast<double>(determinant)) &&
@@ -54,6 +69,9 @@ public:
         bool recomputeNormals = !invertible;
         const bool hasVertexColors =
             mesh.hasDataMask(MeshModel::MM_VERTCOLOR);
+        const bool hasFaceColors = mesh.hasDataMask(MeshModel::MM_FACECOLOR);
+        const bool hasWedgeTexCoords = mesh.hasDataMask(MeshModel::MM_WEDGTEXCOORD);
+        const bool hasVertexTexCoords = mesh.hasDataMask(MeshModel::MM_VERTTEXCOORD);
 
         positions_.reserve(mesh.cm.vn);
         normals_.reserve(mesh.cm.vn);
@@ -107,6 +125,10 @@ public:
         }
 
         faces_.reserve(mesh.cm.fn);
+        if (hasFaceColors)
+            faceColors_.reserve(mesh.cm.fn);
+        if (hasWedgeTexCoords || hasVertexTexCoords)
+            faceTexCoords_.reserve(mesh.cm.fn);
         for (const CFaceO& face : mesh.cm.face) {
             if (face.IsD())
                 continue;
@@ -121,6 +143,37 @@ public:
             }
             faces_.append(std::array<int, 3>{
                 {first->second, second->second, third->second}});
+            if (hasFaceColors) {
+                const auto& color = face.C();
+                faceColors_.append(QColor(
+                    int(color[0]), int(color[1]), int(color[2]), int(color[3])));
+            }
+            if (hasWedgeTexCoords || hasVertexTexCoords) {
+                std::array<MeshTexCoord, 3> coordinates;
+                for (int corner = 0; corner < 3; ++corner) {
+                    const auto coordinate = hasWedgeTexCoords
+                        ? face.WT(corner) : face.V(corner)->T();
+                    MeshTexCoord& target = coordinates[corner];
+                    if (!std::isfinite(double(coordinate.U())) ||
+                        !std::isfinite(double(coordinate.V())))
+                        continue;
+                    target.u = coordinate.U();
+                    target.v = coordinate.V();
+                    const int textureIndex = coordinate.N();
+                    if (textureIndex >= 0 && textureIndex < textures_.size() &&
+                        !textures_.at(textureIndex).isNull())
+                        target.textureIndex = textureIndex;
+                }
+                // One triangle can bind one texture. An incomplete or inconsistent
+                // assignment falls back to its source colors instead of failing import.
+                if (coordinates[0].textureIndex < 0 ||
+                    coordinates[1].textureIndex != coordinates[0].textureIndex ||
+                    coordinates[2].textureIndex != coordinates[0].textureIndex) {
+                    for (MeshTexCoord& coordinate : coordinates)
+                        coordinate.textureIndex = -1;
+                }
+                faceTexCoords_.append(coordinates);
+            }
         }
         if (recomputeNormals)
             recomputeVertexNormals();
@@ -148,10 +201,28 @@ public:
     {
         return faces_.at(index);
     }
+    bool hasFaceColors() const override { return !faceColors_.isEmpty(); }
+    QColor faceColor(int index) const override { return faceColors_.value(index); }
+    int textureCount() const override { return textures_.size(); }
+    QImage textureImage(int index) const override { return textures_.value(index); }
+    bool hasFaceTexCoords() const override { return !faceTexCoords_.isEmpty(); }
+    std::array<MeshTexCoord, 3> faceTexCoords(int index) const override
+    {
+        return faceTexCoords_.value(index);
+    }
+    bool isUnlit() const override { return unlit_; }
+    int textureWrapS(int index) const override { return wrapS_.value(index, 10497); }
+    int textureWrapT(int index) const override { return wrapT_.value(index, 10497); }
     bool isValid() const { return validationError_.isEmpty(); }
     const QString& validationError() const { return validationError_; }
 
 private:
+    static int validTextureWrap(int wrap)
+    {
+        // glTF and OpenGL use the same wrap values.
+        return wrap == 33071 || wrap == 33648 ? wrap : 10497;
+    }
+
     void recomputeVertexNormals()
     {
         normals_.fill(MeshPoint3D{{0.0, 0.0, 0.0}}, positions_.size());
@@ -179,10 +250,35 @@ private:
     QVector<MeshPoint3D> normals_;
     QVector<QColor> colors_;
     QVector<std::array<int, 3>> faces_;
+    QVector<QColor> faceColors_;
+    QVector<std::array<MeshTexCoord, 3>> faceTexCoords_;
+    QVector<QImage> textures_;
+    QVector<int> wrapS_;
+    QVector<int> wrapT_;
+    bool unlit_ = false;
+};
+
+struct MeshLabMeshRepository::MeshResource
+{
+    MeshResource(std::shared_ptr<MeshDocument> document, MeshModel* mesh)
+        : document(std::move(document)), model(mesh)
+    {
+    }
+
+    ~MeshResource()
+    {
+        document->delMesh(static_cast<unsigned int>(model->id()));
+    }
+
+    std::shared_ptr<MeshDocument> document;
+    MeshModel* model;
+    bool unlit = false;
+    QVector<int> wrapS;
+    QVector<int> wrapT;
 };
 
 MeshLabMeshRepository::MeshLabMeshRepository()
-    : document_(new MeshDocument)
+    : document_(std::make_shared<MeshDocument>())
 {
 }
 
@@ -190,12 +286,67 @@ MeshLabMeshRepository::~MeshLabMeshRepository() = default;
 
 MeshModel* MeshLabMeshRepository::allocateMesh(const QString& sourcePath, const QString& displayName)
 {
-    return document_->addNewMesh(sourcePath, displayName);
+    if (nextResourceId_ == 0)
+        return nullptr;
+    MeshModel* model = document_->addNewMesh(sourcePath, displayName);
+    if (model == nullptr)
+        return nullptr;
+    resources_.emplace(
+        nextResourceId_++, std::make_shared<MeshResource>(document_, model));
+    return model;
 }
 
 MeshResourceId MeshLabMeshRepository::resourceIdFor(const MeshModel& mesh) const
 {
-    return static_cast<MeshResourceId>(mesh.id()) + 1;
+    for (const auto& resource : resources_) {
+        if (resource.second->model == &mesh)
+            return resource.first;
+    }
+    return 0;
+}
+
+void MeshLabMeshRepository::setAppearanceMetadata(
+    MeshResourceId resourceId,
+    bool unlit,
+    const QVector<int>& wrapS,
+    const QVector<int>& wrapT)
+{
+    const auto resource = resources_.find(resourceId);
+    if (resource == resources_.end())
+        return;
+    resource->second->unlit = unlit;
+    resource->second->wrapS = wrapS;
+    resource->second->wrapT = wrapT;
+    views_.erase(resourceId);
+}
+
+OperationResult MeshLabMeshRepository::retainMesh(
+    const MeshLabMeshRepository& source,
+    MeshResourceId sourceId,
+    MeshResourceId* destinationId)
+{
+    if (destinationId == nullptr) {
+        return OperationResult::failure(
+            QStringLiteral("No retained mesh resource output was provided."));
+    }
+    *destinationId = 0;
+    const auto sourceResource = source.resources_.find(sourceId);
+    if (sourceResource == source.resources_.end()) {
+        return OperationResult::failure(
+            QStringLiteral("The source mesh resource does not exist."));
+    }
+    if (nextResourceId_ == 0) {
+        return OperationResult::failure(
+            QStringLiteral("No more mesh resource IDs are available."));
+    }
+    try {
+        resources_.emplace(nextResourceId_, sourceResource->second);
+    }
+    catch (const std::exception& exception) {
+        return OperationResult::failure(QString::fromLocal8Bit(exception.what()));
+    }
+    *destinationId = nextResourceId_++;
+    return OperationResult::success();
 }
 
 void MeshLabMeshRepository::removeMesh(MeshResourceId resourceId)
@@ -203,7 +354,7 @@ void MeshLabMeshRepository::removeMesh(MeshResourceId resourceId)
     if (resourceId == 0)
         return;
     views_.erase(resourceId);
-    document_->delMesh(static_cast<unsigned int>(resourceId - 1));
+    resources_.erase(resourceId);
 }
 
 OperationResult MeshLabMeshRepository::createMesh(
@@ -297,9 +448,8 @@ OperationResult MeshLabMeshRepository::createMesh(
 
 MeshModel* MeshLabMeshRepository::mesh(MeshResourceId resourceId) const
 {
-    if (resourceId == 0)
-        return nullptr;
-    return document_->getMesh(static_cast<unsigned int>(resourceId - 1));
+    const auto resource = resources_.find(resourceId);
+    return resource == resources_.end() ? nullptr : resource->second->model;
 }
 
 bool MeshLabMeshRepository::hasPositiveAreaFaces(MeshResourceId resourceId) const
@@ -345,7 +495,9 @@ OperationResult MeshLabMeshRepository::snapshotGeometry(
         *geometry = it->second.get();
         return OperationResult::success();
     }
-    std::unique_ptr<MeshLabGeometryView> view(new MeshLabGeometryView(*model));
+    const MeshResource& resource = *resources_.at(resourceId);
+    std::unique_ptr<MeshLabGeometryView> view(new MeshLabGeometryView(
+        *model, resource.unlit, resource.wrapS, resource.wrapT));
     if (!view->isValid())
         return OperationResult::failure(view->validationError());
     *geometry = view.get();

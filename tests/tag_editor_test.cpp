@@ -12,6 +12,29 @@ class TagEditorTest final : public QObject
     Q_OBJECT
 
 private slots:
+    void formTracksPendingTagsAndChipRemovalWithoutTreatingLoadsAsEdits()
+    {
+        TagEditor editor;
+        QSignalSpy changed(&editor, &TagEditor::tagsChanged);
+        editor.load({QStringLiteral("initial")});
+        QCOMPARE(changed.count(), 0);
+        auto* input = qobject_cast<QLineEdit*>(editor.focusProxy());
+        QVERIFY(input != nullptr);
+        QTest::keyClicks(input, QStringLiteral("new"));
+        QVERIFY(changed.count() > 0);
+        QCOMPARE(editor.tags(), QStringList({QStringLiteral("initial"), QStringLiteral("new")}));
+        QTest::keyClick(input, Qt::Key_Return);
+        changed.clear();
+        const auto chips = editor.findChildren<QToolButton*>(QStringLiteral("tagChip"));
+        QCOMPARE(chips.size(), 2);
+        chips.first()->click();
+        QVERIFY(changed.count() > 0);
+        QCOMPARE(editor.tags(), QStringList({QStringLiteral("new")}));
+        changed.clear();
+        editor.load({});
+        QCOMPARE(changed.count(), 0);
+    }
+
     void commaAndEnterCreateRemovableTagChips()
     {
         TagEditor editor;

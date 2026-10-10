@@ -43,7 +43,8 @@ public:
         const QImage& screenshot,
         QString* viewId = nullptr,
         const QStringList& tags = {},
-        QString* screenshotPath = nullptr) override
+        QString* screenshotPath = nullptr,
+        const QString& note = {}) override
     {
         ++saveWithScreenshotCount_;
         lastSaveUuid_ = uuid;
@@ -67,7 +68,8 @@ public:
              QStringLiteral("2026-07-15T00:00:00Z"),
              tags,
              generatedPath,
-             pose});
+             pose,
+             note});
         if (viewId != nullptr)
             *viewId = generated;
         if (screenshotPath != nullptr)
@@ -193,6 +195,56 @@ public:
         return OperationResult::failure(QStringLiteral("Pose not found."));
     }
 
+    OperationResult setNote(
+        const QString& uuid,
+        const QString& viewId,
+        const QString& note) override
+    {
+        if (!nextSetNoteError_.isEmpty())
+            return OperationResult::failure(takeError(nextSetNoteError_));
+        const QString normalized = CameraPoseStore::normalizeUuid(uuid);
+        for (SavedCameraPose& record : records_) {
+            if (record.uuid == normalized && record.viewId == viewId) {
+                record.note = note;
+                return OperationResult::success();
+            }
+        }
+        return OperationResult::failure(QStringLiteral("Pose not found."));
+    }
+
+    OperationResult setDetails(
+        const QString& uuid,
+        const QString& viewId,
+        const QStringList& tags,
+        const QString& note) override
+    {
+        ++setDetailsCount_;
+        lastSetDetailsUuid_ = uuid;
+        lastSetDetailsViewId_ = viewId;
+        lastSetDetailsTags_ = tags;
+        lastSetDetailsNote_ = note;
+        appendTrace(QStringLiteral("store-set-details:%1").arg(viewId));
+        if (!nextSetDetailsError_.isEmpty())
+            return OperationResult::failure(takeError(nextSetDetailsError_));
+        const QString normalized = CameraPoseStore::normalizeUuid(uuid);
+        for (SavedCameraPose& record : records_) {
+            if (record.uuid == normalized && record.viewId == viewId) {
+                record.tags = tags;
+                record.note = note;
+                return OperationResult::success();
+            }
+        }
+        return OperationResult::failure(QStringLiteral("Pose not found."));
+    }
+
+    void failNextSetDetails(const QString& error) { nextSetDetailsError_ = error; }
+    int setDetailsCount() const { return setDetailsCount_; }
+    QString lastSetDetailsUuid() const { return lastSetDetailsUuid_; }
+    QString lastSetDetailsViewId() const { return lastSetDetailsViewId_; }
+    QStringList lastSetDetailsTags() const { return lastSetDetailsTags_; }
+    QString lastSetDetailsNote() const { return lastSetDetailsNote_; }
+
+    void failNextSetNote(const QString& error) { nextSetNoteError_ = error; }
     void failNextSave(const QString& error) { nextSaveError_ = error; }
     void failNextList(const QString& error) const { nextListError_ = error; }
     void failNextLoad(const QString& error) const { nextLoadError_ = error; }
@@ -241,6 +293,11 @@ public:
         loadCount_ = 0;
         removeCount_ = 0;
         setTagsCount_ = 0;
+        setDetailsCount_ = 0;
+        lastSetDetailsUuid_.clear();
+        lastSetDetailsViewId_.clear();
+        lastSetDetailsTags_.clear();
+        lastSetDetailsNote_.clear();
         lastSaveUuid_.clear();
         lastListUuid_.clear();
         lastLoadUuid_.clear();
@@ -275,6 +332,13 @@ private:
     QString nextSaveError_;
     QString nextRemoveError_;
     QString nextSetTagsError_;
+    QString nextSetNoteError_;
+    QString nextSetDetailsError_;
+    QString lastSetDetailsUuid_;
+    QString lastSetDetailsViewId_;
+    QStringList lastSetDetailsTags_;
+    QString lastSetDetailsNote_;
+    int setDetailsCount_ = 0;
     mutable QStringList* trace_ = nullptr;
     std::function<void()> saveObserver_;
     mutable std::function<void()> listObserver_;

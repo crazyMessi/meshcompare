@@ -69,6 +69,8 @@ TagEditor::TagEditor(QWidget* parent)
     completer->setCompletionMode(QCompleter::PopupCompletion);
     input_->setCompleter(completer);
 
+    connect(input_, &QLineEdit::textChanged, this, &TagEditor::tagsChanged);
+
     connect(input_, &QLineEdit::textEdited, this, [this, completer](const QString& text) {
         if (text.contains(QLatin1Char(','))) {
             const bool endsWithSeparator = text.endsWith(QLatin1Char(','));
@@ -82,6 +84,7 @@ TagEditor::TagEditor(QWidget* parent)
         completer->setCompletionPrefix(prefix);
         if (!prefix.isEmpty())
             completer->complete();
+        emit tagsChanged();
     });
     connect(
         completer,
@@ -91,6 +94,7 @@ TagEditor::TagEditor(QWidget* parent)
             appendTags({tag});
             const QSignalBlocker blocker(input_);
             input_->clear();
+            emit tagsChanged();
     });
 }
 
@@ -148,6 +152,7 @@ bool TagEditor::eventFilter(QObject* watched, QEvent* event)
             acceptedTags_.removeLast();
             rebuildChips();
             rebuildSuggestionModel();
+            emit tagsChanged();
             return true;
         }
     }
@@ -159,6 +164,7 @@ void TagEditor::acceptPendingText()
     appendTags(input_->text().split(QLatin1Char(','), Qt::SkipEmptyParts));
     const QSignalBlocker blocker(input_);
     input_->clear();
+    emit tagsChanged();
 }
 
 void TagEditor::appendTags(const QStringList& tags)
@@ -199,6 +205,7 @@ void TagEditor::rebuildChips()
             }
             rebuildChips();
             rebuildSuggestionModel();
+            emit tagsChanged();
         });
         layout_->insertWidget(layout_->count() - 1, chip);
     }

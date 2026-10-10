@@ -26,6 +26,21 @@
 	<array>
 		<dict>
 			<key>CFBundleTypeName</key>
+			<string>3D Mesh</string>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>obj</string>
+				<string>ply</string>
+				<string>stl</string>
+				<string>off</string>
+			</array>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Default</string>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
 			<string>MeshLab Project</string>
 			<key>CFBundleTypeExtensions</key>
 			<array>

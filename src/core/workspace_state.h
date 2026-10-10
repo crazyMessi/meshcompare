@@ -84,6 +84,7 @@ public:
         QVector<MeshEntry> meshes,
         MeshId referenceId,
         SceneLayoutMode layoutMode = SceneLayoutMode::ComparisonGrid);
+    OperationResult commitAppendedMeshes(QVector<MeshEntry> meshes);
     OperationResult commitGeometryChange(
         QVector<MeshEntry> meshes,
         MeshId referenceId,

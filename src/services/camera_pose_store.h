@@ -15,6 +15,7 @@ struct SavedCameraPose {
 	QStringList tags;
 	QString screenshotPath;
 	CameraPose pose;
+	QString note;
 };
 
 class ICameraPoseStore
@@ -32,7 +33,8 @@ public:
 		const QImage& screenshot,
 		QString* viewId = nullptr,
 		const QStringList& tags = {},
-		QString* screenshotPath = nullptr) = 0;
+		QString* screenshotPath = nullptr,
+		const QString& note = {}) = 0;
 	virtual QVector<SavedCameraPose> list(
 		const QString& uuid,
 		OperationResult* result = nullptr) const = 0;
@@ -46,6 +48,15 @@ public:
 		const QString& uuid,
 		const QString& viewId,
 		const QStringList& tags) = 0;
+	virtual OperationResult setNote(
+		const QString& uuid,
+		const QString& viewId,
+		const QString& note) = 0;
+	virtual OperationResult setDetails(
+		const QString& uuid,
+		const QString& viewId,
+		const QStringList& tags,
+		const QString& note) = 0;
 	virtual OperationResult remove(const QString& uuid, const QString& viewId) = 0;
 };
 
@@ -62,7 +73,8 @@ public:
 		const QImage& screenshot,
 		QString* viewId = nullptr,
 		const QStringList& tags = {},
-		QString* screenshotPath = nullptr) override;
+		QString* screenshotPath = nullptr,
+		const QString& note = {}) override;
 	QVector<SavedCameraPose> list(
 		const QString& uuid,
 		OperationResult* result = nullptr) const override;
@@ -74,6 +86,15 @@ public:
 		const QString& uuid,
 		const QString& viewId,
 		const QStringList& tags) override;
+	OperationResult setNote(
+		const QString& uuid,
+		const QString& viewId,
+		const QString& note) override;
+	OperationResult setDetails(
+		const QString& uuid,
+		const QString& viewId,
+		const QStringList& tags,
+		const QString& note) override;
 	OperationResult remove(const QString& uuid, const QString& viewId) override;
 
 	QVector<SavedCameraPose> listAll(

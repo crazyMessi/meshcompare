@@ -19,6 +19,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPalette>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
 #include <QSignalBlocker>
@@ -31,6 +32,7 @@ namespace
 constexpr int PoseViewIdRole = Qt::UserRole;
 constexpr int PoseTagsRole = Qt::UserRole + 1;
 constexpr int PoseScreenshotPathRole = Qt::UserRole + 2;
+constexpr int PoseNoteRole = Qt::UserRole + 3;
 
 QDateTime parseSavedAtUtc(const QString& value)
 {
@@ -127,7 +129,7 @@ CameraPanel::CameraPanel(
     auto* root = new QVBoxLayout(this);
     root->setSizeConstraint(QLayout::SetFixedSize);
     root->setContentsMargins(14, 14, 14, 14);
-    root->setSpacing(10);
+    root->setSpacing(8);
 
     auto* title = new QLabel(tr("Camera Views"), this);
     title->setObjectName(QStringLiteral("cameraPanelTitle"));
@@ -155,7 +157,7 @@ CameraPanel::CameraPanel(
     captureSection->setObjectName(QStringLiteral("cameraCaptureSection"));
     auto* captureLayout = new QVBoxLayout(captureSection);
     captureLayout->setContentsMargins(10, 10, 10, 10);
-    captureLayout->setSpacing(7);
+    captureLayout->setSpacing(6);
 
     auto* captureTitle = new QLabel(tr("CAPTURE CURRENT VIEW"), captureSection);
     captureTitle->setObjectName(QStringLiteral("cameraSectionTitle"));
@@ -170,6 +172,18 @@ CameraPanel::CameraPanel(
     newPoseTagLabel->setBuddy(newPoseTagEditor_);
     captureLayout->addWidget(newPoseTagEditor_);
 
+    auto* newPoseNoteLabel = new QLabel(tr("Note"), captureSection);
+    newPoseNoteLabel->setObjectName(QStringLiteral("cameraFieldLabel"));
+    captureLayout->addWidget(newPoseNoteLabel);
+    newPoseNoteEditor_ = new QPlainTextEdit(captureSection);
+    newPoseNoteEditor_->setObjectName(QStringLiteral("newPoseNoteEditor"));
+    newPoseNoteEditor_->setAccessibleName(tr("Note for new view"));
+    newPoseNoteEditor_->setPlaceholderText(tr("Add a note for this view (optional)"));
+    newPoseNoteEditor_->setTabChangesFocus(true);
+    newPoseNoteEditor_->setFixedHeight(newPoseNoteEditor_->fontMetrics().lineSpacing() * 2 + 12);
+    newPoseNoteLabel->setBuddy(newPoseNoteEditor_);
+    captureLayout->addWidget(newPoseNoteEditor_);
+
     captureHintLabel_ = new QLabel(
         tr("Tags carry over after a successful save"), captureSection);
     captureHintLabel_->setObjectName(QStringLiteral("cameraHintLabel"));
@@ -177,18 +191,18 @@ CameraPanel::CameraPanel(
 
     auto* saveActions = new QHBoxLayout;
     saveActions->setSpacing(7);
-    saveButton_ = new QPushButton(tr("Save Pose"), captureSection);
+    saveButton_ = new QPushButton(tr("Save View"), captureSection);
     saveButton_->setObjectName(QStringLiteral("saveCameraPoseButton"));
     saveButton_->setToolTip(
-        tr("Save the current pose with exactly one local screenshot"));
+        tr("Save the current view, tags, note, and one local screenshot"));
     saveActions->addWidget(saveButton_, 1);
 
     saveAndCopyScreenshotButton_ =
-        new QPushButton(tr("Save Pose & Copy"), captureSection);
+        new QPushButton(tr("Save View && Copy"), captureSection);
     saveAndCopyScreenshotButton_->setObjectName(
         QStringLiteral("saveCameraPoseAndCopyScreenshotButton"));
     saveAndCopyScreenshotButton_->setToolTip(
-        tr("Save the pose with one local screenshot and also copy it"));
+        tr("Save the view, tags, and note with one screenshot, and also copy it"));
     saveActions->addWidget(saveAndCopyScreenshotButton_, 1);
     captureLayout->addLayout(saveActions);
     root->addWidget(captureSection);
@@ -224,8 +238,8 @@ CameraPanel::CameraPanel(
     poseList_->setSelectionMode(QAbstractItemView::SingleSelection);
     poseList_->setUniformItemSizes(true);
     poseList_->setSpacing(2);
-    poseList_->setMinimumHeight(118);
-    poseList_->setMaximumHeight(160);
+    poseList_->setMinimumHeight(90);
+    poseList_->setMaximumHeight(120);
     libraryLayout->addWidget(poseList_);
 
     emptyPoseLabel_ = new QLabel(tr("No saved views yet"), librarySection);
@@ -239,9 +253,12 @@ CameraPanel::CameraPanel(
     selectionSection_->setObjectName(QStringLiteral("cameraSelectionSection"));
     auto* selectionLayout = new QVBoxLayout(selectionSection_);
     selectionLayout->setContentsMargins(10, 10, 10, 10);
-    selectionLayout->setSpacing(7);
+    selectionLayout->setSpacing(6);
 
-    selectedPoseTagLabel_ = new QLabel(tr("Edit saved view"), selectionSection_);
+    selectedViewLabel_ = new QLabel(tr("Selected view"), selectionSection_);
+    selectedViewLabel_->setObjectName(QStringLiteral("selectedCameraViewLabel"));
+    selectionLayout->addWidget(selectedViewLabel_);
+    selectedPoseTagLabel_ = new QLabel(tr("Tags"), selectionSection_);
     selectedPoseTagLabel_->setObjectName(QStringLiteral("selectedPoseTagLabel"));
     selectionLayout->addWidget(selectedPoseTagLabel_);
     selectedPoseTagEditor_ = new TagEditor(selectionSection_);
@@ -249,6 +266,25 @@ CameraPanel::CameraPanel(
     selectedPoseTagEditor_->setAccessibleName(tr("Tags for selected pose"));
     selectedPoseTagLabel_->setBuddy(selectedPoseTagEditor_);
     selectionLayout->addWidget(selectedPoseTagEditor_);
+
+    auto* noteLabel = new QLabel(tr("Note"), selectionSection_);
+    noteLabel->setObjectName(QStringLiteral("cameraFieldLabel"));
+    selectionLayout->addWidget(noteLabel);
+
+    selectedPoseNoteEditor_ = new QPlainTextEdit(selectionSection_);
+    selectedPoseNoteEditor_->setObjectName(QStringLiteral("selectedPoseNoteEditor"));
+    selectedPoseNoteEditor_->setAccessibleName(tr("Notes for selected view"));
+    selectedPoseNoteEditor_->setPlaceholderText(tr("Add a note for this view (optional)"));
+    selectedPoseNoteEditor_->setTabChangesFocus(true);
+    selectedPoseNoteEditor_->setFixedHeight(
+        selectedPoseNoteEditor_->fontMetrics().lineSpacing() * 3 + 12);
+    noteLabel->setBuddy(selectedPoseNoteEditor_);
+    selectionLayout->addWidget(selectedPoseNoteEditor_);
+    selectedViewStatus_ = new QLabel(selectionSection_);
+    selectedViewStatus_->setObjectName(QStringLiteral("cameraViewDetailsStatus"));
+    selectedViewStatus_->setTextFormat(Qt::PlainText);
+    selectedViewStatus_->setWordWrap(true);
+    selectionLayout->addWidget(selectedViewStatus_);
 
     openScreenshotFolderButton_ =
         new QPushButton(tr("Folder"), selectionSection_);
@@ -264,11 +300,13 @@ CameraPanel::CameraPanel(
     actions->addWidget(deleteButton_);
     actions->addWidget(openScreenshotFolderButton_);
     actions->addStretch(1);
-    updateTagsButton_ = new QPushButton(tr("Update"), selectionSection_);
-    updateTagsButton_->setObjectName(QStringLiteral("updateCameraPoseTagsButton"));
-    actions->addWidget(updateTagsButton_);
-    applyButton_ = new QPushButton(tr("Apply"), selectionSection_);
+    saveChangesButton_ = new QPushButton(tr("Save Changes"), selectionSection_);
+    saveChangesButton_->setObjectName(QStringLiteral("saveCameraPoseChangesButton"));
+    saveChangesButton_->setToolTip(tr("Save tags and note together for the selected view"));
+    actions->addWidget(saveChangesButton_);
+    applyButton_ = new QPushButton(tr("Apply View"), selectionSection_);
     applyButton_->setObjectName(QStringLiteral("applyCameraPoseButton"));
+    applyButton_->setToolTip(tr("Move the camera to the selected saved view"));
     actions->addWidget(applyButton_);
     selectionLayout->addLayout(actions);
     root->addWidget(selectionSection_);
@@ -287,7 +325,7 @@ CameraPanel::CameraPanel(
         &QListWidget::itemSelectionChanged,
         this,
         [this] {
-            refreshSelectedTagEditor();
+            refreshSelectedPoseForm();
             updateActionState();
         });
     connect(
@@ -306,8 +344,9 @@ CameraPanel::CameraPanel(
             return;
         }
         const QStringList tags = newPoseTagEditor_->tags();
-        const OperationResult result = commands_.saveCurrentCameraPose(
-            nullptr, tags);
+        QString savedViewId;
+        const OperationResult result = commands_.saveCurrentCameraPoseWithNote(
+            &savedViewId, tags, newPoseNoteEditor_->toPlainText());
         if (!result.ok) {
             reportFailure(result);
             return;
@@ -315,6 +354,8 @@ CameraPanel::CameraPanel(
         rememberTags(tags);
         refreshFromState();
         newPoseTagEditor_->load(lastUsedTags_);
+        newPoseNoteEditor_->clear();
+        selectSavedPose(savedViewId);
     });
     connect(
         saveAndCopyScreenshotButton_,
@@ -329,9 +370,10 @@ CameraPanel::CameraPanel(
 
             QImage screenshot;
             const QStringList tags = newPoseTagEditor_->tags();
+            QString savedViewId;
             const OperationResult result =
-                commands_.saveCurrentCameraPoseWithScreenshot(
-                    screenshot, nullptr, tags);
+                commands_.saveCurrentCameraPoseWithScreenshotAndNote(
+                    screenshot, &savedViewId, tags, newPoseNoteEditor_->toPlainText());
             if (!result.ok) {
                 reportFailure(result);
                 return;
@@ -340,6 +382,8 @@ CameraPanel::CameraPanel(
             rememberTags(tags);
             refreshFromState();
             newPoseTagEditor_->load(lastUsedTags_);
+            newPoseNoteEditor_->clear();
+            selectSavedPose(savedViewId);
             if (screenshot.isNull() ||
                 !services_.copyImageToClipboard(screenshot)) {
                 reportFailure(OperationResult::failure(tr(
@@ -352,10 +396,14 @@ CameraPanel::CameraPanel(
         this,
         &CameraPanel::applySelectedPose);
     connect(
-        updateTagsButton_,
+        saveChangesButton_,
         &QPushButton::clicked,
         this,
-        &CameraPanel::updateSelectedPoseTags);
+        &CameraPanel::updateSelectedPoseDetails);
+    connect(selectedPoseTagEditor_, &TagEditor::tagsChanged,
+            this, &CameraPanel::rememberSelectedPoseDraft);
+    connect(selectedPoseNoteEditor_, &QPlainTextEdit::textChanged,
+            this, &CameraPanel::rememberSelectedPoseDraft);
     connect(
         browseScreenshotsButton_,
         &QPushButton::clicked,
@@ -382,6 +430,9 @@ CameraPanel::CameraPanel(
 
 void CameraPanel::refreshFromState()
 {
+    rememberSelectedPoseDraft();
+    const QString previousViewId = selectedViewId();
+    const QSignalBlocker listBlocker(poseList_);
     const CameraPanelSnapshot snapshot = commands_.cameraPanelSnapshot();
     workspaceUuid_ = snapshot.workspaceUuid;
     snapshotAvailable_ = snapshot.result.ok;
@@ -389,7 +440,9 @@ void CameraPanel::refreshFromState()
     if (workspaceChanged) {
         tagHistoryUuid_ = workspaceUuid_;
         knownTags_.clear();
-        pendingTagUpdates_.clear();
+        pendingDetailUpdates_.clear();
+        detailDrafts_.clear();
+        editingViewId_.clear();
         newPoseTagEditor_->setSuggestions({});
         selectedPoseTagEditor_->setSuggestions({});
     }
@@ -408,7 +461,6 @@ void CameraPanel::refreshFromState()
     if (restoredFallbackTags)
         newPoseTagEditor_->load(lastUsedTags_);
     poseList_->clear();
-    selectedPoseTagEditor_->load({});
     {
         const QSignalBlocker inputBlocker(uidInput_);
         uidInput_->setText(
@@ -418,11 +470,12 @@ void CameraPanel::refreshFromState()
     }
 
     if (!snapshotAvailable_) {
-        clearBrowserPoses();
+        refreshBrowserPoses();
         uuidLabel_->setText(tr("Camera poses are unavailable."));
         uidInput_->setEnabled(false);
         poseList_->setEnabled(false);
         updatePoseListPresentation(tr("Saved views are unavailable"));
+        refreshSelectedPoseForm();
         updateActionState();
         reportFailure(snapshot.result);
         return;
@@ -430,7 +483,7 @@ void CameraPanel::refreshFromState()
 
     uidInput_->setEnabled(state_.phase() == WorkspacePhase::Ready);
     if (workspaceUuid_.isEmpty()) {
-        clearBrowserPoses();
+        refreshBrowserPoses();
         uuidLabel_->setText(
             snapshot.suggestedWorkspaceUid.isEmpty()
                 ? tr("Enter a workspace UID.")
@@ -438,6 +491,7 @@ void CameraPanel::refreshFromState()
         poseList_->setEnabled(false);
         updatePoseListPresentation(
             tr("Set a workspace UID to start saving views"));
+        refreshSelectedPoseForm();
         updateActionState();
         return;
     }
@@ -446,17 +500,17 @@ void CameraPanel::refreshFromState()
     uuidLabel_->setToolTip(workspaceUuid_);
     poseList_->setEnabled(true);
     for (const CameraPoseSummary& pose : snapshot.poses) {
-        auto pending = pendingTagUpdates_.find(pose.viewId);
-        if (pending != pendingTagUpdates_.end() && pending.value() == pose.tags)
-            pendingTagUpdates_.erase(pending);
+        const auto pending = pendingDetailUpdates_.find(pose.viewId);
+        if (pending != pendingDetailUpdates_.end() &&
+            pending.value() == ViewDetails{pose.tags, pose.note})
+            pendingDetailUpdates_.erase(pending);
     }
     updateTagSuggestions(snapshot);
-    refreshBrowserPoses(snapshot);
+    refreshBrowserPoses();
     for (const CameraPoseSummary& pose : snapshot.poses) {
-        const auto pending = pendingTagUpdates_.constFind(pose.viewId);
-        const QStringList poseTags = pending == pendingTagUpdates_.constEnd()
-            ? pose.tags
-            : pending.value();
+        const ViewDetails details = pendingDetailUpdates_.value(
+            pose.viewId, ViewDetails{pose.tags, pose.note});
+        const QStringList& poseTags = details.tags;
         QString label = pose.viewId;
         if (!poseTags.isEmpty()) {
             QStringList renderedTags;
@@ -476,9 +530,12 @@ void CameraPanel::refreshFromState()
         item->setData(PoseViewIdRole, pose.viewId);
         item->setData(PoseTagsRole, poseTags);
         item->setData(PoseScreenshotPathRole, pose.screenshotPath);
+        item->setData(PoseNoteRole, details.note);
+        if (!workspaceChanged && pose.viewId == previousViewId)
+            poseList_->setCurrentItem(item);
     }
     updatePoseListPresentation(tr("No saved views yet"));
-    refreshSelectedTagEditor();
+    refreshSelectedPoseForm();
     updateActionState();
 }
 
@@ -508,18 +565,48 @@ QString CameraPanel::selectedViewId() const
         : item->data(PoseViewIdRole).toString();
 }
 
-void CameraPanel::refreshSelectedTagEditor()
+void CameraPanel::rememberSelectedPoseDraft()
 {
+    if (editingViewId_.isEmpty())
+        return;
+    const ViewDetails draft{selectedPoseTagEditor_->tags(), selectedPoseNoteEditor_->toPlainText()};
+    if (draft == displayedDetails_)
+        detailDrafts_.remove(editingViewId_);
+    else
+        detailDrafts_.insert(editingViewId_, draft);
+    selectedViewStatus_->setText(draft == displayedDetails_ ? tr("Saved") : tr("Unsaved changes"));
+}
+
+void CameraPanel::refreshSelectedPoseForm()
+{
+    rememberSelectedPoseDraft();
     const QListWidgetItem* item = poseList_->currentItem();
-    selectedPoseTagLabel_->setText(
-        item == nullptr
-            ? tr("Edit saved view")
-            : tr("Tags for %1")
-                  .arg(item->data(PoseViewIdRole).toString()));
-    selectedPoseTagEditor_->load(
-        item == nullptr
-            ? QStringList()
-            : item->data(PoseTagsRole).toStringList());
+    editingViewId_ = item == nullptr ? QString() : item->data(PoseViewIdRole).toString();
+    displayedDetails_ = item == nullptr
+        ? ViewDetails{} : ViewDetails{item->data(PoseTagsRole).toStringList(), item->data(PoseNoteRole).toString()};
+    const ViewDetails details = detailDrafts_.value(editingViewId_, displayedDetails_);
+    selectedViewLabel_->setText(editingViewId_.isEmpty()
+        ? tr("Selected view") : tr("View %1").arg(editingViewId_));
+    const QSignalBlocker tagsBlocker(selectedPoseTagEditor_);
+    const QSignalBlocker noteBlocker(selectedPoseNoteEditor_);
+    if (selectedPoseTagEditor_->tags() != details.tags)
+        selectedPoseTagEditor_->load(details.tags);
+    if (selectedPoseNoteEditor_->toPlainText() != details.note)
+        selectedPoseNoteEditor_->setPlainText(details.note);
+    selectedViewStatus_->setText(details == displayedDetails_ ? tr("Saved") : tr("Unsaved changes"));
+}
+
+void CameraPanel::selectSavedPose(const QString& viewId)
+{
+    for (int index = 0; index < poseList_->count(); ++index) {
+        QListWidgetItem* item = poseList_->item(index);
+        if (item->data(PoseViewIdRole).toString() == viewId) {
+            poseList_->setCurrentItem(item);
+            poseList_->scrollToItem(item);
+            selectedPoseNoteEditor_->setFocus(Qt::OtherFocusReason);
+            return;
+        }
+    }
 }
 
 void CameraPanel::updateTagSuggestions(const CameraPanelSnapshot& snapshot)
@@ -528,11 +615,8 @@ void CameraPanel::updateTagSuggestions(const CameraPanelSnapshot& snapshot)
     appendKnownTags(lastUsedTags_);
     for (const CameraPoseSummary& pose : snapshot.poses)
         appendKnownTags(pose.tags);
-    for (auto pending = pendingTagUpdates_.cbegin();
-         pending != pendingTagUpdates_.cend();
-         ++pending) {
-        appendKnownTags(pending.value());
-    }
+    for (const ViewDetails& details : pendingDetailUpdates_)
+        appendKnownTags(details.tags);
     publishKnownTags();
 }
 
@@ -578,23 +662,32 @@ void CameraPanel::updateLastTagHint()
             : tr("Using tags from your last successful save"));
 }
 
-void CameraPanel::refreshBrowserPoses(const CameraPanelSnapshot& snapshot)
+void CameraPanel::refreshBrowserPoses()
 {
-    browserPoses_ = snapshot.poses;
-    for (CameraPoseSummary& pose : browserPoses_) {
-        const auto pending = pendingTagUpdates_.constFind(pose.viewId);
-        if (pending != pendingTagUpdates_.constEnd())
-            pose.tags = pending.value();
+    if (screenshotBrowser_ == nullptr)
+        return;
+    const CameraScreenshotLibrarySnapshot library =
+        commands_.cameraScreenshotLibrarySnapshot();
+    if (!library.result.ok) {
+        reportFailure(library.result);
+        return;
     }
-    if (screenshotBrowser_ != nullptr)
-        screenshotBrowser_->setPoses(browserPoses_);
+    browserPoses_ = library.poses;
+    publishBrowserPoses();
 }
 
-void CameraPanel::clearBrowserPoses()
+void CameraPanel::publishBrowserPoses()
 {
-    browserPoses_.clear();
-    if (screenshotBrowser_ != nullptr)
-        screenshotBrowser_->setPoses(browserPoses_);
+    for (CameraPoseSummary& pose : browserPoses_) {
+        if (pose.workspaceUuid != workspaceUuid_)
+            continue;
+        const auto pending = pendingDetailUpdates_.constFind(pose.viewId);
+        if (pending != pendingDetailUpdates_.constEnd()) {
+            pose.tags = pending->tags;
+            pose.note = pending->note;
+        }
+    }
+    screenshotBrowser_->setPoses(browserPoses_);
 }
 
 void CameraPanel::updatePoseListPresentation(const QString& emptyMessage)
@@ -615,32 +708,37 @@ void CameraPanel::applySelectedPose()
         updateActionState();
         return;
     }
-    reportFailure(commands_.applyCameraPose(viewId));
-}
-
-void CameraPanel::updateSelectedPoseTags()
-{
-    const QString viewId = selectedViewId();
-    if (viewId.isEmpty()) {
-        updateActionState();
-        return;
-    }
-    const QStringList tags = selectedPoseTagEditor_->tags();
-    const OperationResult result = commands_.setCameraPoseTags(viewId, tags);
+    const OperationResult result = commands_.applyCameraPose(viewId);
     if (!result.ok) {
         reportFailure(result);
         return;
     }
-    pendingTagUpdates_.insert(viewId, tags);
-    refreshFromState();
-    rememberKnownTags(tags);
-    for (int index = 0; index < poseList_->count(); ++index) {
-        QListWidgetItem* item = poseList_->item(index);
-        if (item != nullptr && item->data(PoseViewIdRole).toString() == viewId) {
-            poseList_->setCurrentItem(item);
-            break;
-        }
+    emit confirmationMessage(tr("View %1 applied.").arg(viewId));
+}
+
+void CameraPanel::updateSelectedPoseDetails()
+{
+    const QString viewId = selectedViewId();
+    const QString uid = workspaceUuid_;
+    if (viewId.isEmpty() || !saveChangesButton_->isEnabled())
+        return;
+    const ViewDetails details{selectedPoseTagEditor_->tags(), selectedPoseNoteEditor_->toPlainText()};
+    const OperationResult result = commands_.setCameraPoseDetailsForWorkspace(
+        uid, viewId, details.tags, details.note);
+    if (!result.ok) {
+        selectedViewStatus_->setText(tr("Could not save changes: %1").arg(result.error));
+        reportFailure(result);
+        return;
     }
+    if (workspaceUuid_ != uid)
+        return;
+    pendingDetailUpdates_.insert(viewId, details);
+    detailDrafts_.remove(viewId);
+    if (editingViewId_ == viewId)
+        displayedDetails_ = details;
+    refreshFromState();
+    rememberKnownTags(details.tags);
+    emit confirmationMessage(tr("Changes saved for %1.").arg(viewId));
 }
 
 void CameraPanel::openScreenshotBrowser()
@@ -654,8 +752,28 @@ void CameraPanel::openScreenshotBrowser()
     browserPoses_ = library.poses;
     if (screenshotBrowser_ == nullptr) {
         screenshotBrowser_ = new ScreenshotBrowser(this);
+        screenshotBrowser_->setDetailsSaveHandler(
+            [this](const QString& uid, const QString& viewId, const QStringList& tags, const QString& note) {
+                return commands_.setCameraPoseDetailsForWorkspace(uid, viewId, tags, note);
+            });
+        connect(screenshotBrowser_, &ScreenshotBrowser::detailsSaved, this,
+            [this](const QString& uid, const QString& viewId, const QStringList& tags, const QString& note) {
+                rememberSelectedPoseDraft();
+                for (CameraPoseSummary& pose : browserPoses_) {
+                    if (pose.workspaceUuid == uid && pose.viewId == viewId) {
+                        pose.tags = tags;
+                        pose.note = note;
+                    }
+                }
+                if (uid == workspaceUuid_) {
+                    pendingDetailUpdates_.insert(viewId, ViewDetails{tags, note});
+                    refreshFromState();
+                } else {
+                    refreshBrowserPoses();
+                }
+            });
     }
-    screenshotBrowser_->setPoses(browserPoses_);
+    publishBrowserPoses();
     screenshotBrowser_->show();
 }
 
@@ -702,7 +820,10 @@ void CameraPanel::deleteSelectedPose()
         reportFailure(result);
         return;
     }
-    pendingTagUpdates_.remove(viewId);
+    pendingDetailUpdates_.remove(viewId);
+    detailDrafts_.remove(viewId);
+    if (editingViewId_ == viewId)
+        editingViewId_.clear();
     refreshFromState();
 }
 
@@ -726,11 +847,14 @@ void CameraPanel::updateActionState()
     saveAndCopyScreenshotButton_->setEnabled(ready && hasUidInput);
     applyButton_->setEnabled(ready && inputMatchesSnapshot && hasSelection);
     newPoseTagEditor_->setEnabled(ready && hasUidInput);
+    newPoseNoteEditor_->setEnabled(ready && hasUidInput);
     selectedPoseTagLabel_->setEnabled(
         ready && inputMatchesSnapshot && hasSelection);
     selectedPoseTagEditor_->setEnabled(
         ready && inputMatchesSnapshot && hasSelection);
-    updateTagsButton_->setEnabled(ready && inputMatchesSnapshot && hasSelection);
+    saveChangesButton_->setEnabled(ready && inputMatchesSnapshot && hasSelection);
+    selectedPoseNoteEditor_->setEnabled(
+        ready && snapshotAvailable_ && inputMatchesSnapshot && hasSelection);
     browseScreenshotsButton_->setEnabled(snapshotAvailable_);
     openJsonFolderButton_->setEnabled(!cameraPoseLibraryPath_.isEmpty());
     openScreenshotFolderButton_->setEnabled(

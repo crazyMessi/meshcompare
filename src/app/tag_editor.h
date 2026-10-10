@@ -20,6 +20,9 @@ public:
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
 
+signals:
+    void tagsChanged();
+
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 

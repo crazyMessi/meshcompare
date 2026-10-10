@@ -663,7 +663,10 @@ namespace vcg
 			if (immediatemode)
 				return false;
 
-			bool somethingtoupdate = false;
+			// Leaving wedge texturing changes the replicated face order back to
+			// mesh order, even when no color/geometry payload changed.
+			const bool leavingWedgeTexturing = tobedeallocated[INT_ATT_NAMES::ATT_WEDGETEXTURE];
+			bool somethingtoupdate = replicated && leavingWedgeTexturing;
 			for (unsigned int hh = 0; hh < INT_ATT_NAMES::enumArity(); ++hh)
 				somethingtoupdate = somethingtoupdate || tobeupdated[hh];
 
@@ -672,10 +675,10 @@ namespace vcg
 				if (replicated)
 				{
 					InternalRendAtts attributestobeupdated(tobeupdated);
-					//WARNING!In case we have to update the wedgetexture bo maybe (not always!) we must update also the other buffer already in memory
-					//cause the wedgetexture pipeline force a change in the order of the triangles in GPU.
-					//they are now ordered by the texture seam and not more by the triangle index!
-					if (tobeupdated[INT_ATT_NAMES::ATT_WEDGETEXTURE])
+					// Entering or leaving wedge texturing can change the face order
+					// between texture groups and mesh order. Refresh every attribute
+					// together so positions, normals, and colors remain aligned.
+					if (tobeupdated[INT_ATT_NAMES::ATT_WEDGETEXTURE] || leavingWedgeTexturing)
 						attributestobeupdated = _currallocatedboatt;
 					updateBuffersReplicatedPipeline(attributestobeupdated);
 				}
@@ -1579,13 +1582,18 @@ namespace vcg
 				}
 				else
 				{
-					glEnable(GL_TEXTURE_2D);
 					for (std::vector< std::pair<short, GLuint> >::const_iterator it = _texindnumtriangles.begin(); it != _texindnumtriangles.end(); ++it)
 					{
-						if ((int(it->first) != -1) && (size_t(it->first) < textureindex.size()))
+						if ((it->first >= 0) && (size_t(it->first) < textureindex.size()) && textureindex[it->first] != 0)
+						{
+							glEnable(GL_TEXTURE_2D);
 							glBindTexture(GL_TEXTURE_2D, textureindex[it->first]);
+						}
 						else
+						{
+							glDisable(GL_TEXTURE_2D);
 							glBindTexture(GL_TEXTURE_2D, 0);
+						}
 						glDrawArrays(GL_TRIANGLES, firsttriangleoffset, it->second * 3 - firsttriangleoffset);
 						firsttriangleoffset = it->second * 3;
 					}
@@ -2224,24 +2232,23 @@ namespace vcg
 		void fillchunkMap()
 		{
 			_chunkmap.clear();
-			if (!vcg::tri::HasPerWedgeTexCoord(_mesh) || _mesh.face.size() == 0)
+			if (!vcg::tri::HasPerWedgeTexCoord(_mesh) || _mesh.face.empty())
 				return;
-			typename MESH_TYPE::FaceIterator infrange = _mesh.face.begin();
+			size_t rangeStart = 0;
 			short texind = _mesh.face[0].WT(0).N();
-			for (typename MESH_TYPE::FaceIterator fit = _mesh.face.begin(); fit != _mesh.face.end(); ++fit)
+			for (size_t index = 1; index < _mesh.face.size(); ++index)
 			{
-				bool last = (fit == (_mesh.face.end() - 1));
-				if (fit->WT(0).N() != texind || last)
+				const short nextTexture = _mesh.face[index].WT(0).N();
+				if (nextTexture != texind)
 				{
-					int lowind = std::distance(_mesh.face.begin(), infrange);
-					int topind = std::distance(_mesh.face.begin(), fit) - 1;
-					if (last)
-						topind++;
-					_chunkmap[texind].push_back(std::make_pair((GLuint)lowind, (GLuint)topind));
-					infrange = fit;
-					texind = fit->WT(0).N();
+					_chunkmap[texind].push_back(std::make_pair(GLuint(rangeStart), GLuint(index - 1)));
+					rangeStart = index;
+					texind = nextTexture;
 				}
 			}
+			// Close the final run separately so a texture change on the last face
+			// cannot include that face in the preceding texture's range.
+			_chunkmap[texind].push_back(std::make_pair(GLuint(rangeStart), GLuint(_mesh.face.size() - 1)));
 		}
 
 		void debug(const InternalRendAtts& tobeallocated, const InternalRendAtts& tobedeallocated, const InternalRendAtts& tobeupdated)

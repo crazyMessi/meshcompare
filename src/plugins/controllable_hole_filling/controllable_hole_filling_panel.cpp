@@ -2,6 +2,8 @@
 
 #include "core/workspace_state.h"
 
+#include <algorithm>
+
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
@@ -168,7 +170,11 @@ void Panel::refreshFromState()
     outputCombo_->setEnabled(ready);
     applyButton_->setEnabled(ready && meshCombo_->currentIndex() >= 0);
 
-    if (state_.meshes().size() >= 8 &&
+    const bool visibleLayersFull = std::count_if(
+        state_.meshes().cbegin(), state_.meshes().cend(),
+        [](const MeshEntry& mesh) { return mesh.visible; }) >=
+        meshcompare::MaxVisibleMeshLayers;
+    if (visibleLayersFull &&
         static_cast<OutputMode>(outputCombo_->currentData().toInt()) ==
             OutputMode::NewLayer) {
         outputCombo_->setCurrentIndex(
@@ -176,8 +182,8 @@ void Panel::refreshFromState()
                 static_cast<int>(OutputMode::CurrentMesh)));
     }
     outputCombo_->setToolTip(
-        state_.meshes().size() >= 8
-            ? tr("The workspace already has 8 layers; replace the current mesh.")
+        visibleLayersFull
+            ? tr("Hide a layer to create a new one, or replace the current mesh.")
             : QString());
 }
 

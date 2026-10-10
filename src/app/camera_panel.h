@@ -16,6 +16,7 @@ class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPushButton;
+class QPlainTextEdit;
 class ScreenshotBrowser;
 class TagEditor;
 class QWidget;
@@ -45,22 +46,25 @@ public:
 
 signals:
     void statusMessage(const QString& message);
+    void confirmationMessage(const QString& message);
 
 private:
     QString selectedViewId() const;
-    void refreshSelectedTagEditor();
+    void refreshSelectedPoseForm();
+    void rememberSelectedPoseDraft();
+    void selectSavedPose(const QString& viewId);
     void updateTagSuggestions(const CameraPanelSnapshot& snapshot);
     void appendKnownTags(const QStringList& tags);
     void publishKnownTags();
     void rememberKnownTags(const QStringList& tags);
     void rememberTags(const QStringList& tags);
     void updateLastTagHint();
-    void clearBrowserPoses();
-    void refreshBrowserPoses(const CameraPanelSnapshot& snapshot);
+    void refreshBrowserPoses();
+    void publishBrowserPoses();
     void updatePoseListPresentation(const QString& emptyMessage);
     OperationResult commitUidInput(bool refreshAfterCommit);
     void applySelectedPose();
-    void updateSelectedPoseTags();
+    void updateSelectedPoseDetails();
     void openScreenshotBrowser();
     void openCameraPoseLibraryFolder();
     void openSelectedScreenshotFolder();
@@ -78,13 +82,17 @@ private:
     QLabel* emptyPoseLabel_ = nullptr;
     QLabel* captureHintLabel_ = nullptr;
     TagEditor* newPoseTagEditor_ = nullptr;
+    QPlainTextEdit* newPoseNoteEditor_ = nullptr;
+    QLabel* selectedViewLabel_ = nullptr;
+    QLabel* selectedViewStatus_ = nullptr;
     QLabel* selectedPoseTagLabel_ = nullptr;
     TagEditor* selectedPoseTagEditor_ = nullptr;
+    QPlainTextEdit* selectedPoseNoteEditor_ = nullptr;
     QFrame* selectionSection_ = nullptr;
     QPushButton* saveButton_ = nullptr;
     QPushButton* saveAndCopyScreenshotButton_ = nullptr;
     QPushButton* applyButton_ = nullptr;
-    QPushButton* updateTagsButton_ = nullptr;
+    QPushButton* saveChangesButton_ = nullptr;
     QPushButton* browseScreenshotsButton_ = nullptr;
     QPushButton* openJsonFolderButton_ = nullptr;
     QPushButton* openScreenshotFolderButton_ = nullptr;
@@ -95,7 +103,19 @@ private:
     QString tagHistoryUuid_;
     QStringList knownTags_;
     QStringList lastUsedTags_;
-    QHash<QString, QStringList> pendingTagUpdates_;
+    struct ViewDetails {
+        QStringList tags;
+        QString note;
+
+        bool operator==(const ViewDetails& other) const
+        {
+            return tags == other.tags && note == other.note;
+        }
+    };
+    QHash<QString, ViewDetails> detailDrafts_;
+    QHash<QString, ViewDetails> pendingDetailUpdates_;
+    QString editingViewId_;
+    ViewDetails displayedDetails_;
     QVector<CameraPoseSummary> browserPoses_;
     bool hasLastUsedTags_ = false;
     bool snapshotAvailable_ = false;

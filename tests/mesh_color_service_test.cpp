@@ -276,7 +276,7 @@ class MeshColorServiceTest : public QObject
     Q_OBJECT
 
 private slots:
-    void distanceAnalysisColorsTargetsAndReferenceByVertex()
+    void distanceAnalysisColorsTargetsAndRestoresReferenceAppearance()
     {
         WorkspaceState state;
         makeReady(state);
@@ -296,13 +296,10 @@ private slots:
         QCOMPARE(comparer.callCount(), 2);
         QCOMPARE(renderer.presentationUpdateCount(), 1);
         QCOMPARE(renderer.lastPresentationBatch().size(), 3);
-        QCOMPARE(state.mesh(1)->presentation.mode, ColorMode::VertexColor);
-        QCOMPARE(
-            state.mesh(1)->presentation.vertexColors,
-            QVector<QColor>({
-                QColor(11, 22, 33, 44),
-                QColor(55, 66, 77, 88),
-                QColor(99, 111, 122, 133)}));
+        QCOMPARE(state.mesh(1)->presentation.mode, ColorMode::Default);
+        QVERIFY(state.mesh(1)->presentation.vertexColors.isEmpty());
+        QVERIFY(!state.mesh(1)->presentation.referenceDependent);
+        QCOMPARE(renderer.presentation(1).mode, ColorMode::Default);
         QCOMPARE(state.mesh(1)->analysisSummary.kind, AnalysisKind::None);
         QCOMPARE(state.mesh(2)->presentation.mode, ColorMode::VertexColor);
         QCOMPARE(

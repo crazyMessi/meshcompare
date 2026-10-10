@@ -285,13 +285,19 @@ if(BUILD_TESTING)
 		PRIVATE meshcompare-meshlab-infrastructure meshlab-common)
 	add_dependencies(meshcompare-mesh-import-service-test io_base)
 	add_meshcompare_test(
+		meshcompare-mesh-repository-appearance-test
+		mesh_repository_appearance_test.cpp)
+	target_link_libraries(meshcompare-mesh-repository-appearance-test
+		PRIVATE meshcompare-meshlab-infrastructure meshlab-common)
+	add_dependencies(meshcompare-mesh-repository-appearance-test io_base)
+	add_meshcompare_test(
 		meshcompare-mesh-lab-viewport-dependencies-test
 		mesh_lab_viewport_dependencies_test.cpp)
 	target_link_libraries(meshcompare-mesh-lab-viewport-dependencies-test
 		PRIVATE meshcompare-meshlab-viewport)
 	add_meshcompare_test(meshcompare-render-regression-test render_regression_test.cpp)
 	target_link_libraries(meshcompare-render-regression-test
-		PRIVATE meshcompare-meshlab-viewport)
+		PRIVATE meshcompare-meshlab-renderer)
 	add_meshcompare_test(
 		meshcompare-mesh-lab-renderer-adapter-test
 		mesh_lab_renderer_adapter_test.cpp)

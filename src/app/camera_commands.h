@@ -14,6 +14,7 @@ struct CameraPoseSummary
     QStringList tags;
     QString screenshotPath;
     QString workspaceUuid;
+    QString note;
 };
 
 struct CameraPanelSnapshot
@@ -50,9 +51,30 @@ public:
         QImage& screenshot,
         QString* savedViewId = nullptr,
         const QStringList& tags = {}) = 0;
+    virtual OperationResult saveCurrentCameraPoseWithNote(
+        QString* savedViewId,
+        const QStringList& tags,
+        const QString& note) = 0;
+    virtual OperationResult saveCurrentCameraPoseWithScreenshotAndNote(
+        QImage& screenshot,
+        QString* savedViewId,
+        const QStringList& tags,
+        const QString& note) = 0;
+    virtual OperationResult setCameraPoseDetailsForWorkspace(
+        const QString& workspaceUuid,
+        const QString& viewId,
+        const QStringList& tags,
+        const QString& note) = 0;
     virtual OperationResult applyCameraPose(const QString& viewId) = 0;
     virtual OperationResult setCameraPoseTags(
         const QString& viewId,
         const QStringList& tags) = 0;
+    virtual OperationResult setCameraPoseNote(
+        const QString& viewId,
+        const QString& note) = 0;
+    virtual OperationResult setCameraPoseNoteForWorkspace(
+        const QString& workspaceUuid,
+        const QString& viewId,
+        const QString& note) = 0;
     virtual OperationResult deleteCameraPose(const QString& viewId) = 0;
 };

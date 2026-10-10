@@ -193,6 +193,14 @@ private slots:
 	void deletingAPoseDeletesItsUniqueScreenshot();
 	void screenshotMutationRejectsSymbolicLinkTraversal();
 	void poseTagsCanBeAssignedAndLegacyPosesReceiveHoleTag();
+	void captureStoresTagsAndNoteTogether();
+	void detailsUpdateBothFieldsAndPreservePoseMetadata();
+	void detailsFailurePreservesBothFieldsAndScreenshot();
+	void detailsJsonWriteFailureRollsBackScreenshotMove();
+	void notesPersistVerbatimWithoutChangingPoseMetadata();
+	void notesAreIndependentAcrossViewsAndUidsAndCanBeCleared();
+	void legacyPosesWithoutNotesRemainCompatible();
+	void invalidNoteRequestsLeaveTheLibraryUnchanged();
 	void migrationCopiesLegacyOnlyWhenCurrentIsAbsent();
 	void deletionIsAtomicAndScopedToUuid();
 	void malformedLibraryFailsEveryOperationWithoutChangingBytes_data();
@@ -609,6 +617,270 @@ void CameraPoseStoreTest::poseTagsCanBeAssignedAndLegacyPosesReceiveHoleTag()
 		QStringList({QStringLiteral("edge"), QStringLiteral("hole")}));
 }
 
+void CameraPoseStoreTest::captureStoresTagsAndNoteTogether()
+{
+	QTemporaryDir dir;
+	QVERIFY(dir.isValid());
+	const QString current = dir.filePath(QStringLiteral("poses.json"));
+	CameraPoseStore store(current, QString());
+	QString viewId;
+	QString imagePath;
+	const QString note = QString::fromUtf8("  孔洞 🔍\nSecond line\t  ");
+	QVERIFY(store.saveWithScreenshot(
+		UuidA, pose(QStringLiteral("<captured-camera/>")), screenshot(),
+		&viewId, {QStringLiteral(" edge "), QStringLiteral("edge")},
+		&imagePath, note).ok);
+
+	const SavedCameraPose saved = CameraPoseStore(current, QString()).list(UuidA).front();
+	QCOMPARE(saved.note, note);
+	QCOMPARE(saved.tags, QStringList{QStringLiteral("edge")});
+	QCOMPARE(saved.viewId, viewId);
+	QCOMPARE(saved.screenshotPath, imagePath);
+	QCOMPARE(QImage(imagePath), screenshot());
+	QCOMPARE(readRoot(current).value(QStringLiteral("poses")).toObject()
+		.value(UuidA).toArray().first().toObject().value(QStringLiteral("note")).toString(), note);
+
+	QVERIFY(savePose(store, UuidB, pose(QStringLiteral("<without-note/>"))).ok);
+	QVERIFY(!readRoot(current).value(QStringLiteral("poses")).toObject()
+		.value(UuidB).toArray().first().toObject().contains(QStringLiteral("note")));
+}
+
+void CameraPoseStoreTest::detailsUpdateBothFieldsAndPreservePoseMetadata()
+{
+	QTemporaryDir dir;
+	QVERIFY(dir.isValid());
+	const QString current = dir.filePath(QStringLiteral("poses.json"));
+	CameraPoseStore store(current, QString());
+	QString viewId;
+	QString originalPath;
+	QVERIFY(savePose(store, UuidA, pose(QStringLiteral("<camera/>")), &viewId,
+		{QStringLiteral("old")}, &originalPath).ok);
+	QVERIFY(savePose(store, UuidB, pose(QStringLiteral("<other-camera/>"))).ok);
+	const QByteArray imageBytes = readBytes(originalPath);
+	QJsonObject original = readRoot(current);
+	original.insert(QStringLiteral("future_root"), 42);
+	QJsonObject poses = original.value(QStringLiteral("poses")).toObject();
+	QJsonArray views = poses.value(UuidA).toArray();
+	QJsonObject view = views.first().toObject();
+	view.insert(QStringLiteral("future_view"), QStringLiteral("preserved"));
+	views[0] = view;
+	poses.insert(UuidA, views);
+	original.insert(QStringLiteral("poses"), poses);
+	QVERIFY(writeBytes(current, QJsonDocument(original).toJson()));
+
+	const QString note = QString::fromUtf8("  边缘备注 🔍\n<plain text & spaces>\r\n  ");
+	QVERIFY(store.setDetails(UuidA, viewId,
+		{QStringLiteral(" reviewed "), QStringLiteral("reviewed")}, note).ok);
+	const SavedCameraPose edited = CameraPoseStore(current, QString()).list(UuidA).front();
+	QCOMPARE(edited.tags, QStringList{QStringLiteral("reviewed")});
+	QCOMPARE(edited.note, note);
+	QVERIFY(edited.screenshotPath != originalPath);
+	QVERIFY(!QFileInfo::exists(originalPath));
+	QCOMPARE(readBytes(edited.screenshotPath), imageBytes);
+
+	view.insert(QStringLiteral("tags"), QJsonArray{QStringLiteral("reviewed")});
+	view.insert(QStringLiteral("note"), note);
+	view.insert(QStringLiteral("screenshot_path"), QDir(dir.path()).relativeFilePath(edited.screenshotPath));
+	views[0] = view;
+	poses.insert(UuidA, views);
+	original.insert(QStringLiteral("poses"), poses);
+	QCOMPARE(readRoot(current), original);
+
+	QVERIFY(store.setDetails(UuidA, viewId, {}, QString()).ok);
+	const SavedCameraPose cleared = store.list(UuidA).front();
+	QVERIFY(cleared.tags.isEmpty());
+	QVERIFY(cleared.note.isEmpty());
+	QCOMPARE(cleared.savedAtUtc, edited.savedAtUtc);
+	QCOMPARE(cleared.pose.viewStateXml, edited.pose.viewStateXml);
+	QCOMPARE(readBytes(cleared.screenshotPath), imageBytes);
+	QVERIFY(!readRoot(current).value(QStringLiteral("poses")).toObject()
+		.value(UuidA).toArray().first().toObject().contains(QStringLiteral("note")));
+	QCOMPARE(store.list(UuidB).front().pose.viewStateXml, QStringLiteral("<other-camera/>"));
+}
+
+void CameraPoseStoreTest::detailsFailurePreservesBothFieldsAndScreenshot()
+{
+	QTemporaryDir dir;
+	QVERIFY(dir.isValid());
+	const QString current = dir.filePath(QStringLiteral("poses.json"));
+	CameraPoseStore store(current, QString());
+	QString viewId;
+	QString originalPath;
+	QVERIFY(store.saveWithScreenshot(UuidA, pose(QStringLiteral("<camera/>")), screenshot(),
+		&viewId, {QStringLiteral("old")}, &originalPath, QStringLiteral("old note")).ok);
+	QVERIFY(store.setDetails(UuidA, viewId, {QStringLiteral("new")}, QStringLiteral("new note")).ok);
+	const QString blockedPath = store.list(UuidA).front().screenshotPath;
+	QVERIFY(store.setDetails(UuidA, viewId, {QStringLiteral("old")}, QStringLiteral("old note")).ok);
+	QVERIFY(writeBytes(blockedPath, QByteArray("existing file")));
+	const QByteArray originalJson = readBytes(current);
+	const QByteArray originalImage = readBytes(originalPath);
+
+	const OperationResult updated = store.setDetails(
+		UuidA, viewId, {QStringLiteral("new")}, QStringLiteral("must not persist"));
+	QVERIFY(!updated.ok);
+	QCOMPARE(readBytes(current), originalJson);
+	QCOMPARE(readBytes(originalPath), originalImage);
+	QCOMPARE(readBytes(blockedPath), QByteArray("existing file"));
+	QCOMPARE(store.list(UuidA).front().note, QStringLiteral("old note"));
+}
+
+void CameraPoseStoreTest::detailsJsonWriteFailureRollsBackScreenshotMove()
+{
+	QTemporaryDir dir;
+	QVERIFY(dir.isValid());
+	const QString current = dir.filePath(QStringLiteral("poses.json"));
+	CameraPoseStore store(current, QString());
+	QString viewId;
+	QString originalPath;
+	QVERIFY(store.saveWithScreenshot(UuidA, pose(QStringLiteral("<camera/>")), screenshot(),
+		&viewId, {QStringLiteral("old")}, &originalPath, QStringLiteral("old note")).ok);
+	// Prepare both screenshot directories before blocking only the JSON directory.
+	QVERIFY(store.setDetails(UuidA, viewId, {QStringLiteral("new")}, QStringLiteral("new note")).ok);
+	const QString newPath = store.list(UuidA).front().screenshotPath;
+	QVERIFY(store.setDetails(UuidA, viewId, {QStringLiteral("old")}, QStringLiteral("old note")).ok);
+	const QByteArray originalJson = readBytes(current);
+	const QByteArray originalImage = readBytes(originalPath);
+	const QFileDevice::Permissions originalPermissions = QFile::permissions(dir.path());
+	const QFileDevice::Permissions readOnly =
+		QFileDevice::ReadOwner | QFileDevice::ExeOwner |
+		QFileDevice::ReadGroup | QFileDevice::ExeGroup |
+		QFileDevice::ReadOther | QFileDevice::ExeOther;
+	QVERIFY(QFile::setPermissions(dir.path(), readOnly));
+	QFile probe(dir.filePath(QStringLiteral("probe")));
+	if (probe.open(QIODevice::WriteOnly)) {
+		probe.close();
+		QFile::remove(probe.fileName());
+		QVERIFY(QFile::setPermissions(dir.path(), originalPermissions));
+		QSKIP("The current user can bypass directory write permissions.");
+	}
+	const OperationResult updated = store.setDetails(
+		UuidA, viewId, {QStringLiteral("new")}, QStringLiteral("must not persist"));
+	const bool permissionsRestored = QFile::setPermissions(dir.path(), originalPermissions);
+	QVERIFY(permissionsRestored);
+	QVERIFY(!updated.ok);
+	QCOMPARE(readBytes(current), originalJson);
+	QCOMPARE(readBytes(originalPath), originalImage);
+	QVERIFY(!QFileInfo::exists(newPath));
+}
+
+void CameraPoseStoreTest::notesPersistVerbatimWithoutChangingPoseMetadata()
+{
+	QTemporaryDir dir;
+	QVERIFY(dir.isValid());
+	const QString current = dir.filePath(QStringLiteral("poses.json"));
+	CameraPoseStore store(current, QString());
+	QString viewId;
+	QString imagePath;
+	QVERIFY(savePose(
+		store, UuidA, pose(QStringLiteral("<original-camera/>")), &viewId,
+		{QStringLiteral("edge")}, &imagePath).ok);
+	const QByteArray imageBytes = readBytes(imagePath);
+	const SavedCameraPose saved = store.list(UuidA).front();
+	QJsonObject originalRoot = readRoot(current);
+	originalRoot.insert(QStringLiteral("future_root"), 29);
+	QJsonObject originalPoses = originalRoot.value(QStringLiteral("poses")).toObject();
+	QJsonArray originalViews = originalPoses.value(UuidA).toArray();
+	QJsonObject originalView = originalViews.first().toObject();
+	originalView.insert(QStringLiteral("future_view"), QStringLiteral("keep"));
+	originalView.insert(QStringLiteral("parameters"), QJsonObject{{QStringLiteral("focal_mm"), 35}});
+	originalViews[0] = originalView;
+	originalPoses.insert(UuidA, originalViews);
+	originalRoot.insert(QStringLiteral("poses"), originalPoses);
+	QVERIFY(writeBytes(current, QJsonDocument(originalRoot).toJson()));
+
+	const QString note = QString::fromUtf8("  边缘有孔洞 🔍\nSecond line\r\n\t<keep & spaces>  ");
+	const OperationResult updated = store.setNote(UuidA, viewId, note);
+	QVERIFY2(updated.ok, qPrintable(updated.error));
+
+	CameraPoseStore reopened(current, QString());
+	const QVector<SavedCameraPose> views = reopened.list(UuidA);
+	QCOMPARE(views.size(), 1);
+	QCOMPARE(views.front().note, note);
+	QCOMPARE(views.front().savedAtUtc, saved.savedAtUtc);
+	QCOMPARE(views.front().pose.viewStateXml, saved.pose.viewStateXml);
+	QCOMPARE(views.front().tags, saved.tags);
+	QCOMPARE(views.front().screenshotPath, saved.screenshotPath);
+	QCOMPARE(reopened.listAll().front().note, note);
+	QCOMPARE(readBytes(imagePath), imageBytes);
+
+	QJsonObject expectedRoot = originalRoot;
+	originalView.insert(QStringLiteral("note"), note);
+	originalViews[0] = originalView;
+	originalPoses.insert(UuidA, originalViews);
+	expectedRoot.insert(QStringLiteral("poses"), originalPoses);
+	QCOMPARE(readRoot(current), expectedRoot);
+	const QByteArray updatedBytes = readBytes(current);
+	QVERIFY(store.setNote(UuidA, viewId, note).ok);
+	QCOMPARE(readBytes(current), updatedBytes);
+}
+
+void CameraPoseStoreTest::notesAreIndependentAcrossViewsAndUidsAndCanBeCleared()
+{
+	QTemporaryDir dir;
+	QVERIFY(dir.isValid());
+	const QString current = dir.filePath(QStringLiteral("poses.json"));
+	CameraPoseStore store(current, QString());
+	QString firstId;
+	QString secondId;
+	QString otherId;
+	QVERIFY(savePose(store, UuidA, pose(QStringLiteral("<first/>")), &firstId).ok);
+	QVERIFY(savePose(store, UuidA, pose(QStringLiteral("<second/>")), &secondId).ok);
+	QVERIFY(savePose(store, UuidB, pose(QStringLiteral("<other/>")), &otherId).ok);
+	QCOMPARE(firstId, otherId);
+	QVERIFY(store.setNote(UuidA, firstId, QStringLiteral("First note")).ok);
+	QVERIFY(store.setNote(UuidA, secondId, QStringLiteral("Second note")).ok);
+	QVERIFY(store.setNote(UuidB, otherId, QStringLiteral("Other UID note")).ok);
+
+	QVERIFY(store.setTags(UuidA, firstId, {QStringLiteral("inspection")}).ok);
+	QCOMPARE(store.list(UuidA).front().note, QStringLiteral("First note"));
+	QVERIFY(store.setNote(UuidA, firstId, QString()).ok);
+	const QVector<SavedCameraPose> all = CameraPoseStore(current, QString()).listAll();
+	QCOMPARE(all.size(), 3);
+	QVERIFY(all.at(0).note.isEmpty());
+	QCOMPARE(all.at(1).note, QStringLiteral("Second note"));
+	QCOMPARE(all.at(2).note, QStringLiteral("Other UID note"));
+	QVERIFY(!readRoot(current).value(QStringLiteral("poses")).toObject()
+		.value(UuidA).toArray().first().toObject().contains(QStringLiteral("note")));
+}
+
+void CameraPoseStoreTest::legacyPosesWithoutNotesRemainCompatible()
+{
+	QTemporaryDir dir;
+	QVERIFY(dir.isValid());
+	const QString current = dir.filePath(QStringLiteral("poses.json"));
+	const QJsonObject legacyView = poseObject(QString(), QStringLiteral("<legacy/>"));
+	QVERIFY(writeBytes(current, schema2Bytes({{UuidA, legacyView}})));
+	CameraPoseStore store(current, QString());
+	QVERIFY(store.list(UuidA).front().note.isEmpty());
+	QVERIFY(store.migrateLegacyIfNeeded().ok);
+	QVERIFY(store.listAll().front().note.isEmpty());
+	QVERIFY(store.setNote(
+		QStringLiteral("{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}"),
+		QStringLiteral("view_001"), QStringLiteral("Legacy note")).ok);
+	const SavedCameraPose updated = store.list(UuidA).front();
+	QCOMPARE(updated.note, QStringLiteral("Legacy note"));
+	QCOMPARE(updated.pose.viewStateXml, QStringLiteral("<legacy/>"));
+	QCOMPARE(updated.tags, QStringList{QStringLiteral("hole")});
+	QCOMPARE(readRoot(current).value(QStringLiteral("schema")).toInt(), 2);
+}
+
+void CameraPoseStoreTest::invalidNoteRequestsLeaveTheLibraryUnchanged()
+{
+	QTemporaryDir dir;
+	QVERIFY(dir.isValid());
+	const QString current = dir.filePath(QStringLiteral("poses.json"));
+	CameraPoseStore store(current, QString());
+	QVERIFY(!store.setNote(UuidA, QStringLiteral("view_001"), QStringLiteral("x")).ok);
+	QVERIFY(!QFileInfo::exists(current));
+	const QByteArray original = onePoseLibrary();
+	QVERIFY(writeBytes(current, original));
+	QVERIFY(!store.setNote(QString(), QStringLiteral("view_001"), QStringLiteral("x")).ok);
+	QVERIFY(!store.setNote(UuidA, QString(), QStringLiteral("x")).ok);
+	QVERIFY(!store.setNote(UuidA, QStringLiteral("missing"), QStringLiteral("x")).ok);
+	QVERIFY(!store.setNote(UuidB, QStringLiteral("view_001"), QStringLiteral("x")).ok);
+	QCOMPARE(readBytes(current), original);
+}
+
 void CameraPoseStoreTest::migrationCopiesLegacyOnlyWhenCurrentIsAbsent()
 {
 	QTemporaryDir dir;
@@ -728,6 +1000,11 @@ void CameraPoseStoreTest::malformedLibraryFailsEveryOperationWithoutChangingByte
 	poses.insert(UuidA, views);
 	QTest::newRow("non-string-timestamp") << schema2Bytes(poses);
 	invalidPose = poseObject(QStringLiteral("view_001"), QStringLiteral("<x/>"));
+	invalidPose.insert(QStringLiteral("note"), 42);
+	views[0] = invalidPose;
+	poses.insert(UuidA, views);
+	QTest::newRow("non-string-note") << schema2Bytes(poses);
+	invalidPose = poseObject(QStringLiteral("view_001"), QStringLiteral("<x/>"));
 	invalidPose.insert(
 		QStringLiteral("screenshot_path"),
 		QStringLiteral("unrelated.png"));
@@ -775,6 +1052,11 @@ void CameraPoseStoreTest::malformedLibraryFailsEveryOperationWithoutChangingByte
 	QCOMPARE(readBytes(current), bytes);
 
 	QVERIFY(!store.remove(UuidA, QStringLiteral("view_001")).ok);
+	QCOMPARE(readBytes(current), bytes);
+	QVERIFY(!store.setNote(UuidA, QStringLiteral("view_001"), QStringLiteral("new note")).ok);
+	QCOMPARE(readBytes(current), bytes);
+	QVERIFY(!store.setDetails(UuidA, QStringLiteral("view_001"),
+		{QStringLiteral("new")}, QStringLiteral("new note")).ok);
 	QCOMPARE(readBytes(current), bytes);
 }
 
@@ -1166,10 +1448,13 @@ void CameraPoseStoreTest::failedInitialAndReplacementWritesLeaveNoPartialLibrary
 		pose(QStringLiteral("replacement")),
 		&savedViewId);
 	const OperationResult removeResult = replacementStore.remove(UuidA, QStringLiteral("view_001"));
+	const OperationResult noteResult = replacementStore.setNote(
+		UuidA, QStringLiteral("view_001"), QStringLiteral("must not persist"));
 	const bool restoredPermissions = QFile::setPermissions(replacementDir.path(), originalPermissions);
 	QVERIFY(restoredPermissions);
 	QVERIFY(!saveResult.ok);
 	QVERIFY(!removeResult.ok);
+	QVERIFY(!noteResult.ok);
 	QCOMPARE(savedViewId, QStringLiteral("unchanged-after-write-failure"));
 	QCOMPARE(readBytes(current), original);
 	QCOMPARE(

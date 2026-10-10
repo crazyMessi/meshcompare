@@ -84,9 +84,30 @@ public:
         QString* savedViewId = nullptr,
         const QStringList& tags = {}) override;
     OperationResult applyCameraPose(const QString& viewId) override;
+    OperationResult saveCurrentCameraPoseWithNote(
+        QString* savedViewId,
+        const QStringList& tags,
+        const QString& note) override;
+    OperationResult saveCurrentCameraPoseWithScreenshotAndNote(
+        QImage& screenshot,
+        QString* savedViewId,
+        const QStringList& tags,
+        const QString& note) override;
+    OperationResult setCameraPoseDetailsForWorkspace(
+        const QString& workspaceUuid,
+        const QString& viewId,
+        const QStringList& tags,
+        const QString& note) override;
     OperationResult setCameraPoseTags(
         const QString& viewId,
         const QStringList& tags) override;
+    OperationResult setCameraPoseNote(
+        const QString& viewId,
+        const QString& note) override;
+    OperationResult setCameraPoseNoteForWorkspace(
+        const QString& workspaceUuid,
+        const QString& viewId,
+        const QString& note) override;
     OperationResult deleteCameraPose(const QString& viewId) override;
 
 signals:
@@ -124,7 +145,8 @@ private:
     OperationResult saveCurrentCameraPoseImpl(
         QImage* screenshot,
         QString* savedViewId,
-        const QStringList& tags);
+        const QStringList& tags,
+        const QString& note = {});
 
     WorkspaceState& state_;
     IMeshImportService& importer_;

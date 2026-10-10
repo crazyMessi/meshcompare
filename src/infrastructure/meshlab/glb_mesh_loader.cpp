@@ -10,10 +10,14 @@
 
 #include <QFile>
 #include <QFileInfo>
+#include <QDir>
+#include <QHash>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QUrl>
 #include <QtEndian>
 
 #include <common/ml_document/mesh_model.h>
@@ -48,13 +52,49 @@ struct AccessorView
     bool normalized = false;
 };
 
+struct TextureBinding
+{
+    int textureId = -1;
+    bool opaque = true;
+};
+
 struct ParsedLayer
 {
     QString name;
     QVector<CMeshO::CoordType> positions;
     QVector<vcg::Color4b> colors;
     QVector<std::array<int, 3>> faces;
+    QVector<vcg::Point2f> textureCoordinates;
+    QVector<int> faceTextureIndices;
+    QVector<TextureBinding> textures;
     bool hasColors = false;
+    bool unlit = true;
+};
+
+struct ParsedTexture
+{
+    QImage image;
+    int wrapS = 10497;
+    int wrapT = 10497;
+};
+
+struct AppearanceContext
+{
+    QString directory;
+    QHash<int, ParsedTexture> textures;
+};
+
+struct PrimitiveAppearance
+{
+    QVector<double> factor{1, 1, 1, 1};
+    QVector<double> offset{0, 0};
+    QVector<double> scale{1, 1};
+    double rotation = 0;
+    int textureIndex = -1;
+    int texCoord = 0;
+    bool hasFactor = false;
+    bool unlit = false;
+    bool opaque = true;
 };
 
 quint32 readUInt32(const QByteArray& bytes, qsizetype offset)
@@ -370,6 +410,163 @@ OperationResult finiteArray(
     return OperationResult::success();
 }
 
+OperationResult loadTexture(
+    const QJsonObject& root,
+    const QByteArray& binary,
+    int textureIndex,
+    AppearanceContext* context)
+{
+    if (context->textures.contains(textureIndex))
+        return OperationResult::success();
+    const QJsonArray textures = root.value(QStringLiteral("textures")).toArray();
+    if (textureIndex < 0 || textureIndex >= textures.size())
+        return OperationResult::failure(QStringLiteral("GLB references an invalid texture."));
+    const QJsonObject texture = textures.at(textureIndex).toObject();
+    int imageIndex = 0;
+    OperationResult result = integerField(texture, QStringLiteral("source"), &imageIndex);
+    if (!result.ok)
+        return result;
+    const QJsonArray images = root.value(QStringLiteral("images")).toArray();
+    if (imageIndex < 0 || imageIndex >= images.size())
+        return OperationResult::failure(QStringLiteral("GLB references an invalid texture image."));
+    const QJsonObject image = images.at(imageIndex).toObject();
+    QByteArray bytes;
+    if (image.contains(QStringLiteral("bufferView"))) {
+        int viewIndex = 0;
+        result = integerField(image, QStringLiteral("bufferView"), &viewIndex);
+        if (!result.ok)
+            return result;
+        const QJsonArray views = root.value(QStringLiteral("bufferViews")).toArray();
+        if (viewIndex < 0 || viewIndex >= views.size())
+            return OperationResult::failure(QStringLiteral("GLB texture references an invalid bufferView."));
+        const QJsonObject view = views.at(viewIndex).toObject();
+        int buffer = 0;
+        int offset = 0;
+        int length = 0;
+        result = integerField(view, QStringLiteral("buffer"), &buffer);
+        if (result.ok)
+            result = integerField(view, QStringLiteral("byteOffset"), &offset, false, 0);
+        if (result.ok)
+            result = integerField(view, QStringLiteral("byteLength"), &length);
+        if (!result.ok)
+            return result;
+        if (buffer != 0 || offset < 0 || length < 0 ||
+            qint64(offset) + length > binary.size())
+            return OperationResult::failure(QStringLiteral("GLB texture exceeds its embedded buffer bounds."));
+        bytes = binary.mid(offset, length);
+    }
+    else {
+        const QString uri = image.value(QStringLiteral("uri")).toString();
+        if (uri.startsWith(QStringLiteral("data:"))) {
+            const int separator = uri.indexOf(QLatin1Char(','));
+            if (separator < 0 || !uri.left(separator).endsWith(QStringLiteral(";base64")))
+                return OperationResult::failure(QStringLiteral("GLB texture data URI must use base64 encoding."));
+            bytes = QByteArray::fromBase64(uri.mid(separator + 1).toLatin1());
+        }
+        else {
+            const QUrl url(uri);
+            if (uri.isEmpty() || (!url.isRelative() && !url.isLocalFile()))
+                return OperationResult::failure(QStringLiteral("GLB textures must be embedded or use local image files."));
+            const QString path = url.isLocalFile()
+                                     ? url.toLocalFile()
+                                     : QDir(context->directory).filePath(QUrl::fromPercentEncoding(uri.toUtf8()));
+            QFile file(path);
+            if (!file.open(QIODevice::ReadOnly))
+                return OperationResult::failure(QStringLiteral("GLB texture image is not readable: %1").arg(path));
+            bytes = file.readAll();
+        }
+    }
+    ParsedTexture parsed;
+    parsed.image = QImage::fromData(bytes);
+    if (parsed.image.isNull())
+        return OperationResult::failure(QStringLiteral("GLB texture image could not be decoded."));
+    if (texture.contains(QStringLiteral("sampler"))) {
+        int samplerIndex = 0;
+        result = integerField(texture, QStringLiteral("sampler"), &samplerIndex);
+        if (!result.ok)
+            return result;
+        const QJsonArray samplers = root.value(QStringLiteral("samplers")).toArray();
+        if (samplerIndex < 0 || samplerIndex >= samplers.size())
+            return OperationResult::failure(QStringLiteral("GLB texture references an invalid sampler."));
+        const QJsonObject sampler = samplers.at(samplerIndex).toObject();
+        result = integerField(sampler, QStringLiteral("wrapS"), &parsed.wrapS, false, 10497);
+        if (result.ok)
+            result = integerField(sampler, QStringLiteral("wrapT"), &parsed.wrapT, false, 10497);
+        if (!result.ok)
+            return result;
+        for (int wrap : {parsed.wrapS, parsed.wrapT}) {
+            if (wrap != 10497 && wrap != 33071 && wrap != 33648)
+                return OperationResult::failure(QStringLiteral("GLB texture has an invalid wrapping mode."));
+        }
+    }
+    context->textures.insert(textureIndex, std::move(parsed));
+    return OperationResult::success();
+}
+
+OperationResult primitiveAppearance(
+    const QJsonObject& root,
+    const QByteArray& binary,
+    const QJsonObject& primitive,
+    AppearanceContext* context,
+    PrimitiveAppearance* appearance)
+{
+    if (!primitive.contains(QStringLiteral("material")))
+        return OperationResult::success();
+    int materialIndex = 0;
+    OperationResult result = integerField(primitive, QStringLiteral("material"), &materialIndex);
+    if (!result.ok)
+        return result;
+    const QJsonArray materials = root.value(QStringLiteral("materials")).toArray();
+    if (materialIndex < 0 || materialIndex >= materials.size())
+        return OperationResult::failure(QStringLiteral("GLB references an invalid material."));
+    const QJsonObject material = materials.at(materialIndex).toObject();
+    const QString alphaMode = material.value(QStringLiteral("alphaMode")).toString(QStringLiteral("OPAQUE"));
+    if (alphaMode != QStringLiteral("OPAQUE") && alphaMode != QStringLiteral("BLEND") &&
+        alphaMode != QStringLiteral("MASK"))
+        return OperationResult::failure(QStringLiteral("GLB material has an invalid alpha mode."));
+    appearance->opaque = alphaMode == QStringLiteral("OPAQUE");
+    appearance->unlit = material.value(QStringLiteral("extensions")).toObject()
+                            .contains(QStringLiteral("KHR_materials_unlit"));
+    const QJsonObject pbr = material.value(QStringLiteral("pbrMetallicRoughness")).toObject();
+    appearance->hasFactor = pbr.contains(QStringLiteral("baseColorFactor"));
+    if (appearance->hasFactor) {
+        result = finiteArray(pbr.value(QStringLiteral("baseColorFactor")), 4, &appearance->factor);
+        if (!result.ok)
+            return result;
+        for (double channel : appearance->factor) {
+            if (channel < 0 || channel > 1)
+                return OperationResult::failure(QStringLiteral("GLB baseColorFactor must be between zero and one."));
+        }
+    }
+    if (!pbr.contains(QStringLiteral("baseColorTexture")))
+        return OperationResult::success();
+    const QJsonObject texture = pbr.value(QStringLiteral("baseColorTexture")).toObject();
+    result = integerField(texture, QStringLiteral("index"), &appearance->textureIndex);
+    if (result.ok)
+        result = integerField(texture, QStringLiteral("texCoord"), &appearance->texCoord, false, 0);
+    if (!result.ok)
+        return result;
+    const QJsonObject transform = texture.value(QStringLiteral("extensions")).toObject()
+                                     .value(QStringLiteral("KHR_texture_transform")).toObject();
+    if (transform.contains(QStringLiteral("texCoord")))
+        result = integerField(transform, QStringLiteral("texCoord"), &appearance->texCoord);
+    if (result.ok && transform.contains(QStringLiteral("offset")))
+        result = finiteArray(transform.value(QStringLiteral("offset")), 2, &appearance->offset);
+    if (result.ok && transform.contains(QStringLiteral("scale")))
+        result = finiteArray(transform.value(QStringLiteral("scale")), 2, &appearance->scale);
+    if (!result.ok)
+        return result;
+    if (transform.contains(QStringLiteral("rotation"))) {
+        appearance->rotation = transform.value(QStringLiteral("rotation")).toDouble(
+            std::numeric_limits<double>::quiet_NaN());
+        if (!std::isfinite(appearance->rotation))
+            return OperationResult::failure(QStringLiteral("GLB texture rotation must be finite."));
+    }
+    if (appearance->texCoord < 0)
+        return OperationResult::failure(QStringLiteral("GLB texture coordinate set must be non-negative."));
+    return loadTexture(root, binary, appearance->textureIndex, context);
+}
+
 OperationResult nodeTransform(const QJsonObject& node, Matrix* destination)
 {
     if (node.contains(QStringLiteral("matrix"))) {
@@ -466,6 +663,7 @@ OperationResult appendPrimitive(
     const QByteArray& binary,
     const QJsonObject& primitive,
     const Matrix& transform,
+    AppearanceContext* context,
     ParsedLayer* layer)
 {
     int mode = 4;
@@ -549,9 +747,48 @@ OperationResult appendPrimitive(
         }
     }
 
+    PrimitiveAppearance appearance;
+    result = primitiveAppearance(root, binary, primitive, context, &appearance);
+    if (!result.ok)
+        return result;
+    layer->unlit = layer->unlit && appearance.unlit;
+    AccessorView coordinates;
+    int layerTextureIndex = -1;
+    if (appearance.textureIndex >= 0) {
+        int coordinateAccessor = 0;
+        result = integerField(attributes, QStringLiteral("TEXCOORD_%1").arg(appearance.texCoord), &coordinateAccessor);
+        if (!result.ok)
+            return result;
+        result = accessorView(root, binary, coordinateAccessor, &coordinates);
+        if (!result.ok)
+            return result;
+        if (coordinates.componentCount != 2 || coordinates.count != positions.count ||
+            (coordinates.componentType != 5126 &&
+             !(coordinates.normalized &&
+               (coordinates.componentType == 5121 || coordinates.componentType == 5123))))
+            return OperationResult::failure(QStringLiteral("GLB texture coordinates must match POSITION as float or normalized unsigned VEC2 values."));
+        for (int index = 0; index < layer->textures.size(); ++index) {
+            const TextureBinding& binding = layer->textures[index];
+            if (binding.textureId == appearance.textureIndex && binding.opaque == appearance.opaque) {
+                layerTextureIndex = index;
+                break;
+            }
+        }
+        if (layerTextureIndex < 0) {
+            layerTextureIndex = layer->textures.size();
+            if (layerTextureIndex > std::numeric_limits<short>::max())
+                return OperationResult::failure(QStringLiteral("GLB mesh contains too many textures."));
+            layer->textures.append(TextureBinding{appearance.textureIndex, appearance.opaque});
+        }
+    }
+
     const int vertexBase = layer->positions.size();
     layer->positions.reserve(vertexBase + positions.count);
     layer->colors.reserve(vertexBase + positions.count);
+    layer->textureCoordinates.reserve(vertexBase + positions.count);
+    layer->hasColors = layer->hasColors || primitiveHasColors || appearance.hasFactor;
+    const double textureCos = std::cos(appearance.rotation);
+    const double textureSin = std::sin(appearance.rotation);
     for (int vertex = 0; vertex < positions.count; ++vertex) {
         const double x = componentValue(positions, vertex, 0);
         const double y = componentValue(positions, vertex, 1);
@@ -561,24 +798,33 @@ OperationResult appendPrimitive(
                 QStringLiteral("GLB contains a non-finite vertex position."));
         }
         layer->positions.append(transformedPoint(transform, x, y, z));
-        if (primitiveHasColors) {
-            const auto channel = [&colors, vertex](int index, double fallback) {
-                const double value = index < colors.componentCount
-                                         ? componentValue(colors, vertex, index)
-                                         : fallback;
-                return quint8(std::round(
-                    std::max(0.0, std::min(1.0, value)) * 255.0));
-            };
-            layer->colors.append(vcg::Color4b(
-                channel(0, 1),
-                channel(1, 1),
-                channel(2, 1),
-                channel(3, 1)));
-            layer->hasColors = true;
+        vcg::Color4b color;
+        for (int channel = 0; channel < 4; ++channel) {
+            const double value = primitiveHasColors && channel < colors.componentCount
+                                     ? componentValue(colors, vertex, channel)
+                                     : 1.0;
+            if (!std::isfinite(value))
+                return OperationResult::failure(QStringLiteral("GLB contains a non-finite vertex color."));
+            color[channel] = quint8(std::round(
+                std::max(0.0, std::min(1.0, value * appearance.factor[channel])) * 255.0));
         }
-        else {
-            layer->colors.append(vcg::Color4b(255, 255, 255, 255));
+        if (appearance.opaque)
+            color[3] = 255;
+        layer->colors.append(color);
+        vcg::Point2f coordinate(0, 0);
+        if (layerTextureIndex >= 0) {
+            const double u = componentValue(coordinates, vertex, 0) * appearance.scale[0];
+            const double v = componentValue(coordinates, vertex, 1) * appearance.scale[1];
+            const double transformedU = appearance.offset[0] +
+                textureCos * u - textureSin * v;
+            const double transformedV = appearance.offset[1] +
+                textureSin * u + textureCos * v;
+            if (!std::isfinite(transformedU) || !std::isfinite(transformedV))
+                return OperationResult::failure(QStringLiteral("GLB contains non-finite texture coordinates."));
+            // glTF images use a top-left origin; MeshLab uploads images flipped for OpenGL.
+            coordinate = vcg::Point2f(float(transformedU), float(1.0 - transformedV));
         }
+        layer->textureCoordinates.append(coordinate);
     }
 
     QVector<quint32> indices;
@@ -612,7 +858,7 @@ OperationResult appendPrimitive(
     }
 
     const bool reverseWinding = reversesOrientation(transform);
-    auto appendFace = [layer, vertexBase, reverseWinding](
+    auto appendFace = [layer, vertexBase, reverseWinding, layerTextureIndex](
                           quint32 first,
                           quint32 second,
                           quint32 third) {
@@ -622,6 +868,7 @@ OperationResult appendPrimitive(
             vertexBase + int(first),
             vertexBase + int(second),
             vertexBase + int(third)}});
+        layer->faceTextureIndices.append(layerTextureIndex);
     };
     if (mode == 4) {
         if (indices.size() % 3 != 0)
@@ -651,6 +898,7 @@ OperationResult parseMesh(
     int meshIndex,
     const QString& name,
     const Matrix& transform,
+    AppearanceContext* context,
     ParsedLayer* destination)
 {
     const QJsonArray meshes = root.value(QStringLiteral("meshes")).toArray();
@@ -669,7 +917,7 @@ OperationResult parseMesh(
             QStringLiteral("GLB mesh contains no primitives."));
     for (const QJsonValue& primitive : primitives) {
         const OperationResult result = appendPrimitive(
-            root, binary, primitive.toObject(), transform, destination);
+            root, binary, primitive.toObject(), transform, context, destination);
         if (!result.ok)
             return result;
     }
@@ -682,6 +930,7 @@ OperationResult visitNode(
     int nodeIndex,
     const Matrix& parentTransform,
     QVector<bool>* active,
+    AppearanceContext* context,
     QVector<ParsedLayer>* layers)
 {
     const QJsonArray nodes = root.value(QStringLiteral("nodes")).toArray();
@@ -713,6 +962,7 @@ OperationResult visitNode(
                 meshIndex,
                 node.value(QStringLiteral("name")).toString(),
                 worldTransform,
+                context,
                 &layer);
             if (result.ok)
                 layers->append(std::move(layer));
@@ -732,6 +982,7 @@ OperationResult visitNode(
                 childIndex,
                 worldTransform,
                 active,
+                context,
                 layers);
             if (!result.ok)
                 break;
@@ -744,6 +995,7 @@ OperationResult visitNode(
 OperationResult parseLayers(
     const QJsonObject& root,
     const QByteArray& binary,
+    AppearanceContext* context,
     QVector<ParsedLayer>* layers)
 {
     const QJsonArray meshes = root.value(QStringLiteral("meshes")).toArray();
@@ -762,6 +1014,7 @@ OperationResult parseLayers(
                 meshIndex,
                 meshes.at(meshIndex).toObject().value(QStringLiteral("name")).toString(),
                 identity,
+                context,
                 &layer);
             if (!result.ok)
                 return result;
@@ -789,7 +1042,7 @@ OperationResult parseLayers(
         if (!result.ok)
             return result;
         result = visitNode(
-            root, binary, nodeIndex, identity, &active, layers);
+            root, binary, nodeIndex, identity, &active, context, layers);
         if (!result.ok)
             return result;
     }
@@ -848,7 +1101,9 @@ OperationResult readGlb(
         root->value(QStringLiteral("extensionsRequired")).toArray();
     for (const QJsonValue& extensionValue : requiredExtensions) {
         const QString extension = extensionValue.toString();
-        if (extension != QStringLiteral("KHR_mesh_quantization")) {
+        if (extension != QStringLiteral("KHR_mesh_quantization") &&
+            extension != QStringLiteral("KHR_texture_transform") &&
+            extension != QStringLiteral("KHR_materials_unlit")) {
             return OperationResult::failure(
                 QStringLiteral("GLB requires unsupported extension \"%1\".")
                     .arg(extension.isEmpty()
@@ -891,7 +1146,9 @@ OperationResult loadGlbMeshModels(
         return result;
 
     QVector<ParsedLayer> layers;
-    result = parseLayers(root, binary, &layers);
+    AppearanceContext appearance;
+    appearance.directory = QFileInfo(path).absolutePath();
+    result = parseLayers(root, binary, &appearance, &layers);
     if (!result.ok)
         return result;
 
@@ -920,12 +1177,35 @@ OperationResult loadGlbMeshModels(
             }
             vcg::tri::Allocator<CMeshO>::AddFaces(
                 model->cm, layer.faces.size());
+            if (!layer.textures.isEmpty())
+                model->updateDataMask(MeshModel::MM_WEDGTEXCOORD);
             for (int index = 0; index < layer.faces.size(); ++index) {
                 const std::array<int, 3>& face = layer.faces[index];
                 model->cm.face[index].V(0) = &model->cm.vert[face[0]];
                 model->cm.face[index].V(1) = &model->cm.vert[face[1]];
                 model->cm.face[index].V(2) = &model->cm.vert[face[2]];
+                if (!layer.textures.isEmpty()) {
+                    for (int corner = 0; corner < 3; ++corner) {
+                        model->cm.face[index].WT(corner).P() = layer.textureCoordinates[face[corner]];
+                        model->cm.face[index].WT(corner).N() = short(layer.faceTextureIndices[index]);
+                    }
+                }
             }
+            QVector<int> wrapS;
+            QVector<int> wrapT;
+            for (const TextureBinding& binding : layer.textures) {
+                const ParsedTexture& texture = appearance.textures[binding.textureId];
+                const QImage image = binding.opaque
+                                         ? texture.image.convertToFormat(QImage::Format_RGB32)
+                                         : texture.image;
+                model->addTexture(QStringLiteral("glb_texture_%1_%2.png")
+                                      .arg(binding.textureId)
+                                      .arg(binding.opaque ? QStringLiteral("opaque") : QStringLiteral("alpha"))
+                                      .toStdString(), image);
+                wrapS.append(texture.wrapS);
+                wrapT.append(texture.wrapT);
+            }
+            destination.setAppearanceMetadata(destination.resourceIdFor(*model), layer.unlit, wrapS, wrapT);
             model->updateBoxAndNormals();
             if (layer.hasColors)
                 model->updateDataMask(MeshModel::MM_VERTCOLOR);

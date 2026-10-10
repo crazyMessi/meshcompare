@@ -307,7 +307,9 @@ QLabel#cameraEmptyStateLabel {
 }
 
 QPushButton#saveCameraPoseButton,
-QPushButton#saveCameraPoseAndCopyScreenshotButton {
+QPushButton#saveCameraPoseAndCopyScreenshotButton,
+QPushButton#saveCameraPoseChangesButton,
+QPushButton#screenshotSaveChanges {
     min-height: 34px;
     color: #FFFFFF;
     background: #3C64D9;
@@ -316,17 +318,23 @@ QPushButton#saveCameraPoseAndCopyScreenshotButton {
 }
 
 QPushButton#saveCameraPoseButton:hover,
-QPushButton#saveCameraPoseAndCopyScreenshotButton:hover {
+QPushButton#saveCameraPoseAndCopyScreenshotButton:hover,
+QPushButton#saveCameraPoseChangesButton:hover,
+QPushButton#screenshotSaveChanges:hover {
     background: #4B73EA;
 }
 
 QPushButton#saveCameraPoseButton:pressed,
-QPushButton#saveCameraPoseAndCopyScreenshotButton:pressed {
+QPushButton#saveCameraPoseAndCopyScreenshotButton:pressed,
+QPushButton#saveCameraPoseChangesButton:pressed,
+QPushButton#screenshotSaveChanges:pressed {
     background: #3155C2;
 }
 
 QPushButton#saveCameraPoseButton:disabled,
-QPushButton#saveCameraPoseAndCopyScreenshotButton:disabled {
+QPushButton#saveCameraPoseAndCopyScreenshotButton:disabled,
+QPushButton#saveCameraPoseChangesButton:disabled,
+QPushButton#screenshotSaveChanges:disabled {
     color: #8B8C87;
     background: #333430;
     border-color: #484944;
@@ -334,7 +342,6 @@ QPushButton#saveCameraPoseAndCopyScreenshotButton:disabled {
 
 QPushButton#browseCameraScreenshotsButton,
 QPushButton#openCameraJsonFolderButton,
-QPushButton#updateCameraPoseTagsButton,
 QPushButton#openCameraScreenshotFolderButton,
 QPushButton#applyCameraPoseButton {
     background: #20211F;
@@ -351,7 +358,7 @@ QPushButton#deleteCameraPoseButton:hover {
     border-color: #6B4138;
 }
 
-QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QListWidget {
+QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QListWidget, QPlainTextEdit {
     min-height: 28px;
     color: #F2F0EB;
     background: #20211F;
@@ -359,6 +366,10 @@ QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QListWidget {
     border-radius: 6px;
     padding: 0 8px;
     selection-background-color: #6252D2;
+}
+
+QPlainTextEdit {
+    padding: 4px 8px;
 }
 
 QListWidget#cameraPoseList {

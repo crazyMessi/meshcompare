@@ -200,49 +200,61 @@ int roundUpToTheNextHighestPowerOf2(unsigned int v)
 
 GLuint MLSceneGLSharedDataContext::allocateTexturePerMesh( int meshid,const QImage& img,size_t maxdimtextmpx)
 {
-	GLuint res = 0;
 	PerMeshMultiViewManager* meshfeed = meshAttributesMultiViewerManager(meshid);
-	if (meshfeed != NULL)
-	{
-		int singlemaxtexturesize = roundUpToTheNextHighestPowerOf2(int(sqrt(float(maxdimtextmpx))*1024.0))/2;
-		QImage imgscaled;
-		QImage imggl;
+	if (meshfeed == NULL || img.isNull() || maxdimtextmpx == 0)
+		return 0;
 
-		QGLContext* ctx = makeCurrentGLContext();
-		GLint maxtexturesize;
-		glGetIntegerv(GL_MAX_TEXTURE_SIZE,&maxtexturesize);
-
-		if(maxtexturesize  < singlemaxtexturesize)
-			maxtexturesize = singlemaxtexturesize;
-
-		int bestW=roundUpToTheNextHighestPowerOf2(img.width() );
-		int bestH=roundUpToTheNextHighestPowerOf2(img.height());
-		while(bestW>maxtexturesize) bestW /=2;
-		while(bestH>maxtexturesize) bestH /=2;
-		//Logf(GLLogStream::SYSTEM,"	Texture[ %3i ] =  '%s' ( %6i x %6i ) -> ( %6i x %6i )",	i,mp->cm.textures[i].c_str(), img.width(), img.height(),bestW,bestH);
-		imgscaled=img.scaled(bestW,bestH,Qt::IgnoreAspectRatio,Qt::SmoothTransformation);
-		imggl=convertToGLFormat(imgscaled);
-
-		vcg::QtThreadSafeTextureNamesContainer& txtcont = meshfeed->textureIDContainer();
-
-
-		GLuint tmpid;
-		glGenTextures( 1, (GLuint*)&(tmpid) );
-		glBindTexture( GL_TEXTURE_2D, tmpid );
-		//qDebug("      	will be loaded as GL texture id %i  ( %i x %i )",txtcont[txtcont.size() - 1] ,imgGL.width(), imgGL.height());
-		glTexImage2D( GL_TEXTURE_2D, 0, 3, imggl.width(), imggl.height(), 0, GL_RGBA, GL_UNSIGNED_BYTE, imggl.bits() );
-		glGenerateMipmap(GL_TEXTURE_2D);
-		txtcont.push_back(tmpid);
-		res = tmpid;
-
-		// ensure mipmaps are computed
-		glFinish();
-
+	QGLContext* ctx = makeCurrentGLContext();
+	if (QGLContext::currentContext() != context()) {
 		doneCurrentGLContext(ctx);
+		return 0;
 	}
-	return res;
-}
 
+	GLint maxtexturesize = 0;
+	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxtexturesize);
+	const int singlemaxtexturesize =
+		roundUpToTheNextHighestPowerOf2(int(sqrt(float(maxdimtextmpx)) * 1024.0)) / 2;
+	maxtexturesize = qMin(maxtexturesize, singlemaxtexturesize);
+	if (maxtexturesize <= 0) {
+		doneCurrentGLContext(ctx);
+		return 0;
+	}
+
+	int bestW = roundUpToTheNextHighestPowerOf2(img.width());
+	int bestH = roundUpToTheNextHighestPowerOf2(img.height());
+	while (bestW > maxtexturesize) bestW /= 2;
+	while (bestH > maxtexturesize) bestH /= 2;
+	const QImage scaled = img.scaled(bestW, bestH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+	const QImage imggl = convertToGLFormat(scaled);
+	if (imggl.isNull()) {
+		doneCurrentGLContext(ctx);
+		return 0;
+	}
+
+	// Ignore earlier, unrelated GL errors, then validate this upload before
+	// publishing its name. A generated name alone does not guarantee storage.
+	while (glGetError() != GL_NO_ERROR) {}
+	GLuint texture = 0;
+	glGenTextures(1, &texture);
+	glBindTexture(GL_TEXTURE_2D, texture);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, imggl.width(), imggl.height(),
+		0, GL_RGBA, GL_UNSIGNED_BYTE, imggl.bits());
+	glGenerateMipmap(GL_TEXTURE_2D);
+	glFinish();
+	GLint uploadedWidth = 0, uploadedHeight = 0;
+	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &uploadedWidth);
+	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &uploadedHeight);
+	const bool uploaded = texture != 0 && glGetError() == GL_NO_ERROR &&
+		uploadedWidth == imggl.width() && uploadedHeight == imggl.height();
+	if (uploaded)
+		meshfeed->textureIDContainer().push_back(texture);
+	else {
+		glDeleteTextures(1, &texture);
+		texture = 0;
+	}
+	doneCurrentGLContext(ctx);
+	return texture;
+}
 
 void MLSceneGLSharedDataContext::meshInserted( int mmid )
 {

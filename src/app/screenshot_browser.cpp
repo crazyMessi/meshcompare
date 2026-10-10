@@ -1,6 +1,8 @@
 #include "screenshot_browser.h"
+#include "tag_editor.h"
 
 #include <algorithm>
+#include <utility>
 
 #include <QComboBox>
 #include <QFileInfo>
@@ -10,6 +12,9 @@
 #include <QListView>
 #include <QListWidget>
 #include <QPixmap>
+#include <QPlainTextEdit>
+#include <QPushButton>
+#include <QSet>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
 
@@ -19,6 +24,7 @@ constexpr int ViewIdRole = Qt::UserRole;
 constexpr int ScreenshotPathRole = Qt::UserRole + 1;
 constexpr int TagsRole = Qt::UserRole + 2;
 constexpr int WorkspaceUuidRole = Qt::UserRole + 3;
+constexpr int NoteRole = Qt::UserRole + 4;
 constexpr int FilterModeRole = Qt::UserRole;
 constexpr int FilterTagRole = Qt::UserRole + 1;
 
@@ -82,7 +88,7 @@ ScreenshotBrowser::ScreenshotBrowser(QWidget* parent)
 {
     setObjectName(QStringLiteral("screenshotBrowser"));
     setWindowTitle(tr("Screenshot Browser"));
-    setWindowModality(Qt::ApplicationModal);
+    setWindowModality(Qt::NonModal);
     resize(920, 600);
 
     auto* root = new QHBoxLayout(this);
@@ -128,8 +134,39 @@ ScreenshotBrowser::ScreenshotBrowser(QWidget* parent)
 
     previewDetails_ = new QLabel(this);
     previewDetails_->setObjectName(QStringLiteral("screenshotPreviewDetails"));
+    previewDetails_->setTextFormat(Qt::PlainText);
     previewDetails_->setWordWrap(true);
     previewColumn->addWidget(previewDetails_);
+
+    previewTagsLabel_ = new QLabel(tr("Tags"), this);
+    previewTags_ = new TagEditor(this);
+    previewTags_->setObjectName(QStringLiteral("screenshotPreviewTags"));
+    previewTags_->setAccessibleName(tr("Tags for selected view"));
+    previewTagsLabel_->setBuddy(previewTags_);
+    previewColumn->addWidget(previewTagsLabel_);
+    previewColumn->addWidget(previewTags_);
+    previewNoteLabel_ = new QLabel(tr("Note"), this);
+    previewNoteLabel_->setObjectName(QStringLiteral("screenshotPreviewNoteLabel"));
+    previewColumn->addWidget(previewNoteLabel_);
+    previewNote_ = new QPlainTextEdit(this);
+    previewNote_->setObjectName(QStringLiteral("screenshotPreviewNote"));
+    previewNote_->setReadOnly(true);
+    previewNote_->setPlaceholderText(tr("Add a note for this view…"));
+    previewNote_->setMinimumHeight(72);
+    previewNote_->setMaximumHeight(140);
+    previewNoteLabel_->setBuddy(previewNote_);
+    previewColumn->addWidget(previewNote_);
+    auto* detailsFooter = new QHBoxLayout;
+    detailsStatus_ = new QLabel(this);
+    detailsStatus_->setObjectName(QStringLiteral("screenshotDetailsStatus"));
+    detailsStatus_->setTextFormat(Qt::PlainText);
+    detailsStatus_->setWordWrap(true);
+    detailsFooter->addWidget(detailsStatus_, 1);
+    saveChanges_ = new QPushButton(tr("Save Changes"), this);
+    saveChanges_->setObjectName(QStringLiteral("screenshotSaveChanges"));
+    saveChanges_->setAutoDefault(false);
+    detailsFooter->addWidget(saveChanges_);
+    previewColumn->addLayout(detailsFooter);
     root->addLayout(previewColumn, 2);
 
     connect(
@@ -142,12 +179,33 @@ ScreenshotBrowser::ScreenshotBrowser(QWidget* parent)
         &QListWidget::itemSelectionChanged,
         this,
         &ScreenshotBrowser::updatePreview);
+    connect(previewTags_, &TagEditor::tagsChanged, this, &ScreenshotBrowser::rememberDetailsDraft);
+    connect(previewNote_, &QPlainTextEdit::textChanged, this, &ScreenshotBrowser::rememberDetailsDraft);
+    connect(saveChanges_, &QPushButton::clicked, this, &ScreenshotBrowser::saveDetails);
 
     rebuildTagFilter();
 }
 
+void ScreenshotBrowser::setDetailsSaveHandler(std::function<OperationResult(
+    const QString&, const QString&, const QStringList&, const QString&)> handler)
+{
+    detailsSaveHandler_ = std::move(handler);
+    updateDetailsEditorState();
+}
+
 void ScreenshotBrowser::setPoses(const QVector<CameraPoseSummary>& poses)
 {
+    QSet<QPair<QString, QString>> incomingViews;
+    incomingViews.reserve(poses.size());
+    for (const CameraPoseSummary& pose : poses)
+        incomingViews.insert(qMakePair(pose.workspaceUuid, pose.viewId));
+    for (auto draft = detailsDrafts_.begin(); draft != detailsDrafts_.end();) {
+        if (!incomingViews.contains(draft.key()))
+            draft = detailsDrafts_.erase(draft);
+        else
+            ++draft;
+    }
+
     screenshotPoses_.clear();
     screenshotPoses_.reserve(poses.size());
     for (const CameraPoseSummary& pose : poses) {
@@ -159,6 +217,11 @@ void ScreenshotBrowser::setPoses(const QVector<CameraPoseSummary>& poses)
         if (!reader.canRead())
             continue;
         screenshotPoses_.append(pose);
+        const auto identity = qMakePair(pose.workspaceUuid, pose.viewId);
+        const auto draft = detailsDrafts_.constFind(identity);
+        if (draft != detailsDrafts_.cend() &&
+            draft->tags == pose.tags && draft->note == pose.note)
+            detailsDrafts_.remove(identity);
     }
 
     rebuildTagFilter();
@@ -179,6 +242,7 @@ void ScreenshotBrowser::rebuildTagFilter()
         }
     }
     tags.removeDuplicates();
+    previewTags_->setSuggestions(tags);
     std::sort(
         tags.begin(),
         tags.end(),
@@ -213,7 +277,14 @@ void ScreenshotBrowser::rebuildGallery()
 {
     const TagFilterMode mode = selectedFilterMode(*tagFilter_);
     const QString selectedTag = tagFilter_->currentData(FilterTagRole).toString();
+    const QListWidgetItem* selectedItem = gallery_->currentItem();
+    const QString selectedWorkspace = selectedItem == nullptr
+        ? QString() : selectedItem->data(WorkspaceUuidRole).toString();
+    const QString selectedView = selectedItem == nullptr
+        ? QString() : selectedItem->data(ViewIdRole).toString();
+    const QSignalBlocker blocker(gallery_);
     gallery_->clear();
+    int selectedRow = 0;
     for (const CameraPoseSummary& pose : screenshotPoses_) {
         const bool matches = mode == TagFilterMode::All ||
             (mode == TagFilterMode::Untagged && pose.tags.isEmpty()) ||
@@ -238,22 +309,41 @@ void ScreenshotBrowser::rebuildGallery()
         item->setData(ScreenshotPathRole, pose.screenshotPath);
         item->setData(TagsRole, pose.tags);
         item->setData(WorkspaceUuidRole, pose.workspaceUuid);
+        item->setData(NoteRole, pose.note);
         item->setIcon(QPixmap::fromImage(image.scaled(
             gallery_->iconSize(), Qt::KeepAspectRatio, Qt::SmoothTransformation)));
         item->setText(poseCaption(pose));
         item->setToolTip(tr("%1\n%2").arg(pose.viewId, pose.screenshotPath));
+        if (pose.workspaceUuid == selectedWorkspace && pose.viewId == selectedView)
+            selectedRow = gallery_->row(item);
     }
 
     emptyState_->setVisible(gallery_->count() == 0);
     if (gallery_->count() > 0)
-        gallery_->setCurrentRow(0);
-    else
-        updatePreview();
+        gallery_->setCurrentRow(selectedRow);
+    updatePreview();
 }
 
 void ScreenshotBrowser::updatePreview()
 {
     const QListWidgetItem* item = gallery_->currentItem();
+    DetailsDraft form;
+    if (item != nullptr) {
+        const auto identity = qMakePair(
+            item->data(WorkspaceUuidRole).toString(),
+            item->data(ViewIdRole).toString());
+        form = detailsDrafts_.value(identity, {
+            item->data(TagsRole).toStringList(), item->data(NoteRole).toString()});
+    }
+    {
+        const QSignalBlocker noteBlocker(previewNote_);
+        const QSignalBlocker tagsBlocker(previewTags_);
+        if (previewTags_->tags() != form.tags)
+            previewTags_->load(form.tags);
+        if (previewNote_->toPlainText() != form.note)
+            previewNote_->setPlainText(form.note);
+    }
+    updateDetailsEditorState();
     if (item == nullptr) {
         preview_->setPixmap(QPixmap());
         preview_->setText(tr("Select a screenshot to preview it."));
@@ -283,4 +373,78 @@ void ScreenshotBrowser::updatePreview()
     if (!tags.isEmpty())
         details.append(renderTags(tags));
     previewDetails_->setText(details.join(QStringLiteral(" · ")));
+}
+
+void ScreenshotBrowser::rememberDetailsDraft()
+{
+    const QListWidgetItem* item = gallery_->currentItem();
+    if (item == nullptr || !detailsSaveHandler_)
+        return;
+    const auto identity = qMakePair(
+        item->data(WorkspaceUuidRole).toString(), item->data(ViewIdRole).toString());
+    const DetailsDraft details = {previewTags_->tags(), previewNote_->toPlainText()};
+    if (details.tags == item->data(TagsRole).toStringList() &&
+        details.note == item->data(NoteRole).toString())
+        detailsDrafts_.remove(identity);
+    else
+        detailsDrafts_.insert(identity, details);
+    updateDetailsEditorState();
+}
+
+void ScreenshotBrowser::updateDetailsEditorState()
+{
+    const QListWidgetItem* item = gallery_->currentItem();
+    const bool hasSelection = item != nullptr;
+    previewTagsLabel_->setVisible(hasSelection);
+    previewTags_->setVisible(hasSelection);
+    previewTags_->setEnabled(bool(detailsSaveHandler_));
+    previewNoteLabel_->setVisible(hasSelection);
+    previewNote_->setVisible(hasSelection);
+    saveChanges_->setVisible(hasSelection);
+    detailsStatus_->setVisible(hasSelection);
+    previewNote_->setReadOnly(!detailsSaveHandler_);
+    const bool changed = hasSelection &&
+        (previewTags_->tags() != item->data(TagsRole).toStringList() ||
+         previewNote_->toPlainText() != item->data(NoteRole).toString());
+    saveChanges_->setEnabled(detailsSaveHandler_ && changed);
+    detailsStatus_->setText(changed ? tr("Unsaved changes") : QString());
+}
+
+void ScreenshotBrowser::saveDetails()
+{
+    const QListWidgetItem* item = gallery_->currentItem();
+    if (item == nullptr || !detailsSaveHandler_ || !saveChanges_->isEnabled())
+        return;
+    const QString workspaceUuid = item->data(WorkspaceUuidRole).toString();
+    const QString viewId = item->data(ViewIdRole).toString();
+    const QStringList tags = previewTags_->tags();
+    const QString note = previewNote_->toPlainText();
+    const OperationResult result = detailsSaveHandler_(workspaceUuid, viewId, tags, note);
+    if (!result.ok) {
+        detailsStatus_->setText(tr("Could not save changes: %1").arg(result.error));
+        return;
+    }
+
+    for (CameraPoseSummary& pose : screenshotPoses_) {
+        if (pose.workspaceUuid == workspaceUuid && pose.viewId == viewId) {
+            pose.tags = tags;
+            pose.note = note;
+        }
+    }
+    for (int index = 0; index < gallery_->count(); ++index) {
+        QListWidgetItem* galleryItem = gallery_->item(index);
+        if (galleryItem->data(WorkspaceUuidRole).toString() == workspaceUuid &&
+            galleryItem->data(ViewIdRole).toString() == viewId) {
+            galleryItem->setData(TagsRole, tags);
+            galleryItem->setData(NoteRole, note);
+        }
+    }
+    detailsDrafts_.remove(qMakePair(workspaceUuid, viewId));
+    emit detailsSaved(workspaceUuid, viewId, tags, note);
+    rebuildTagFilter();
+    const QListWidgetItem* selected = gallery_->currentItem();
+    if (selected != nullptr &&
+        selected->data(WorkspaceUuidRole).toString() == workspaceUuid &&
+        selected->data(ViewIdRole).toString() == viewId)
+        detailsStatus_->setText(tr("Saved"));
 }

@@ -1,13 +1,18 @@
 #include <QtTest>
 
 #include <cstring>
+#include <cmath>
 
 #include "fakes/fake_mesh_loader.h"
 #include "infrastructure/meshlab/meshlab_mesh_loader.h"
 
 #include <QDir>
+#include <QBuffer>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTemporaryDir>
 #include <QtEndian>
 #include <common/ml_document/mesh_model.h>
@@ -40,7 +45,28 @@ void appendFloat(QByteArray* bytes, float value)
     appendUInt32(bytes, bits);
 }
 
-bool writeTwoNodeGlb(const QString& path)
+bool writeGlb(const QString& path, const QJsonObject& root, QByteArray binary)
+{
+    QByteArray json = QJsonDocument(root).toJson(QJsonDocument::Compact);
+    while (json.size() % 4 != 0)
+        json.append(' ');
+    while (binary.size() % 4 != 0)
+        binary.append('\0');
+    QByteArray glb;
+    appendUInt32(&glb, 0x46546c67);
+    appendUInt32(&glb, 2);
+    appendUInt32(&glb, quint32(12 + 8 + json.size() + 8 + binary.size()));
+    appendUInt32(&glb, quint32(json.size()));
+    appendUInt32(&glb, 0x4e4f534a);
+    glb.append(json);
+    appendUInt32(&glb, quint32(binary.size()));
+    appendUInt32(&glb, 0x004e4942);
+    glb.append(binary);
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly) && file.write(glb) == glb.size();
+}
+
+bool writeSceneGlb(const QString& path, int nodeCount = 2)
 {
     QByteArray binary;
     for (float value : {
@@ -62,7 +88,8 @@ bool writeTwoNodeGlb(const QString& path)
     QByteArray json = QByteArrayLiteral(
         R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0,1]}],)"
         R"("nodes":[{"name":"Reference","mesh":0},{"name":"Candidate","mesh":0,"translation":[10,20,30],"scale":[-1,1,1]}],)"
-        R"("meshes":[{"primitives":[{"attributes":{"POSITION":0,"COLOR_0":1},"indices":2}]}],)"
+        R"("materials":[{"alphaMode":"BLEND"}],)"
+        R"("meshes":[{"primitives":[{"attributes":{"POSITION":0,"COLOR_0":1},"indices":2,"material":0}]}],)"
         R"("accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},)"
         R"({"bufferView":1,"componentType":5121,"normalized":true,"count":3,"type":"VEC4"},)"
         R"({"bufferView":2,"componentType":5123,"count":3,"type":"SCALAR"}],)"
@@ -70,26 +97,80 @@ bool writeTwoNodeGlb(const QString& path)
         R"({"buffer":0,"byteOffset":36,"byteLength":12},)"
         R"({"buffer":0,"byteOffset":48,"byteLength":6}],)"
         R"("buffers":[{"byteLength":56}]})");
-    while (json.size() % 4 != 0)
-        json.append(' ');
-
-    QByteArray glb;
-    appendUInt32(&glb, 0x46546c67);
-    appendUInt32(&glb, 2);
-    appendUInt32(
-        &glb,
-        quint32(12 + 8 + json.size() + 8 + binary.size()));
-    appendUInt32(&glb, quint32(json.size()));
-    appendUInt32(&glb, 0x4e4f534a);
-    glb.append(json);
-    appendUInt32(&glb, quint32(binary.size()));
-    appendUInt32(&glb, 0x004e4942);
-    glb.append(binary);
-
-    QFile file(path);
-    return file.open(QIODevice::WriteOnly) &&
-           file.write(glb) == glb.size();
+    QJsonObject scene = QJsonDocument::fromJson(json).object();
+    QJsonArray nodes = scene.value(QStringLiteral("nodes")).toArray();
+    QJsonArray rootNodes{0, 1};
+    for (int index = 2; index < nodeCount; ++index) {
+        nodes.append(QJsonObject{
+            {QStringLiteral("name"), QStringLiteral("Part %1").arg(index + 1)},
+            {QStringLiteral("mesh"), 0},
+            {QStringLiteral("translation"), QJsonArray{index * 10, 0, 0}},
+        });
+        rootNodes.append(index);
+    }
+    scene.insert(QStringLiteral("nodes"), nodes);
+    scene.insert(
+        QStringLiteral("scenes"),
+        QJsonArray{QJsonObject{{QStringLiteral("nodes"), rootNodes}}});
+    return writeGlb(path, scene, binary);
 }
+
+struct AppearanceGlbFixture
+{
+    QJsonObject root;
+    QByteArray binary;
+    QByteArray imageBytes;
+
+    AppearanceGlbFixture()
+    {
+        for (float value : {0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 1.f, 0.f})
+            appendFloat(&binary, value);
+        for (quint8 value : {255, 0, 0, 255, 0, 255, 0, 128, 0, 0, 255, 64})
+            binary.append(char(value));
+        for (quint16 value : {0, 0, 65535, 0, 0, 65535})
+            appendUInt16(&binary, value);
+        QImage image(2, 2, QImage::Format_RGBA8888);
+        image.setPixelColor(0, 0, QColor(255, 0, 0, 64));
+        image.setPixelColor(1, 0, Qt::green);
+        image.setPixelColor(0, 1, Qt::blue);
+        image.setPixelColor(1, 1, Qt::yellow);
+        QBuffer output(&imageBytes);
+        output.open(QIODevice::WriteOnly);
+        image.save(&output, "PNG");
+        root = QJsonDocument::fromJson(QByteArrayLiteral(
+            R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],)"
+            R"("nodes":[{"mesh":0,"scale":[-1,1,1]}],)"
+            R"("extensionsRequired":["KHR_materials_unlit","KHR_texture_transform"],)"
+            R"("meshes":[{"primitives":[{"attributes":{"POSITION":0,"COLOR_0":1,"TEXCOORD_1":2},"material":0},)"
+            R"({"attributes":{"POSITION":0},"material":1}]}],)"
+            R"("materials":[{"alphaMode":"BLEND","extensions":{"KHR_materials_unlit":{}},"pbrMetallicRoughness":{)"
+            R"("baseColorFactor":[0.5,0.25,1,0.5],"baseColorTexture":{"index":0,"texCoord":0,"extensions":{)"
+            R"("KHR_texture_transform":{"texCoord":1,"offset":[0.25,0.125],"scale":[0.5,0.25],"rotation":1.5707963267948966}}}}},)"
+            R"({"extensions":{"KHR_materials_unlit":{}},"pbrMetallicRoughness":{"baseColorFactor":[0,0,1,1]}}],)"
+            R"("textures":[{"source":0,"sampler":0}],"samplers":[{"wrapS":33071,"wrapT":33648}],)"
+            R"("accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},)"
+            R"({"bufferView":1,"componentType":5121,"normalized":true,"count":3,"type":"VEC4"},)"
+            R"({"bufferView":2,"componentType":5123,"normalized":true,"count":3,"type":"VEC2"}],)"
+            R"("bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},)"
+            R"({"buffer":0,"byteOffset":36,"byteLength":12},{"buffer":0,"byteOffset":48,"byteLength":12}],)"
+            R"("buffers":[{"byteLength":60}]})")).object();
+    }
+
+    void embedImage(const QString& mimeType = QStringLiteral("image/png"))
+    {
+        QJsonArray views = root.value(QStringLiteral("bufferViews")).toArray();
+        views.append(QJsonObject{{QStringLiteral("buffer"), 0},
+                                 {QStringLiteral("byteOffset"), binary.size()},
+                                 {QStringLiteral("byteLength"), imageBytes.size()}});
+        root.insert(QStringLiteral("bufferViews"), views);
+        root.insert(QStringLiteral("images"), QJsonArray{QJsonObject{
+            {QStringLiteral("bufferView"), views.size() - 1},
+            {QStringLiteral("mimeType"), mimeType}}});
+        binary.append(imageBytes);
+        root.insert(QStringLiteral("buffers"), QJsonArray{QJsonObject{
+            {QStringLiteral("byteLength"), binary.size()}}});
+    }
+};
 
 bool loadIoBasePlugin()
 {
@@ -188,38 +269,118 @@ private slots:
         QCOMPARE(staged.entries.size(), 2);
     }
 
-    void acceptsOneLoadedLayerAndRejectsZeroOrNine()
+    void keepsAllImportedLayersWithDefaultVisibility_data()
     {
-        {
-            FakeMeshLoader loader;
-            loader.succeed(
-                QStringLiteral("single.obj"),
-                {fakeLoadedMesh(1, QStringLiteral("single"))});
-            MeshImportService service(loader);
-
-            StagedWorkspace staged =
-                service.stage({QStringLiteral("single.obj")});
-
-            QVERIFY2(staged.result.ok, qPrintable(staged.result.error));
-            QCOMPARE(staged.entries.size(), 1);
-            QVERIFY(staged.repository != nullptr);
+        QTest::addColumn<int>("count");
+        QTest::addColumn<int>("visibleCount");
+        QTest::addColumn<bool>("project");
+        const QVector<QPair<int, int>> counts{
+            {1, 1}, {2, 2}, {3, 3}, {4, 4}, {5, 5}, {6, 6},
+            {7, 7}, {8, 8}, {9, 8}, {12, 8}, {32, 8},
+        };
+        for (const auto& count : counts) {
+            for (const bool project : {false, true}) {
+                const QByteArray name =
+                    QStringLiteral("%1-%2")
+                        .arg(project ? QStringLiteral("project") : QStringLiteral("mesh"))
+                        .arg(count.first)
+                        .toLatin1();
+                QTest::newRow(name.constData())
+                    << count.first << count.second << project;
+            }
         }
+    }
 
-        for (const int count : {0, 9}) {
-            FakeMeshLoader loader;
-            QVector<LoadedMesh> meshes;
-            for (int index = 0; index < count; ++index)
-                meshes.push_back(fakeLoadedMesh(index + 1, QStringLiteral("mesh-%1").arg(index)));
-            loader.succeed(QStringLiteral("count-%1.obj").arg(count), meshes);
-            MeshImportService service(loader);
-
-            StagedWorkspace staged = service.stage({QStringLiteral("count-%1.obj").arg(count)});
-
-            QVERIFY2(!staged.result.ok, qPrintable(staged.result.error));
-            QVERIFY(staged.repository == nullptr);
-            QVERIFY(staged.entries.isEmpty());
-            QVERIFY(staged.fileErrors.isEmpty());
+    void keepsAllImportedLayersWithDefaultVisibility()
+    {
+        QFETCH(int, count);
+        QFETCH(int, visibleCount);
+        QFETCH(bool, project);
+        FakeMeshLoader loader;
+        QVector<LoadedMesh> meshes;
+        for (int index = 0; index < count; ++index) {
+            LoadedMesh mesh =
+                fakeLoadedMesh(index + 1, QStringLiteral("mesh-%1").arg(index));
+            mesh.uuidCandidates = QStringList{QStringLiteral("uuid-%1").arg(index)};
+            meshes.push_back(mesh);
         }
+        const QString path = project ? QStringLiteral("comparison.mlp")
+                                     : QStringLiteral("comparison.obj");
+        loader.succeed(path, meshes);
+        MeshImportService service(loader);
+
+        StagedWorkspace staged = service.stage({path});
+
+        QVERIFY2(staged.result.ok, qPrintable(staged.result.error));
+        QVERIFY(staged.repository != nullptr);
+        QCOMPARE(staged.entries.size(), count);
+        QCOMPARE(staged.layoutMode, project ? SceneLayoutMode::Overlay
+                                           : SceneLayoutMode::ComparisonGrid);
+        for (int index = 0; index < count; ++index) {
+            const MeshEntry& entry = staged.entries.at(index);
+            QCOMPARE(entry.id, MeshId(index + 1));
+            QCOMPARE(entry.visible, index < visibleCount);
+            QCOMPARE(entry.displayName, meshes.at(index).displayName);
+            QCOMPARE(entry.sourcePath, meshes.at(index).sourcePath);
+            QCOMPARE(entry.uuidCandidates, meshes.at(index).uuidCandidates);
+            QVERIFY(staged.repository->geometry(entry.resourceId) != nullptr);
+            for (int previous = 0; previous < index; ++previous)
+                QVERIFY(entry.resourceId != staged.entries.at(previous).resourceId);
+        }
+    }
+
+    void rejectsImportWithoutAnyLayers()
+    {
+        FakeMeshLoader loader;
+        loader.succeed(QStringLiteral("empty.obj"), {});
+        MeshImportService service(loader);
+
+        StagedWorkspace staged = service.stage({QStringLiteral("empty.obj")});
+
+        QVERIFY(!staged.result.ok);
+        QVERIFY(staged.repository == nullptr);
+        QVERIFY(staged.entries.isEmpty());
+        QVERIFY(staged.fileErrors.isEmpty());
+    }
+
+    void selectsTheFirstEightLayersAcrossAnEntireFileBatch()
+    {
+        FakeMeshLoader loader;
+        QStringList paths;
+        for (int index = 0; index < 12; ++index) {
+            const QString path = QStringLiteral("mesh-%1.obj").arg(index);
+            paths.append(path);
+            loader.succeed(path, {fakeLoadedMesh(index + 1, path)});
+        }
+        MeshImportService service(loader);
+
+        StagedWorkspace staged = service.stage(paths);
+
+        QVERIFY2(staged.result.ok, qPrintable(staged.result.error));
+        QCOMPARE(staged.entries.size(), paths.size());
+        for (int index = 0; index < paths.size(); ++index) {
+            QCOMPARE(staged.entries.at(index).sourcePath, paths.at(index));
+            QCOMPARE(staged.entries.at(index).visible, index < 8);
+        }
+    }
+
+    void rejectsInvalidGeometryBeyondTheInitiallyVisibleLayers()
+    {
+        FakeMeshLoader loader;
+        QVector<LoadedMesh> meshes;
+        for (int index = 0; index < 8; ++index)
+            meshes.push_back(fakeLoadedMesh(index + 1, QStringLiteral("valid-%1").arg(index)));
+        loader.succeed(QStringLiteral("valid.obj"), meshes);
+        loader.succeedWithoutPositiveArea(
+            QStringLiteral("hidden.obj"), {fakeLoadedMesh(9, QStringLiteral("hidden"))});
+        MeshImportService service(loader);
+
+        StagedWorkspace staged = service.stage({QStringLiteral("valid.obj"), QStringLiteral("hidden.obj")});
+
+        QVERIFY(!staged.result.ok);
+        QCOMPARE(staged.result.error, QStringLiteral("hidden has no positive-area triangles."));
+        QVERIFY(staged.repository == nullptr);
+        QVERIFY(staged.entries.isEmpty());
     }
 
     void rejectsMeshWithoutPositiveAreaFaces()
@@ -262,7 +423,7 @@ private slots:
         QVERIFY(directory.isValid());
         const QString path =
             directory.filePath(QStringLiteral("comparison.GLB"));
-        QVERIFY(writeTwoNodeGlb(path));
+        QVERIFY(writeSceneGlb(path));
 
         MeshLabMeshLoader loader;
         MeshImportService service(loader);
@@ -288,13 +449,247 @@ private slots:
         QCOMPARE(candidate->vertexColor(2), QColor(0, 0, 255, 64));
     }
 
+    void importsGlbMaterialColorsAndTextures_data()
+    {
+        QTest::addColumn<QString>("source");
+        QTest::newRow("embedded-png") << QStringLiteral("embedded");
+        QTest::newRow("data-uri-png") << QStringLiteral("data-uri");
+        QTest::newRow("local-png") << QStringLiteral("local");
+        QTest::newRow("embedded-jpeg") << QStringLiteral("jpeg");
+    }
+
+    void importsGlbMaterialColorsAndTextures()
+    {
+        QFETCH(QString, source);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppearanceGlbFixture fixture;
+        QVERIFY(!fixture.root.isEmpty());
+        QVERIFY(!fixture.imageBytes.isEmpty());
+        if (source == QStringLiteral("embedded") || source == QStringLiteral("jpeg")) {
+            if (source == QStringLiteral("jpeg")) {
+                QImage image = QImage::fromData(fixture.imageBytes);
+                fixture.imageBytes.clear();
+                QBuffer output(&fixture.imageBytes);
+                QVERIFY(output.open(QIODevice::WriteOnly));
+                QVERIFY(image.save(&output, "JPEG"));
+            }
+            fixture.embedImage(source == QStringLiteral("jpeg")
+                                   ? QStringLiteral("image/jpeg")
+                                   : QStringLiteral("image/png"));
+        }
+        else {
+            QString uri;
+            if (source == QStringLiteral("data-uri"))
+                uri = QStringLiteral("data:image/png;base64,") + QString::fromLatin1(fixture.imageBytes.toBase64());
+            else {
+                QFile imageFile(directory.filePath(QStringLiteral("original color.png")));
+                QVERIFY(imageFile.open(QIODevice::WriteOnly));
+                QCOMPARE(imageFile.write(fixture.imageBytes), qint64(fixture.imageBytes.size()));
+                imageFile.close();
+                uri = QStringLiteral("original%20color.png");
+            }
+            fixture.root.insert(QStringLiteral("images"), QJsonArray{QJsonObject{{QStringLiteral("uri"), uri}}});
+        }
+        const QString path = directory.filePath(QStringLiteral("appearance.glb"));
+        QVERIFY(writeGlb(path, fixture.root, fixture.binary));
+        MeshLabMeshLoader loader;
+        MeshImportService service(loader);
+        StagedWorkspace staged = service.stage({path});
+        QVERIFY2(staged.result.ok, qPrintable(staged.result.error));
+        QCOMPARE(staged.entries.size(), 1);
+        const IMeshGeometryView* mesh = staged.repository->geometry(staged.entries[0].resourceId);
+        QVERIFY(mesh != nullptr);
+        QVERIFY(mesh->hasVertexColors());
+        QCOMPARE(mesh->vertexColor(0), QColor(128, 0, 0, 128));
+        QCOMPARE(mesh->vertexColor(1), QColor(0, 64, 0, 64));
+        QCOMPARE(mesh->vertexColor(2), QColor(0, 0, 255, 32));
+        QCOMPARE(mesh->vertexColor(3), QColor(0, 0, 255, 255));
+        QCOMPARE(mesh->textureCount(), 1);
+        QCOMPARE(mesh->textureImage(0).size(), QSize(2, 2));
+        if (source != QStringLiteral("jpeg")) {
+            QCOMPARE(mesh->textureImage(0).pixelColor(0, 0), QColor(255, 0, 0, 64));
+            QCOMPARE(mesh->textureImage(0).pixelColor(0, 1), QColor(Qt::blue));
+        }
+        QCOMPARE(mesh->textureWrapS(0), 33071);
+        QCOMPARE(mesh->textureWrapT(0), 33648);
+        QVERIFY(mesh->isUnlit());
+        QVERIFY(mesh->hasFaceTexCoords());
+        const auto coordinates = mesh->faceTexCoords(0);
+        for (const MeshTexCoord& coordinate : coordinates)
+            QCOMPARE(coordinate.textureIndex, 0);
+        QVERIFY(std::abs(coordinates[0].u - 0.25) < 1e-6);
+        QVERIFY(std::abs(coordinates[0].v - 0.875) < 1e-6);
+        // Mirrored nodes reverse winding, including the corresponding UV corners.
+        QVERIFY(std::abs(coordinates[1].u) < 1e-6);
+        QVERIFY(std::abs(coordinates[1].v - 0.875) < 1e-6);
+        QVERIFY(std::abs(coordinates[2].u - 0.25) < 1e-6);
+        QVERIFY(std::abs(coordinates[2].v - 0.375) < 1e-6);
+        for (const MeshTexCoord& coordinate : mesh->faceTexCoords(1))
+            QCOMPARE(coordinate.textureIndex, -1);
+    }
+
+    void preservesMultipleGlbMaterialTextures()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppearanceGlbFixture fixture;
+        fixture.embedImage();
+        QImage secondImage(1, 1, QImage::Format_RGBA8888);
+        secondImage.fill(Qt::cyan);
+        QByteArray secondImageBytes;
+        QBuffer output(&secondImageBytes);
+        QVERIFY(output.open(QIODevice::WriteOnly));
+        QVERIFY(secondImage.save(&output, "PNG"));
+        QJsonArray images = fixture.root.value(QStringLiteral("images")).toArray();
+        images.append(QJsonObject{{QStringLiteral("uri"), QStringLiteral("data:image/png;base64,") +
+            QString::fromLatin1(secondImageBytes.toBase64())}});
+        fixture.root.insert(QStringLiteral("images"), images);
+        QJsonArray textures = fixture.root.value(QStringLiteral("textures")).toArray();
+        textures.append(QJsonObject{{QStringLiteral("source"), 1}});
+        fixture.root.insert(QStringLiteral("textures"), textures);
+        QJsonArray materials = fixture.root.value(QStringLiteral("materials")).toArray();
+        const QJsonObject secondTexture{{QStringLiteral("index"), 1},
+                                        {QStringLiteral("texCoord"), 1}};
+        const QJsonObject secondPbr{{QStringLiteral("baseColorTexture"), secondTexture}};
+        materials[1] = QJsonObject{{QStringLiteral("pbrMetallicRoughness"), secondPbr}};
+        fixture.root.insert(QStringLiteral("materials"), materials);
+        QJsonArray meshes = fixture.root.value(QStringLiteral("meshes")).toArray();
+        QJsonObject mesh = meshes[0].toObject();
+        QJsonArray primitives = mesh.value(QStringLiteral("primitives")).toArray();
+        QJsonObject primitive = primitives[1].toObject();
+        primitive.insert(QStringLiteral("attributes"), QJsonObject{
+            {QStringLiteral("POSITION"), 0}, {QStringLiteral("TEXCOORD_1"), 2}});
+        primitives[1] = primitive;
+        mesh.insert(QStringLiteral("primitives"), primitives);
+        meshes[0] = mesh;
+        fixture.root.insert(QStringLiteral("meshes"), meshes);
+        const QString path = directory.filePath(QStringLiteral("two-materials.glb"));
+        QVERIFY(writeGlb(path, fixture.root, fixture.binary));
+        MeshLabMeshLoader loader;
+        MeshImportService service(loader);
+        StagedWorkspace staged = service.stage({path});
+        QVERIFY2(staged.result.ok, qPrintable(staged.result.error));
+        const IMeshGeometryView* geometry = staged.repository->geometry(staged.entries[0].resourceId);
+        QCOMPARE(geometry->textureCount(), 2);
+        QCOMPARE(geometry->faceTexCoords(0)[0].textureIndex, 0);
+        QCOMPARE(geometry->faceTexCoords(1)[0].textureIndex, 1);
+        QCOMPARE(geometry->textureImage(1).pixelColor(0, 0), QColor(Qt::cyan));
+        QCOMPARE(geometry->textureWrapS(1), 10497);
+        QCOMPARE(geometry->textureWrapT(1), 10497);
+        QVERIFY(!geometry->isUnlit());
+        QCOMPARE(geometry->vertexColor(3), QColor(Qt::white));
+    }
+
+    void opaqueGlbMaterialsIgnoreAlphaWithoutChangingSharedBlendTextures_data()
+    {
+        QTest::addColumn<bool>("explicitMode");
+        QTest::newRow("default-opaque") << false;
+        QTest::newRow("explicit-opaque") << true;
+    }
+
+    void opaqueGlbMaterialsIgnoreAlphaWithoutChangingSharedBlendTextures()
+    {
+        QFETCH(bool, explicitMode);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppearanceGlbFixture fixture;
+        fixture.embedImage();
+        QJsonArray materials = fixture.root.value(QStringLiteral("materials")).toArray();
+        QJsonObject opaqueMaterial = materials[0].toObject();
+        if (explicitMode)
+            opaqueMaterial.insert(QStringLiteral("alphaMode"), QStringLiteral("OPAQUE"));
+        else
+            opaqueMaterial.remove(QStringLiteral("alphaMode"));
+        materials[1] = opaqueMaterial;
+        fixture.root.insert(QStringLiteral("materials"), materials);
+        QJsonArray meshes = fixture.root.value(QStringLiteral("meshes")).toArray();
+        QJsonObject mesh = meshes[0].toObject();
+        QJsonArray primitives = mesh.value(QStringLiteral("primitives")).toArray();
+        QJsonObject opaquePrimitive = primitives[0].toObject();
+        opaquePrimitive.insert(QStringLiteral("material"), 1);
+        primitives[1] = opaquePrimitive;
+        QJsonObject defaultPrimitive = opaquePrimitive;
+        defaultPrimitive.remove(QStringLiteral("material"));
+        primitives.append(defaultPrimitive);
+        mesh.insert(QStringLiteral("primitives"), primitives);
+        meshes[0] = mesh;
+        fixture.root.insert(QStringLiteral("meshes"), meshes);
+        const QString path = directory.filePath(QStringLiteral("shared-alpha.glb"));
+        QVERIFY(writeGlb(path, fixture.root, fixture.binary));
+        MeshLabMeshLoader loader;
+        MeshImportService service(loader);
+        StagedWorkspace staged = service.stage({path});
+        QVERIFY2(staged.result.ok, qPrintable(staged.result.error));
+        const IMeshGeometryView* geometry = staged.repository->geometry(staged.entries[0].resourceId);
+        QCOMPARE(geometry->vertexColor(0), QColor(128, 0, 0, 128));
+        QCOMPARE(geometry->vertexColor(3), QColor(128, 0, 0, 255));
+        QCOMPARE(geometry->vertexColor(4), QColor(0, 64, 0, 255));
+        QCOMPARE(geometry->vertexColor(7), QColor(0, 255, 0, 255));
+        QCOMPARE(geometry->textureCount(), 2);
+        QCOMPARE(geometry->faceTexCoords(0)[0].textureIndex, 0);
+        QCOMPARE(geometry->faceTexCoords(1)[0].textureIndex, 1);
+        QCOMPARE(geometry->faceTexCoords(2)[0].textureIndex, -1);
+        QCOMPARE(geometry->textureImage(0).pixelColor(0, 0), QColor(255, 0, 0, 64));
+        QCOMPARE(geometry->textureImage(1).pixelColor(0, 0), QColor(255, 0, 0, 255));
+        QCOMPARE(geometry->textureWrapS(1), 33071);
+        QCOMPARE(geometry->textureWrapT(1), 33648);
+    }
+
+    void rejectsBrokenGlbAppearance_data()
+    {
+        QTest::addColumn<QString>("problem");
+        QTest::newRow("invalid-image") << QStringLiteral("image");
+        QTest::newRow("missing-uv") << QStringLiteral("uv");
+        QTest::newRow("image-out-of-bounds") << QStringLiteral("bounds");
+    }
+
+    void rejectsBrokenGlbAppearance()
+    {
+        QFETCH(QString, problem);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppearanceGlbFixture fixture;
+        if (problem == QStringLiteral("image"))
+            fixture.imageBytes = QByteArrayLiteral("not an image");
+        fixture.embedImage();
+        if (problem == QStringLiteral("uv")) {
+            QJsonArray meshes = fixture.root.value(QStringLiteral("meshes")).toArray();
+            QJsonObject mesh = meshes[0].toObject();
+            QJsonArray primitives = mesh.value(QStringLiteral("primitives")).toArray();
+            QJsonObject primitive = primitives[0].toObject();
+            QJsonObject attributes = primitive.value(QStringLiteral("attributes")).toObject();
+            attributes.remove(QStringLiteral("TEXCOORD_1"));
+            primitive.insert(QStringLiteral("attributes"), attributes);
+            primitives[0] = primitive;
+            mesh.insert(QStringLiteral("primitives"), primitives);
+            meshes[0] = mesh;
+            fixture.root.insert(QStringLiteral("meshes"), meshes);
+        }
+        else if (problem == QStringLiteral("bounds")) {
+            QJsonArray views = fixture.root.value(QStringLiteral("bufferViews")).toArray();
+            QJsonObject imageView = views.last().toObject();
+            imageView.insert(QStringLiteral("byteLength"), fixture.binary.size() + 1);
+            views[views.size() - 1] = imageView;
+            fixture.root.insert(QStringLiteral("bufferViews"), views);
+        }
+        const QString path = directory.filePath(QStringLiteral("broken.glb"));
+        QVERIFY(writeGlb(path, fixture.root, fixture.binary));
+        MeshLabMeshLoader loader;
+        MeshImportService service(loader);
+        StagedWorkspace staged = service.stage({path});
+        QVERIFY(!staged.result.ok);
+        QVERIFY(staged.repository == nullptr);
+        QVERIFY(staged.entries.isEmpty());
+    }
+
     void importsGlbLayersReferencedByMeshLabProject()
     {
         QTemporaryDir directory;
         QVERIFY(directory.isValid());
         const QString glbPath =
             directory.filePath(QStringLiteral("comparison.glb"));
-        QVERIFY(writeTwoNodeGlb(glbPath));
+        QVERIFY(writeSceneGlb(glbPath));
 
         const QString projectPath =
             directory.filePath(QStringLiteral("comparison.mlp"));
@@ -318,6 +713,70 @@ private slots:
         QCOMPARE(staged.entries.size(), 2);
         QCOMPARE(staged.entries.at(0).displayName, QStringLiteral("GLB Candidate"));
         QCOMPARE(staged.entries.at(1).displayName, QStringLiteral("GLB Reference"));
+    }
+
+    void importsMoreThanEightRealGlbLayers_data()
+    {
+        QTest::addColumn<bool>("project");
+        QTest::newRow("glb-scene") << false;
+        QTest::newRow("mlp-project") << true;
+    }
+
+    void importsMoreThanEightRealGlbLayers()
+    {
+        QFETCH(bool, project);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString glbPath = directory.filePath(QStringLiteral("comparison.glb"));
+        QVERIFY(writeSceneGlb(glbPath, 12));
+
+        QString path = glbPath;
+        if (project) {
+            path = directory.filePath(QStringLiteral("comparison.mlp"));
+            QByteArray xml = QByteArrayLiteral(
+                "<!DOCTYPE MeshLabDocument>\n<MeshLabProject><MeshGroup>\n");
+            for (int index = 11; index >= 0; --index) {
+                xml.append(
+                    QStringLiteral(
+                        "<MLMesh label=\"Project part %1\" filename=\"comparison.glb\" idInFile=\"%1\" />\n")
+                        .arg(index)
+                        .toUtf8());
+            }
+            xml.append("</MeshGroup></MeshLabProject>\n");
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(xml), xml.size());
+        }
+
+        MeshLabMeshLoader loader;
+        MeshImportService service(loader);
+        StagedWorkspace staged = service.stage({path});
+
+        QVERIFY2(staged.result.ok, qPrintable(staged.result.error));
+        QVERIFY(staged.repository != nullptr);
+        QCOMPARE(staged.entries.size(), 12);
+        QCOMPARE(staged.layoutMode, project ? SceneLayoutMode::Overlay
+                                           : SceneLayoutMode::ComparisonGrid);
+        for (int index = 0; index < staged.entries.size(); ++index) {
+            const MeshEntry& entry = staged.entries.at(index);
+            const int nodeIndex = project ? 11 - index : index;
+            const QString nodeName =
+                nodeIndex == 0 ? QStringLiteral("Reference")
+                : nodeIndex == 1 ? QStringLiteral("Candidate")
+                                 : QStringLiteral("Part %1").arg(nodeIndex + 1);
+            QCOMPARE(entry.id, MeshId(index + 1));
+            QCOMPARE(entry.visible, index < 8);
+            QCOMPARE(
+                entry.displayName,
+                project ? QStringLiteral("Project part %1").arg(nodeIndex) : nodeName);
+            const IMeshGeometryView* geometry =
+                staged.repository->geometry(entry.resourceId);
+            QVERIFY(geometry != nullptr);
+            const MeshPoint3D expectedPosition =
+                nodeIndex == 1 ? MeshPoint3D{{10.0, 20.0, 30.0}}
+                               : MeshPoint3D{{double(nodeIndex * 10), 0.0, 0.0}};
+            QCOMPARE(geometry->vertexPosition(0), expectedPosition);
+        }
     }
 
     void importsPlyVertexColorsIntoGeometrySnapshot()
@@ -613,6 +1072,104 @@ private slots:
 
         model->cm.vert[0].P()[0] = 99;
         QCOMPARE(geometry->vertexPosition(0)[0], double(precisionSensitiveX));
+    }
+
+    void retainedResourcesKeepTransformsAndColorsAfterSourceIsDestroyed()
+    {
+        QTemporaryDir temporary;
+        const QString path = temporary.filePath(QStringLiteral("colored.glb"));
+        QVERIFY(writeSceneGlb(path));
+        MeshLabMeshLoader loader;
+        std::unique_ptr<MeshLabMeshRepository> source(new MeshLabMeshRepository);
+        QVector<LoadedMesh> loaded;
+        QVERIFY(loader.loadFile(path, *source, &loaded).ok);
+        QCOMPARE(loaded.size(), 2);
+
+        MeshLabMeshRepository destination;
+        MeshModel* existing = destination.allocateMesh(
+            QStringLiteral("existing.obj"), QStringLiteral("existing"));
+        const MeshResourceId existingId = destination.resourceIdFor(*existing);
+        MeshResourceId retainedId = 0;
+        QVERIFY(destination.retainMesh(
+            *source, loaded.back().resourceId, &retainedId).ok);
+        QVERIFY(retainedId != existingId);
+
+        const IMeshGeometryView* original =
+            source->geometry(loaded.back().resourceId);
+        QVERIFY(original != nullptr);
+        QVector<MeshPoint3D> positions;
+        QVector<MeshPoint3D> normals;
+        QVector<QColor> colors;
+        QVector<std::array<int, 3>> faces;
+        QVERIFY(original->hasVertexColors());
+        for (int index = 0; index < original->vertexCount(); ++index) {
+            positions.append(original->vertexPosition(index));
+            normals.append(original->vertexNormal(index));
+            colors.append(original->vertexColor(index));
+        }
+        for (int index = 0; index < original->faceCount(); ++index)
+            faces.append(original->faceVertexIndices(index));
+
+        source.reset();
+
+        const IMeshGeometryView* retained = destination.geometry(retainedId);
+        QVERIFY(retained != nullptr);
+        QCOMPARE(retained->vertexCount(), positions.size());
+        QCOMPARE(retained->faceCount(), faces.size());
+        QVERIFY(retained->hasVertexColors());
+        for (int index = 0; index < retained->vertexCount(); ++index) {
+            QCOMPARE(retained->vertexPosition(index), positions[index]);
+            QCOMPARE(retained->vertexNormal(index), normals[index]);
+            QCOMPARE(retained->vertexColor(index), colors[index]);
+        }
+        for (int index = 0; index < retained->faceCount(); ++index)
+            QCOMPARE(retained->faceVertexIndices(index), faces[index]);
+        QCOMPARE(destination.resourceIdFor(*existing), existingId);
+        QVERIFY(destination.hasPositiveAreaFaces(retainedId));
+    }
+
+    void retainedResourceRollbackAndAliasesDoNotRemoveOtherOwners()
+    {
+        const QVector<MeshPoint3D> vertices{
+            {{0, 0, 0}}, {{1, 0, 0}}, {{0, 1, 0}}};
+        const QVector<std::array<int, 3>> faces{{{0, 1, 2}}};
+        MeshLabMeshRepository source;
+        MeshResourceId sourceId = 0;
+        QVERIFY(source.createMesh({}, QStringLiteral("source"), vertices, faces, &sourceId).ok);
+        MeshLabMeshRepository destination;
+        MeshResourceId existingId = 0;
+        QVERIFY(destination.createMesh(
+            {}, QStringLiteral("existing"), vertices, faces, &existingId).ok);
+        QCOMPARE(sourceId, existingId);
+
+        MeshResourceId rolledBackId = 0;
+        QVERIFY(destination.retainMesh(source, sourceId, &rolledBackId).ok);
+        QVERIFY(rolledBackId != existingId);
+        destination.removeMesh(rolledBackId);
+        QVERIFY(destination.geometry(rolledBackId) == nullptr);
+        QVERIFY(source.hasPositiveAreaFaces(sourceId));
+        QVERIFY(destination.hasPositiveAreaFaces(existingId));
+
+        MeshResourceId retainedId = 0;
+        MeshResourceId aliasId = 0;
+        QVERIFY(destination.retainMesh(source, sourceId, &retainedId).ok);
+        QVERIFY(retainedId > rolledBackId);
+        QVERIFY(destination.retainMesh(destination, retainedId, &aliasId).ok);
+        QVERIFY(aliasId != retainedId);
+        source.removeMesh(sourceId);
+        destination.removeMesh(retainedId);
+        QVERIFY(destination.hasPositiveAreaFaces(aliasId));
+
+        MeshResourceId generatedId = 0;
+        QVERIFY(destination.createMesh(
+            {}, QStringLiteral("generated"), vertices, faces, &generatedId).ok);
+        QVERIFY(generatedId > aliasId);
+        QVERIFY(destination.hasPositiveAreaFaces(generatedId));
+        QVERIFY(destination.hasPositiveAreaFaces(existingId));
+        MeshResourceId invalidId = 99;
+        QVERIFY(!destination.retainMesh(source, sourceId, &invalidId).ok);
+        QCOMPARE(invalidId, MeshResourceId(0));
+        QVERIFY(!destination.retainMesh(destination, aliasId, nullptr).ok);
     }
 };
 

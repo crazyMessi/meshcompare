@@ -225,9 +225,16 @@ OperationResult ViewportGrid::create(
     clear();
     if (host == nullptr)
         return OperationResult::failure(QStringLiteral("A viewport host is required."));
-    if (scene.meshes.isEmpty() || scene.meshes.size() > 8) {
+    QVector<int> visibleSceneIndexes;
+    for (int index = 0; index < scene.meshes.size(); ++index) {
+        if (scene.meshes.at(index).visible)
+            visibleSceneIndexes.append(index);
+    }
+    if (visibleSceneIndexes.isEmpty() ||
+        visibleSceneIndexes.size() > meshcompare::MaxVisibleMeshLayers) {
         return OperationResult::failure(
-            QStringLiteral("A viewport layout requires between 1 and 8 meshes."));
+            QStringLiteral("A viewport layout requires between 1 and %1 visible meshes.")
+                .arg(meshcompare::MaxVisibleMeshLayers));
     }
     if (!dependencies.meshModelIdFor) {
         return OperationResult::failure(
@@ -244,19 +251,9 @@ OperationResult ViewportGrid::create(
         meshVisibility_.insert(mesh.id, mesh.visible);
     }
 
-    QVector<int> viewportSceneIndexes;
+    QVector<int> viewportSceneIndexes = visibleSceneIndexes;
     if (overlayMode_) {
-        viewportSceneIndexes.append(0);
-    }
-    else {
-        for (int index = 0; index < scene.meshes.size(); ++index) {
-            if (scene.meshes.at(index).visible)
-                viewportSceneIndexes.append(index);
-        }
-    }
-    if (viewportSceneIndexes.isEmpty()) {
-        return OperationResult::failure(
-            QStringLiteral("A viewport grid requires at least one visible mesh."));
+        viewportSceneIndexes = {0};
     }
     const int viewportCount = viewportSceneIndexes.size();
     QVector<int> modelIds;
@@ -447,6 +444,18 @@ OperationResult ViewportGrid::setMeshVisible(MeshId meshId, bool visible)
     if (modelId < 0) {
         return OperationResult::failure(
             QStringLiteral("Visibility target does not exist in the committed scene."));
+    }
+
+    if (meshVisibility_.value(meshId) == visible)
+        return OperationResult::success();
+
+    const int visibleCount = std::count(
+        meshVisibility_.cbegin(), meshVisibility_.cend(), true);
+    if ((!visible && visibleCount <= 1) ||
+        (visible && visibleCount >= meshcompare::MaxVisibleMeshLayers)) {
+        return OperationResult::failure(
+            QStringLiteral("A viewport layout requires between 1 and %1 visible meshes.")
+                .arg(meshcompare::MaxVisibleMeshLayers));
     }
 
     meshVisibility_[meshId] = visible;

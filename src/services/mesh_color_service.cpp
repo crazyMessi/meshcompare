@@ -21,30 +21,6 @@ struct TargetSnapshot
     SurfaceMeshSnapshot surface;
 };
 
-QVector<QColor> sourceOrFallbackVertexColors(
-    const IMeshGeometryView& geometry)
-{
-    QVector<QColor> colors;
-    colors.reserve(geometry.vertexCount());
-    if (geometry.hasVertexColors()) {
-        bool valid = true;
-        for (int index = 0; index < geometry.vertexCount(); ++index) {
-            const QColor color = geometry.vertexColor(index);
-            if (!color.isValid()) {
-                valid = false;
-                break;
-            }
-            colors.append(color);
-        }
-        if (valid && colors.size() == geometry.vertexCount())
-            return colors;
-        colors.clear();
-    }
-
-    colors.fill(QColor(180, 180, 180, 255), geometry.vertexCount());
-    return colors;
-}
-
 bool doubleLayerCacheOptionsMatch(
     const SurfaceComparisonOptions& left,
     const SurfaceComparisonOptions& right)
@@ -531,7 +507,6 @@ OperationResult MeshColorService::startAnalysis(const AnalysisRequest& request)
 
     SurfaceMeshSnapshot referenceSnapshot;
     QVector<TargetSnapshot> targetSnapshots;
-    QVector<QColor> referenceVertexColors;
     try {
         OperationResult copied;
         if (request.metric != SurfaceComparisonMetric::DoubleLayer) {
@@ -543,11 +518,6 @@ OperationResult MeshColorService::startAnalysis(const AnalysisRequest& request)
                 return OperationResult::failure(
                     QStringLiteral(
                         "Reference mesh geometry is unavailable."));
-            }
-            if (request.metric ==
-                SurfaceComparisonMetric::DistanceToReference) {
-                referenceVertexColors =
-                    sourceOrFallbackVertexColors(*referenceGeometry);
             }
             const bool needsReferenceSurface =
                 request.metric !=
@@ -628,7 +598,6 @@ OperationResult MeshColorService::startAnalysis(const AnalysisRequest& request)
     activeGeneration_ = request.generation;
     activeMetric_ = request.metric;
     activeReferenceId_ = request.referenceId;
-    activeReferenceVertexColors_ = std::move(referenceVertexColors);
     activeBatchSerial_ = candidateSerial;
     nextBatchSerial_ = candidateSerial;
     cancellation_ = std::move(candidateCancellation);
@@ -665,7 +634,6 @@ void MeshColorService::stopAnalysis(bool notify)
     active_ = false;
     activeGeneration_ = 0;
     activeReferenceId_ = 0;
-    activeReferenceVertexColors_.clear();
     state_.finishAnalysis();
 
     if (notify && wasActive && !shuttingDown_) {
@@ -899,18 +867,15 @@ void MeshColorService::completeAnalysis(AnalysisBatchResult result)
         if (result.result.ok && distanceMetric) {
             const MeshEntry* reference =
                 state_.mesh(activeReferenceId_);
-            if (reference == nullptr ||
-                activeReferenceVertexColors_.isEmpty()) {
+            if (reference == nullptr) {
                 result.result = OperationResult::failure(
                     QStringLiteral(
-                        "Distance analysis reference colors are unavailable."));
+                        "Distance analysis reference mesh is unavailable."));
             }
             else {
                 ColorPresentation presentation;
-                presentation.mode = ColorMode::VertexColor;
-                presentation.vertexColors =
-                    activeReferenceVertexColors_;
-                presentation.referenceDependent = true;
+                // Default restores the complete imported appearance, including
+                // textures and face colors, rather than only vertex colors.
                 stateUpdates.append(
                     {reference->id,
                      presentation,
@@ -971,7 +936,6 @@ void MeshColorService::completeAnalysis(AnalysisBatchResult result)
     active_ = false;
     activeGeneration_ = 0;
     activeReferenceId_ = 0;
-    activeReferenceVertexColors_.clear();
     state_.finishAnalysis();
     emit analysisFinished(std::move(result));
 }

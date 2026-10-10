@@ -647,7 +647,7 @@ private slots:
         QCOMPARE(snapshot.poses.front().viewId, QStringLiteral("view_B"));
     }
 
-    void failedReplacementPreservesUuidAndSuccessfulNoUuidReplacementClearsIt()
+    void failedAndSuccessfulAppendsPreserveUuidAndCamera()
     {
         WorkspaceState state;
         FakeMeshImportService importer;
@@ -666,6 +666,8 @@ private slots:
         WorkspaceController controller(state, importer, renderer, comparer, store);
         QVERIFY(importWorkspace(controller).result.ok);
         QCOMPARE(controller.cameraPanelSnapshot().workspaceUuid, UuidA);
+        renderer.setCamera(pose(QStringLiteral("current-view")));
+        const int restoreCount = renderer.restoreCount();
 
         renderer.failNextPrepare(QStringLiteral("replacement failed"));
         const WorkspaceImportOutcome failed = importWorkspace(controller);
@@ -673,11 +675,14 @@ private slots:
         QVERIFY(!failed.result.ok);
         QCOMPARE(controller.cameraPanelSnapshot().workspaceUuid, UuidA);
 
-        const WorkspaceImportOutcome replaced = importWorkspace(controller);
+        const WorkspaceImportOutcome appended = importWorkspace(controller);
 
-        QVERIFY(replaced.result.ok);
-        QVERIFY(replaced.notice.contains(NoUuidNotice));
-        QVERIFY(controller.cameraPanelSnapshot().workspaceUuid.isEmpty());
+        QVERIFY(appended.result.ok);
+        QVERIFY(appended.notice.isEmpty());
+        QCOMPARE(controller.cameraPanelSnapshot().workspaceUuid, UuidA);
+        QCOMPARE(renderer.camera().viewStateXml, QStringLiteral("current-view"));
+        QCOMPARE(renderer.restoreCount(), restoreCount);
+        QCOMPARE(state.meshes().size(), 4);
     }
 
     void autoRestoreRejectsSnapshotReentryDuringStoreList()
@@ -794,6 +799,170 @@ private slots:
             QStringLiteral("camera"), Qt::CaseInsensitive));
         QCOMPARE(state.referenceId(), MeshId(1));
         QCOMPARE(snapshot.workspaceUuid, UuidA);
+    }
+
+    void captureFormSavesTagsAndNoteInTheSameTransaction()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(staged(
+            {entry(1, QStringLiteral("reference.obj"), {UuidA})}));
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        FakeCameraPoseStore store;
+        WorkspaceController controller(state, importer, renderer, comparer, store);
+        QVERIFY(importWorkspace(controller).result.ok);
+        renderer.setCamera(pose(QStringLiteral("form-camera")));
+        renderer.setCaptureImage(screenshot());
+        const QStringList tags{QStringLiteral("inspection")};
+        const QString note = QString::fromUtf8("  检查边缘\nKeep this angle  ");
+        QString id;
+        QVERIFY(controller.saveCurrentCameraPoseWithNote(&id, tags, note).ok);
+        QCOMPARE(store.saveWithScreenshotCount(), 1);
+        QCOMPARE(store.setTagsCount(), 0);
+        QCOMPARE(store.setDetailsCount(), 0);
+        QCOMPARE(store.list(UuidA).first().note, note);
+        QCOMPARE(store.list(UuidA).first().tags, tags);
+        QCOMPARE(store.list(UuidA).first().viewId, id);
+        QCOMPARE(store.list(UuidA).first().pose.viewStateXml, QStringLiteral("form-camera"));
+
+        QImage copied;
+        QVERIFY(controller.saveCurrentCameraPoseWithScreenshotAndNote(copied, &id, tags, note).ok);
+        QCOMPARE(copied, screenshot());
+        QCOMPARE(store.list(UuidA).last().note, note);
+        store.failNextSave(QStringLiteral("write failed"));
+        const QString priorId = id;
+        QVERIFY(!controller.saveCurrentCameraPoseWithNote(&id, {}, QStringLiteral("failed note")).ok);
+        QCOMPARE(id, priorId);
+        QCOMPARE(store.list(UuidA).size(), 2);
+    }
+
+    void detailsFormUpdatesBothFieldsAtomicallyAndScopesTheWorkspace()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(staged(
+            {entry(1, QStringLiteral("reference.obj"), {UuidA})}));
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        FakeCameraPoseStore store;
+        for (const QString& uid : {UuidA, UuidB})
+            store.add(uid, QStringLiteral("view_001"), pose(uid), QStringLiteral("2026-10-09T09:00:00Z"));
+        WorkspaceController controller(state, importer, renderer, comparer, store);
+        const QStringList tags{QStringLiteral("inspection")};
+        const QString note = QString::fromUtf8("标签和备注一起保存");
+        QVERIFY(controller.setCameraPoseDetailsForWorkspace(UuidB.toUpper(), QStringLiteral("view_001"), tags, note).ok);
+        QCOMPARE(store.setDetailsCount(), 1);
+        QCOMPARE(store.list(UuidB).first().tags, tags);
+        QCOMPARE(store.list(UuidB).first().note, note);
+        QVERIFY(store.list(UuidA).first().note.isEmpty());
+        QVERIFY(store.list(UuidA).first().tags.isEmpty());
+        QVERIFY(importWorkspace(controller).result.ok);
+        const QString camera = renderer.camera().viewStateXml;
+        store.failNextSetDetails(QStringLiteral("write failed"));
+        QVERIFY(!controller.setCameraPoseDetailsForWorkspace(UuidB, QStringLiteral("view_001"), {}, {}).ok);
+        QCOMPARE(store.list(UuidB).first().tags, tags);
+        QCOMPARE(store.list(UuidB).first().note, note);
+        QCOMPARE(renderer.camera().viewStateXml, camera);
+        QVERIFY(!controller.setCameraPoseDetailsForWorkspace({}, QStringLiteral("view_001"), tags, note).ok);
+        QVERIFY(!controller.setCameraPoseDetailsForWorkspace(UuidB, {}, tags, note).ok);
+        OperationResult nested;
+        store.setListObserver([&] {
+            nested = controller.setCameraPoseDetailsForWorkspace(UuidB, QStringLiteral("view_001"), {}, {});
+        });
+        QVERIFY(controller.cameraScreenshotLibrarySnapshot().result.ok);
+        QVERIFY(!nested.ok);
+        store.setListObserver({});
+        QCOMPARE(store.list(UuidB).first().note, note);
+    }
+
+    void poseNotesStayWithTheirViewAndReachBothSnapshots()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(staged(
+            {entry(1, QStringLiteral("reference_gt.obj"), {UuidA}),
+             entry(2, QStringLiteral("candidate.obj"), {UuidB})}));
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        FakeCameraPoseStore store;
+        for (const QString& uid : {UuidA, UuidB}) {
+            store.add(uid, QStringLiteral("view_001"), pose(QStringLiteral("first")),
+                      QStringLiteral("2026-07-15T01:00:00Z"), {QStringLiteral("hole")});
+        }
+        store.add(UuidA, QStringLiteral("view_002"), pose(QStringLiteral("second")),
+                  QStringLiteral("2026-07-15T02:00:00Z"));
+        WorkspaceController controller(state, importer, renderer, comparer, store);
+        QVERIFY(!controller.setCameraPoseNote(QStringLiteral("view_001"), QStringLiteral("blocked")).ok);
+        QVERIFY(importWorkspace(controller).result.ok);
+        const QString cameraBefore = renderer.camera().viewStateXml;
+        const QString note = QString::fromUtf8("  检查边缘\nKeep this angle <detail>  ");
+        QVERIFY(controller.setCameraPoseNote(QStringLiteral("view_001"), note).ok);
+        const CameraPanelSnapshot snapshot = controller.cameraPanelSnapshot();
+        QCOMPARE(snapshot.poses.size(), 2);
+        QCOMPARE(snapshot.poses[0].note, note);
+        QVERIFY(snapshot.poses[1].note.isEmpty());
+        QCOMPARE(snapshot.poses[0].tags, QStringList({QStringLiteral("hole")}));
+        QCOMPARE(snapshot.poses[0].savedAtUtc, QStringLiteral("2026-07-15T01:00:00Z"));
+        QCOMPARE(renderer.camera().viewStateXml, cameraBefore);
+        const CameraScreenshotLibrarySnapshot all = controller.cameraScreenshotLibrarySnapshot();
+        QVERIFY(all.result.ok);
+        QCOMPARE(all.poses.size(), 3);
+        int notes = 0;
+        for (const CameraPoseSummary& saved : all.poses) {
+            if (saved.workspaceUuid == UuidA && saved.viewId == QStringLiteral("view_001")) {
+                QCOMPARE(saved.note, note);
+                ++notes;
+            }
+            else {
+                QVERIFY(saved.note.isEmpty());
+            }
+        }
+        QCOMPARE(notes, 1);
+        store.failNextSetNote(QStringLiteral("write failed"));
+        const OperationResult failed = controller.setCameraPoseNote(
+            QStringLiteral("view_001"), QStringLiteral("replacement"));
+        QVERIFY(!failed.ok);
+        QCOMPARE(failed.error, QStringLiteral("write failed"));
+        QCOMPARE(controller.cameraPanelSnapshot().poses[0].note, note);
+        QVERIFY(!controller.setCameraPoseNote(QString(), note).ok);
+        QVERIFY(!controller.setCameraPoseNote(QStringLiteral("missing"), note).ok);
+        QVERIFY(controller.setCameraPoseNote(QStringLiteral("view_001"), QString()).ok);
+        QVERIFY(controller.cameraPanelSnapshot().poses[0].note.isEmpty());
+    }
+
+    void browserNotesCanEditAnotherWorkspaceWithoutLoadingIt()
+    {
+        WorkspaceState state;
+        FakeMeshImportService importer(staged(
+            {entry(1, QStringLiteral("reference_gt.obj"), {UuidA})}));
+        FakeRendererAdapter renderer;
+        FakeSurfaceComparer comparer;
+        FakeCameraPoseStore store;
+        for (const QString& uid : {UuidA, UuidB})
+            store.add(uid, QStringLiteral("view_001"), pose(uid), QStringLiteral("2026-10-09T09:00:00Z"));
+        WorkspaceController controller(state, importer, renderer, comparer, store);
+        QVERIFY(controller.setCameraPoseNoteForWorkspace(
+            UuidB, QStringLiteral("view_001"), QStringLiteral("before import")).ok);
+        QVERIFY(importWorkspace(controller).result.ok);
+        const QString camera = renderer.camera().viewStateXml;
+        const QString note = QString::fromUtf8("另一模型的备注\n<plain text>");
+        QVERIFY(controller.setCameraPoseNoteForWorkspace(
+            UuidB.toUpper(), QStringLiteral("view_001"), note).ok);
+        const CameraPanelSnapshot current = controller.cameraPanelSnapshot();
+        QCOMPARE(current.workspaceUuid, UuidA);
+        QVERIFY(current.poses[0].note.isEmpty());
+        QCOMPARE(store.list(UuidB)[0].note, note);
+        QCOMPARE(renderer.camera().viewStateXml, camera);
+        QVERIFY(!controller.setCameraPoseNoteForWorkspace({}, QStringLiteral("view_001"), note).ok);
+        QVERIFY(!controller.setCameraPoseNoteForWorkspace(UuidB, {}, note).ok);
+        QVERIFY(!controller.setCameraPoseNoteForWorkspace(UuidB, QStringLiteral("missing"), note).ok);
+        OperationResult nested;
+        store.setListObserver([&] {
+            nested = controller.setCameraPoseNoteForWorkspace(
+                UuidB, QStringLiteral("view_001"), QStringLiteral("should not write"));
+        });
+        QVERIFY(controller.cameraScreenshotLibrarySnapshot().result.ok);
+        QVERIFY(!nested.ok);
+        store.setListObserver({});
+        QCOMPARE(store.list(UuidB)[0].note, note);
     }
 
     void poseTagsAreScopedToTheSelectedUuidPose()

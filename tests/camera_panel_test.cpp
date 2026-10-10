@@ -10,12 +10,14 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPalette>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QWidget>
 
+#include "app/app_theme.h"
 #include "app/camera_commands.h"
 #include "app/camera_panel.h"
 #include "app/tag_editor.h"
@@ -44,13 +46,15 @@ CameraPoseSummary summary(
     const QString& viewId,
     const QString& savedAtUtc,
     const QStringList& tags = {},
-    const QString& screenshotPath = {})
+    const QString& screenshotPath = {},
+    const QString& note = {})
 {
     CameraPoseSummary result;
     result.viewId = viewId;
     result.savedAtUtc = savedAtUtc;
     result.tags = tags;
     result.screenshotPath = screenshotPath;
+    result.note = note;
     return result;
 }
 
@@ -116,6 +120,23 @@ public:
         return saveWithScreenshotResult;
     }
 
+    OperationResult saveCurrentCameraPoseWithNote(
+        QString* savedViewId, const QStringList& tags, const QString& note) override
+    {
+        ++combinedCaptureCalls;
+        lastSaveNote = note;
+        return saveCurrentCameraPose(savedViewId, tags);
+    }
+
+    OperationResult saveCurrentCameraPoseWithScreenshotAndNote(
+        QImage& screenshot, QString* savedViewId,
+        const QStringList& tags, const QString& note) override
+    {
+        ++combinedCaptureCalls;
+        lastSaveNote = note;
+        return saveCurrentCameraPoseWithScreenshot(screenshot, savedViewId, tags);
+    }
+
     OperationResult applyCameraPose(const QString& viewId) override
     {
         if (applyAction)
@@ -124,15 +145,44 @@ public:
         return applyResult;
     }
 
-    OperationResult setCameraPoseTags(
-        const QString& viewId,
-        const QStringList& tags) override
+    OperationResult setCameraPoseTags(const QString&, const QStringList&) override
     {
+        ++legacyDetailsCalls;
+        return setDetailsResult;
+    }
+
+    OperationResult setCameraPoseNote(const QString&, const QString&) override
+    {
+        ++legacyDetailsCalls;
+        return setDetailsResult;
+    }
+
+    OperationResult setCameraPoseNoteForWorkspace(
+        const QString&, const QString&, const QString&) override
+    {
+        ++legacyDetailsCalls;
+        return setDetailsResult;
+    }
+
+    OperationResult setCameraPoseDetailsForWorkspace(
+        const QString& workspaceUuid,
+        const QString& viewId,
+        const QStringList& tags,
+        const QString& note) override
+    {
+        ++detailsCalls;
         taggedViewIds.append(viewId);
         assignedTags.append(tags);
-        if (setTagsAction)
-            setTagsAction();
-        return setTagsResult;
+        notedViewIds.append(viewId);
+        assignedNotes.append(note);
+        notedWorkspaceUids.append(workspaceUuid);
+        workspaceNotedViewIds.append(viewId);
+        workspaceAssignedNotes.append(note);
+        if (!setDetailsResult.ok)
+            return setDetailsResult;
+        if (setDetailsAction)
+            setDetailsAction();
+        return setDetailsResult;
     }
 
     OperationResult deleteCameraPose(const QString& viewId) override
@@ -150,23 +200,32 @@ public:
     OperationResult saveWithScreenshotResult = OperationResult::success();
     OperationResult setUidResult = OperationResult::success();
     OperationResult applyResult = OperationResult::success();
-    OperationResult setTagsResult = OperationResult::success();
+    OperationResult setDetailsResult = OperationResult::success();
     OperationResult deleteResult = OperationResult::success();
     std::function<void()> saveAction;
     std::function<void()> saveWithScreenshotAction;
     std::function<void()> applyAction;
-    std::function<void()> setTagsAction;
+    std::function<void()> setDetailsAction;
     std::function<void()> deleteAction;
     mutable int snapshotCalls = 0;
     mutable int screenshotLibraryCalls = 0;
     int saveCalls = 0;
     int saveWithScreenshotCalls = 0;
     int setUidCalls = 0;
+    int detailsCalls = 0;
+    int legacyDetailsCalls = 0;
+    int combinedCaptureCalls = 0;
     QStringList setUids;
     QStringList applyViewIds;
     QStringList taggedViewIds;
     QVector<QStringList> assignedTags;
+    QStringList notedViewIds;
+    QStringList assignedNotes;
+    QStringList notedWorkspaceUids;
+    QStringList workspaceNotedViewIds;
+    QStringList workspaceAssignedNotes;
     QStringList lastSaveTags;
+    QString lastSaveNote;
     QStringList deleteViewIds;
     QImage screenshotToCopy;
 };
@@ -180,7 +239,9 @@ struct Controls {
     QPushButton* apply = nullptr;
     TagEditor* newPoseTags = nullptr;
     TagEditor* selectedPoseTags = nullptr;
-    QPushButton* updateTags = nullptr;
+    QPushButton* saveChanges = nullptr;
+    QPlainTextEdit* newNote = nullptr;
+    QPlainTextEdit* note = nullptr;
     QPushButton* browseScreenshots = nullptr;
     QPushButton* openJsonFolder = nullptr;
     QPushButton* openScreenshotFolder = nullptr;
@@ -208,8 +269,12 @@ Controls controls(CameraPanel& panel)
         QStringLiteral("newPoseTagEditor"));
     result.selectedPoseTags = panel.findChild<TagEditor*>(
         QStringLiteral("selectedPoseTagEditor"));
-    result.updateTags = panel.findChild<QPushButton*>(
-        QStringLiteral("updateCameraPoseTagsButton"));
+    result.saveChanges = panel.findChild<QPushButton*>(
+        QStringLiteral("saveCameraPoseChangesButton"));
+    result.newNote = panel.findChild<QPlainTextEdit*>(
+        QStringLiteral("newPoseNoteEditor"));
+    result.note = panel.findChild<QPlainTextEdit*>(
+        QStringLiteral("selectedPoseNoteEditor"));
     result.browseScreenshots = panel.findChild<QPushButton*>(
         QStringLiteral("browseCameraScreenshotsButton"));
     result.openJsonFolder = panel.findChild<QPushButton*>(
@@ -278,11 +343,150 @@ private slots:
             QStringLiteral("screenshotBrowser"));
         QVERIFY(browser != nullptr);
         QVERIFY(browser->isVisible());
-        QCOMPARE(browser->windowModality(), Qt::ApplicationModal);
+        QCOMPARE(browser->windowModality(), Qt::NonModal);
         auto* gallery = browser->findChild<QListWidget*>(
             QStringLiteral("screenshotGallery"));
         QVERIFY(gallery != nullptr);
         QCOMPARE(gallery->count(), 2);
+    }
+
+    void applyViewWorksWhileTheScreenshotBrowserIsOpen()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString screenshotPath = directory.filePath(QStringLiteral("view.png"));
+        QImage screenshot(20, 12, QImage::Format_RGB32);
+        screenshot.fill(Qt::green);
+        QVERIFY(screenshot.save(screenshotPath, "PNG"));
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral("workspace-a");
+        commands.snapshot.poses = {summary(QStringLiteral("view_001"), {}, {}, screenshotPath)};
+        commands.snapshot.poses[0].workspaceUuid = commands.snapshot.workspaceUuid;
+        CameraPoseSummary other = commands.snapshot.poses[0];
+        other.workspaceUuid = QStringLiteral("workspace-b");
+        commands.screenshotLibrary.poses = {commands.snapshot.poses[0], other};
+        CameraPanel panel(state, commands);
+        const Controls ui = controls(panel);
+        panel.show();
+        ui.poses->setCurrentRow(0);
+        ui.note->setPlainText(QStringLiteral("Unsaved note stays a draft"));
+        QTest::mouseClick(ui.browseScreenshots, Qt::LeftButton);
+        QApplication::processEvents();
+        auto* browser = panel.findChild<QWidget*>(QStringLiteral("screenshotBrowser"));
+        auto* gallery = panel.findChild<QListWidget*>(QStringLiteral("screenshotGallery"));
+        QVERIFY(browser != nullptr);
+        QVERIFY(gallery != nullptr);
+        QVERIFY(browser->isVisible());
+        QVERIFY(QApplication::activeModalWidget() == nullptr);
+        gallery->setCurrentRow(1);
+        QSignalSpy status(&panel, &CameraPanel::statusMessage);
+        QSignalSpy confirmation(&panel, &CameraPanel::confirmationMessage);
+        commands.applyAction = [&] { panel.refreshFromState(); };
+
+        QTest::mouseClick(ui.apply, Qt::LeftButton);
+
+        QCOMPARE(commands.applyViewIds, QStringList({QStringLiteral("view_001")}));
+        QCOMPARE(status.count(), 0);
+        QCOMPARE(confirmation.count(), 1);
+        QCOMPARE(confirmation.takeFirst().at(0).toString(), QStringLiteral("View view_001 applied."));
+        QVERIFY(commands.notedViewIds.isEmpty());
+        QCOMPARE(ui.note->toPlainText(), QStringLiteral("Unsaved note stays a draft"));
+        QCOMPARE(gallery->count(), 2);
+        QCOMPARE(gallery->currentRow(), 1);
+        QVERIFY(browser->isVisible());
+    }
+
+    void browserNotesSaveToTheirWorkspaceAndStayInSyncWithThePanel()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString screenshotPath = directory.filePath(QStringLiteral("view.png"));
+        QImage screenshot(20, 12, QImage::Format_RGB32);
+        screenshot.fill(Qt::green);
+        QVERIFY(screenshot.save(screenshotPath, "PNG"));
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral("workspace-a");
+        commands.snapshot.poses = {summary(
+            QStringLiteral("view_001"), {}, {}, screenshotPath, QStringLiteral("A saved"))};
+        commands.snapshot.poses[0].workspaceUuid = commands.snapshot.workspaceUuid;
+        CameraPoseSummary other = commands.snapshot.poses[0];
+        other.workspaceUuid = QStringLiteral("workspace-b");
+        other.note = QStringLiteral("B saved");
+        commands.screenshotLibrary.poses = {commands.snapshot.poses[0], other};
+        CameraPanel panel(state, commands);
+        const Controls ui = controls(panel);
+        ui.poses->setCurrentRow(0);
+        ui.note->setPlainText(QStringLiteral("A local draft"));
+        ui.browseScreenshots->click();
+        auto* gallery = panel.findChild<QListWidget*>(QStringLiteral("screenshotGallery"));
+        auto* browserNote = panel.findChild<QPlainTextEdit*>(QStringLiteral("screenshotPreviewNote"));
+        auto* browserSave = panel.findChild<QPushButton*>(QStringLiteral("screenshotSaveChanges"));
+        QVERIFY(gallery != nullptr);
+        QVERIFY(browserNote != nullptr);
+        QVERIFY(browserSave != nullptr);
+        auto* browserTags = panel.findChild<TagEditor*>(QStringLiteral("screenshotPreviewTags"));
+        QVERIFY(browserTags != nullptr);
+        gallery->setCurrentRow(1);
+        QCOMPARE(browserNote->toPlainText(), QStringLiteral("B saved"));
+        browserTags->load({QStringLiteral("from-preview")});
+        browserNote->setPlainText(QStringLiteral("B note from preview"));
+        commands.setDetailsAction = [&] {
+            const QString uid = commands.notedWorkspaceUids.last();
+            const QStringList tags = commands.assignedTags.last();
+            const QString note = commands.assignedNotes.last();
+            for (CameraPoseSummary& pose : commands.screenshotLibrary.poses) {
+                if (pose.workspaceUuid == uid) {
+                    pose.tags = tags;
+                    pose.note = note;
+                }
+            }
+            if (commands.snapshot.workspaceUuid == uid) {
+                commands.snapshot.poses[0].tags = tags;
+                commands.snapshot.poses[0].note = note;
+            }
+            panel.refreshFromState();
+        };
+
+        browserSave->click();
+
+        QCOMPARE(commands.notedWorkspaceUids, QStringList({QStringLiteral("workspace-b")}));
+        QCOMPARE(commands.workspaceNotedViewIds, QStringList({QStringLiteral("view_001")}));
+        QCOMPARE(commands.workspaceAssignedNotes, QStringList({QStringLiteral("B note from preview")}));
+        QCOMPARE(commands.assignedTags.last(), QStringList({QStringLiteral("from-preview")}));
+        QCOMPARE(commands.detailsCalls, 1);
+        QCOMPARE(commands.legacyDetailsCalls, 0);
+        QCOMPARE(commands.snapshot.workspaceUuid, QStringLiteral("workspace-a"));
+        QVERIFY(commands.setUids.isEmpty());
+        QCOMPARE(ui.note->toPlainText(), QStringLiteral("A local draft"));
+        QCOMPARE(gallery->count(), 2);
+        QCOMPARE(gallery->currentRow(), 1);
+        QCOMPARE(browserNote->toPlainText(), QStringLiteral("B note from preview"));
+
+        gallery->setCurrentRow(0);
+        browserNote->setPlainText(QStringLiteral("A note from preview"));
+        browserSave->click();
+        QCOMPARE(ui.note->toPlainText(), QStringLiteral("A local draft"));
+        QCOMPARE(commands.snapshot.poses[0].note, QStringLiteral("A note from preview"));
+        auto* detailsStatus = panel.findChild<QLabel*>(QStringLiteral("cameraViewDetailsStatus"));
+        QVERIFY(detailsStatus != nullptr);
+        QCOMPARE(detailsStatus->text(), QStringLiteral("Unsaved changes"));
+
+        commands.setDetailsAction = [&] {
+            const QString savedNote = commands.assignedNotes.last();
+            commands.snapshot.poses[0].note = savedNote;
+            commands.screenshotLibrary.poses[0].note = savedNote;
+            panel.refreshFromState();
+        };
+        ui.note->setPlainText(QStringLiteral("A note from panel"));
+        ui.saveChanges->click();
+        QCOMPARE(browserNote->toPlainText(), QStringLiteral("A note from panel"));
+        QCOMPARE(gallery->currentRow(), 0);
+        QCOMPARE(gallery->count(), 2);
+        QCOMPARE(ui.poses->currentRow(), 0);
     }
 
     void selectedPoseCanOpenItsScreenshotFolder()
@@ -392,12 +596,12 @@ private slots:
         ui.newPoseTags->load({QStringLiteral("next-shot")});
         ui.poses->setCurrentRow(0);
         ui.selectedPoseTags->load({QStringLiteral("reviewed")});
-        commands.setTagsAction = [&commands] {
+        commands.setDetailsAction = [&commands] {
             commands.snapshot.poses[0].tags =
                 QStringList({QStringLiteral("reviewed")});
         };
 
-        ui.updateTags->click();
+        ui.saveChanges->click();
 
         QCOMPARE(
             ui.newPoseTags->tags(),
@@ -423,7 +627,7 @@ private slots:
         ui.poses->setCurrentRow(0);
         ui.selectedPoseTags->load({QStringLiteral("reviewed")});
 
-        ui.updateTags->click();
+        ui.saveChanges->click();
 
         QCOMPARE(
             commands.assignedTags,
@@ -484,11 +688,11 @@ private slots:
             ui.poses->item(0)->data(Qt::UserRole).toString(),
             QStringLiteral("view_001"));
         QVERIFY(ui.save != nullptr);
-        QCOMPARE(ui.save->text(), QStringLiteral("Save Pose"));
+        QCOMPARE(ui.save->text(), QStringLiteral("Save View"));
         QVERIFY(ui.saveAndCopyScreenshot != nullptr);
         QCOMPARE(
             ui.saveAndCopyScreenshot->text(),
-            QStringLiteral("Save Pose & Copy"));
+            QStringLiteral("Save View && Copy"));
         QCOMPARE(ui.save->width(), ui.saveAndCopyScreenshot->width());
         QVERIFY(ui.openJsonFolder != nullptr);
         QCOMPARE(
@@ -500,7 +704,7 @@ private slots:
             ui.openScreenshotFolder->text(),
             QStringLiteral("Folder"));
         QVERIFY(ui.apply != nullptr);
-        QCOMPARE(ui.apply->text(), QStringLiteral("Apply"));
+        QCOMPARE(ui.apply->text(), QStringLiteral("Apply View"));
         QVERIFY(ui.remove != nullptr);
         QCOMPARE(ui.remove->text(), QStringLiteral("Delete"));
         QVERIFY(ui.save->isEnabled());
@@ -560,7 +764,7 @@ private slots:
         CameraPanel panel(state, commands);
         const Controls ui = controls(panel);
         QVERIFY(ui.selectedPoseTags != nullptr);
-        QVERIFY(ui.updateTags != nullptr);
+        QVERIFY(ui.saveChanges != nullptr);
 
         ui.poses->setCurrentRow(0);
         QCOMPARE(
@@ -568,12 +772,12 @@ private slots:
             QStringList({QStringLiteral("hole"), QStringLiteral("edge")}));
         ui.selectedPoseTags->load(
             {QStringLiteral("inspection"), QStringLiteral("underside")});
-        commands.setTagsAction = [&commands] {
+        commands.setDetailsAction = [&commands] {
             commands.snapshot.poses[0].tags = QStringList{
                 QStringLiteral("inspection"), QStringLiteral("underside")};
         };
 
-        ui.updateTags->click();
+        ui.saveChanges->click();
 
         QCOMPARE(commands.taggedViewIds, QStringList({QStringLiteral("view_001")}));
         QCOMPARE(
@@ -585,6 +789,253 @@ private slots:
             QStringList({QStringLiteral("inspection"), QStringLiteral("underside")}));
         QVERIFY(ui.poses->item(0)->text().contains(QStringLiteral("#inspection")));
         QVERIFY(ui.poses->item(0)->text().contains(QStringLiteral("#underside")));
+    }
+
+    void selectedViewShowsItsNoteAndKeepsDraftsAcrossRefreshes()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral("workspace-a");
+        commands.snapshot.poses = {
+            summary(QStringLiteral("view_001"), {}, {}, {}, QStringLiteral("First note")),
+            summary(QStringLiteral("view_002"), {}, {}, {}, QStringLiteral("Second note"))};
+        CameraPanel panel(state, commands);
+        const Controls ui = controls(panel);
+        QVERIFY(ui.note != nullptr);
+        QVERIFY(ui.saveChanges != nullptr);
+        QVERIFY(!ui.note->isEnabled());
+        QVERIFY(!ui.saveChanges->isEnabled());
+
+        ui.poses->setCurrentRow(0);
+        QCOMPARE(ui.note->toPlainText(), QStringLiteral("First note"));
+        QVERIFY(ui.note->isEnabled());
+        QVERIFY(ui.saveChanges->isEnabled());
+        ui.note->setPlainText(QStringLiteral("Draft for first view"));
+        panel.refreshFromState();
+        QCOMPARE(ui.poses->currentRow(), 0);
+        QCOMPARE(ui.note->toPlainText(), QStringLiteral("Draft for first view"));
+
+        ui.poses->setCurrentRow(1);
+        QCOMPARE(ui.note->toPlainText(), QStringLiteral("Second note"));
+        ui.poses->setCurrentRow(0);
+        QCOMPARE(ui.note->toPlainText(), QStringLiteral("Draft for first view"));
+        QVERIFY(commands.notedViewIds.isEmpty());
+    }
+
+    void combinedFormsFitTheCameraPanelWithTheApplicationTheme()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral("inspection-demo");
+        commands.snapshot.poses = {
+            summary(QStringLiteral("view_001"), QStringLiteral("2026-10-10T08:00:00Z"),
+                    {QStringLiteral("surface"), QStringLiteral("edge")}, {},
+                    QStringLiteral("Small gap along the left edge.\nInspect the underside next.")),
+            summary(QStringLiteral("view_002"), QStringLiteral("2026-10-10T08:01:00Z"))};
+        CameraPanel panel(state, commands);
+        panel.setStyleSheet(meshCompareApplicationStyleSheet());
+        const Controls ui = controls(panel);
+        ui.poses->setCurrentRow(0);
+        panel.show();
+        QApplication::processEvents();
+
+        QVERIFY(ui.saveChanges->isVisible());
+        QVERIFY(ui.newNote->isVisible());
+        QVERIFY(ui.note->isVisible());
+        QVERIFY2(panel.height() <= 860, qPrintable(QStringLiteral("Panel height is %1").arg(panel.height())));
+        const QRect saveBounds(ui.saveChanges->mapTo(&panel, QPoint()), ui.saveChanges->size());
+        QVERIFY(panel.rect().contains(saveBounds));
+        QVERIFY(ui.newNote->height() < ui.note->height());
+        qInfo() << "Combined camera form size:" << panel.size();
+        const QString previewPath = qEnvironmentVariable("MESHCOMPARE_CAMERA_FORM_PREVIEW");
+        if (!previewPath.isEmpty())
+            QVERIFY(panel.grab().save(previewPath, "PNG"));
+    }
+
+    void capturesTagsAndNoteTogetherAndSelectsTheNewView_data()
+    {
+        QTest::addColumn<bool>("copyScreenshot");
+        QTest::newRow("save-view") << false;
+        QTest::newRow("save-view-and-copy") << true;
+    }
+
+    void capturesTagsAndNoteTogetherAndSelectsTheNewView()
+    {
+        QFETCH(bool, copyScreenshot);
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral("workspace-a");
+        commands.snapshot.poses = {summary(QStringLiteral("view_old"), {})};
+        commands.screenshotToCopy = QImage(2, 2, QImage::Format_RGB32);
+        commands.screenshotToCopy.fill(Qt::green);
+        CameraPanelServices services;
+        services.copyImageToClipboard = [](const QImage&) { return true; };
+        CameraPanel panel(state, commands, nullptr, services);
+        panel.show();
+        const Controls ui = controls(panel);
+        QVERIFY(ui.newNote != nullptr);
+        ui.poses->setCurrentRow(0);
+        const QStringList tags{QStringLiteral("inspection"), QStringLiteral("edge")};
+        const QString note = QString::fromUtf8("检查边缘\nSecond line");
+        ui.newPoseTags->load(tags);
+        ui.newNote->setPlainText(note);
+        const QString savedId = copyScreenshot ? QStringLiteral("view_screenshot") : QStringLiteral("view_saved");
+        auto saved = [&] {
+            commands.snapshot.poses.append(summary(savedId, {}, commands.lastSaveTags, {}, commands.lastSaveNote));
+            panel.refreshFromState();
+        };
+        commands.saveAction = saved;
+        commands.saveWithScreenshotAction = saved;
+
+        (copyScreenshot ? ui.saveAndCopyScreenshot : ui.save)->click();
+
+        QCOMPARE(commands.combinedCaptureCalls, 1);
+        QCOMPARE(commands.lastSaveTags, tags);
+        QCOMPARE(commands.lastSaveNote, note);
+        QCOMPARE(commands.detailsCalls, 0);
+        QCOMPARE(ui.poses->currentItem()->data(Qt::UserRole).toString(), savedId);
+        QCOMPARE(ui.selectedPoseTags->tags(), tags);
+        QCOMPARE(ui.note->toPlainText(), note);
+        QCOMPARE(panel.focusWidget(), ui.note);
+        QVERIFY(ui.newNote->toPlainText().isEmpty());
+        QCOMPARE(ui.newPoseTags->tags(), tags);
+        QVERIFY(panel.findChild<QPushButton*>(QStringLiteral("saveCameraPoseNoteButton")) == nullptr);
+        QCOMPARE(ui.saveChanges->text(), QStringLiteral("Save Changes"));
+    }
+
+    void failedCaptureKeepsTheCompleteFormDraft()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral("workspace-a");
+        commands.saveResult = OperationResult::failure(QStringLiteral("Capture failed."));
+        CameraPanel panel(state, commands);
+        const Controls ui = controls(panel);
+        ui.newPoseTags->load({QStringLiteral("review")});
+        ui.newNote->setPlainText(QStringLiteral("Capture note"));
+        ui.save->click();
+        QCOMPARE(commands.combinedCaptureCalls, 1);
+        QCOMPARE(ui.newPoseTags->tags(), QStringList({QStringLiteral("review")}));
+        QCOMPARE(ui.newNote->toPlainText(), QStringLiteral("Capture note"));
+        QCOMPARE(ui.poses->count(), 0);
+    }
+
+    void savesMultilineUnicodeNoteAndCanClearIt()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral("workspace-a");
+        commands.snapshot.poses = {summary(QStringLiteral("view_001"), {})};
+        CameraPanel panel(state, commands);
+        const Controls ui = controls(panel);
+        QSignalSpy status(&panel, &CameraPanel::statusMessage);
+        QSignalSpy confirmation(&panel, &CameraPanel::confirmationMessage);
+        ui.poses->setCurrentRow(0);
+        const QString note = QString::fromUtf8("  检查边缘\nCafé — underside\nSecond line  ");
+        ui.selectedPoseTags->load({QStringLiteral("reviewed")});
+        ui.note->setPlainText(note);
+        commands.setDetailsAction = [&] {
+            commands.snapshot.poses[0].note = commands.assignedNotes.last();
+            commands.snapshot.poses[0].tags = commands.assignedTags.last();
+            panel.refreshFromState();
+        };
+
+        ui.saveChanges->click();
+
+        QCOMPARE(status.count(), 0);
+        QCOMPARE(confirmation.count(), 1);
+        QCOMPARE(confirmation.takeFirst().at(0).toString(), QStringLiteral("Changes saved for view_001."));
+        QCOMPARE(commands.notedViewIds, QStringList({QStringLiteral("view_001")}));
+        QCOMPARE(commands.assignedNotes, QStringList({note}));
+        QCOMPARE(commands.assignedTags, QVector<QStringList>({{QStringLiteral("reviewed")}}));
+        QCOMPARE(commands.detailsCalls, 1);
+        QCOMPARE(commands.legacyDetailsCalls, 0);
+        QCOMPARE(ui.note->toPlainText(), note);
+        QCOMPARE(ui.poses->currentRow(), 0);
+
+        ui.selectedPoseTags->load({});
+        ui.note->clear();
+        ui.saveChanges->click();
+
+        QCOMPARE(status.count(), 0);
+        QCOMPARE(confirmation.count(), 1);
+        QCOMPARE(commands.notedViewIds.size(), 2);
+        QCOMPARE(commands.detailsCalls, 2);
+        QVERIFY(commands.assignedTags.last().isEmpty());
+        QVERIFY(commands.assignedNotes.last().isEmpty());
+        QVERIFY(commands.snapshot.poses[0].note.isEmpty());
+        QVERIFY(ui.note->toPlainText().isEmpty());
+    }
+
+    void failedNoteSaveKeepsTheDraftAndCanBeRetried()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral("workspace-a");
+        commands.snapshot.poses = {
+            summary(QStringLiteral("view_001"), {}, {}, {}, QStringLiteral("Saved note"))};
+        CameraPanel panel(state, commands);
+        const Controls ui = controls(panel);
+        QSignalSpy status(&panel, &CameraPanel::statusMessage);
+        ui.poses->setCurrentRow(0);
+        ui.selectedPoseTags->load({QStringLiteral("draft-tag")});
+        ui.note->setPlainText(QStringLiteral("Unsaved\nDraft"));
+        commands.setDetailsResult = OperationResult::failure(QStringLiteral("Could not save note."));
+        commands.setDetailsAction = [&] { panel.refreshFromState(); };
+
+        ui.saveChanges->click();
+
+        QCOMPARE(status.count(), 1);
+        QCOMPARE(status.takeFirst().at(0).toString(), QStringLiteral("Could not save note."));
+        QCOMPARE(ui.note->toPlainText(), QStringLiteral("Unsaved\nDraft"));
+        QCOMPARE(commands.snapshot.poses[0].note, QStringLiteral("Saved note"));
+        QVERIFY(commands.snapshot.poses[0].tags.isEmpty());
+        panel.refreshFromState();
+        QCOMPARE(ui.selectedPoseTags->tags(), QStringList({QStringLiteral("draft-tag")}));
+        QCOMPARE(ui.note->toPlainText(), QStringLiteral("Unsaved\nDraft"));
+        commands.setDetailsResult = OperationResult::success();
+        ui.saveChanges->click();
+        panel.refreshFromState();
+        QCOMPARE(commands.notedViewIds.size(), 2);
+        // The UI also retains a successful save until a delayed snapshot catches up.
+        QCOMPARE(ui.note->toPlainText(), QStringLiteral("Unsaved\nDraft"));
+    }
+
+    void noteActionsRequireTheSelectedReadyWorkspaceAndDoNotTransferDrafts()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral("workspace-a");
+        commands.snapshot.poses = {
+            summary(QStringLiteral("view_001"), {}, {}, {}, QStringLiteral("Workspace A note"))};
+        CameraPanel panel(state, commands);
+        const Controls ui = controls(panel);
+        ui.poses->setCurrentRow(0);
+        ui.note->setPlainText(QStringLiteral("Workspace A draft"));
+        ui.uidInput->setText(QStringLiteral("workspace-b"));
+        QVERIFY(!ui.note->isEnabled());
+        QVERIFY(!ui.saveChanges->isEnabled());
+        ui.saveChanges->click();
+        QVERIFY(commands.notedViewIds.isEmpty());
+
+        commands.snapshot.workspaceUuid = QStringLiteral("workspace-b");
+        commands.snapshot.poses[0].note = QStringLiteral("Workspace B note");
+        panel.refreshFromState();
+        QVERIFY(ui.note->toPlainText().isEmpty());
+        QVERIFY(!ui.saveChanges->isEnabled());
+        ui.poses->setCurrentRow(0);
+        QCOMPARE(ui.note->toPlainText(), QStringLiteral("Workspace B note"));
+        QVERIFY(state.beginAnalysis().ok);
+        panel.refreshFromState();
+        QVERIFY(!ui.note->isEnabled());
+        QVERIFY(!ui.saveChanges->isEnabled());
     }
 
     void latestTaggedPosePrefillsEvenWhenTheNewestPoseIsUntagged()

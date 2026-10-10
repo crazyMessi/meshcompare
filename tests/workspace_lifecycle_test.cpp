@@ -278,7 +278,7 @@ public:
     void setDiagnostic(DiagnosticFlag, bool) override {}
     RendererDiagnostics diagnostics() const override { return {}; }
 
-    int replacementTeardownCount() const { return replacementTeardownCount_; }
+    int sceneChangeTeardownCount() const { return sceneChangeTeardownCount_; }
     int clearCount() const { return clearCount_; }
     int eventDisconnectCount() const { return eventDisconnectCount_; }
     bool eventsConnected() const { return eventsConnected_; }
@@ -290,14 +290,17 @@ private:
     {
         if (committedProvider_ == nullptr || committedScene_.meshes.isEmpty())
             return false;
-        return committedProvider_->geometry(
-                   committedScene_.meshes.front().resourceId) != nullptr;
+        for (const SceneMesh& mesh : committedScene_.meshes) {
+            if (committedProvider_->geometry(mesh.resourceId) == nullptr)
+                return false;
+        }
+        return true;
     }
 
-    void releaseCommittedScene(bool replacement)
+    void releaseCommittedScene(bool sceneChange)
     {
-        if (replacement) {
-            ++replacementTeardownCount_;
+        if (sceneChange) {
+            ++sceneChangeTeardownCount_;
         }
         recorder_.append(ViewportsDestroy);
         recorder_.recordViewportProviderLiveness(committedResourceIsLive());
@@ -316,7 +319,7 @@ private:
     CameraPose camera_;
     MeshId selectedMeshId_ = 0;
     MeshId referenceMeshId_ = 0;
-    int replacementTeardownCount_ = 0;
+    int sceneChangeTeardownCount_ = 0;
     int clearCount_ = 0;
     int eventDisconnectCount_ = 0;
     bool eventsConnected_ = false;
@@ -352,9 +355,9 @@ class WorkspaceLifecycleTest final : public QObject
     Q_OBJECT
 
 private slots:
-    void twentyFivePausedAnalysisReplacementsUseSafeReleaseOrder()
+    void twentyFivePausedAnalysisAppendsRetainResourcesUntilShutdown()
     {
-        constexpr int ReplacementCount = 25;
+        constexpr int AppendCount = 25;
         WorkspaceState state;
         LifecycleImportService importer;
         LifecycleRecorder recorder;
@@ -371,67 +374,79 @@ private slots:
         QCOMPARE(state.phase(), WorkspacePhase::Ready);
         QCOMPARE(state.generation(), quint64(1));
         QVERIFY(!importer.repositoryReleased(1));
+        const MeshId initialReference = state.referenceId();
+        const MeshId initialSelection = state.selectedMeshId();
 
         importer.setBeforeStage([&](int stageCall) {
             // The initial import was stage 1. Every later stage must begin only
             // after the preceding paused analysis worker has returned.
             QCOMPARE(comparer.returnedCount(), stageCall - 1);
-            QVERIFY(!importer.repositoryReleased(stageCall - 1));
+            for (int serial = 1; serial < stageCall; ++serial)
+                QVERIFY(!importer.repositoryReleased(serial));
             recorder.append(AnalysisJoin);
         });
 
         const SurfaceComparisonOptions options = lifecycleAnalysisOptions();
-        for (int replacement = 0; replacement < ReplacementCount; ++replacement) {
+        for (int append = 0; append < AppendCount; ++append) {
             comparer.enqueueSuccess(0.9);
             comparer.pauseNextComparison();
             const OperationResult started = controller->startAnalysis(
                 SurfaceComparisonMetric::PrecisionAtThreshold, options);
             QVERIFY2(started.ok, qPrintable(started.error));
             QVERIFY2(
-                comparer.waitUntilEntered(replacement + 1),
-                "The analysis worker did not enter before replacement.");
+                comparer.waitUntilEntered(append + 1),
+                "The analysis worker did not enter before the next import.");
 
             recorder.beginCycle(
-                QStringLiteral("replacement-%1").arg(replacement + 1));
+                QStringLiteral("append-%1").arg(append + 1));
             const WorkspaceImportOutcome outcome = controller->importMeshes(
-                {QStringLiteral("replacement-gt.obj"),
-                 QStringLiteral("replacement-candidate.obj")});
+                {QStringLiteral("added-gt.obj"),
+                 QStringLiteral("added-candidate.obj")});
             QVERIFY2(outcome.result.ok, qPrintable(outcome.result.error));
-            QVERIFY(importer.repositoryReleased(replacement + 1));
-            recorder.recordRepositoryReleaseBoundary();
+            for (int serial = 1; serial <= importer.stageCount(); ++serial)
+                QVERIFY(!importer.repositoryReleased(serial));
 
-            QCOMPARE(comparer.returnedCount(), replacement + 1);
+            QCOMPARE(comparer.returnedCount(), append + 1);
             QCOMPARE(state.phase(), WorkspacePhase::Ready);
-            QCOMPARE(state.generation(), quint64(replacement + 2));
-            QCOMPARE(renderer.referenceMeshId(), state.referenceId());
-            QCOMPARE(renderer.selectedMeshId(), state.selectedMeshId());
+            QCOMPARE(state.generation(), quint64(append + 2));
+            QCOMPARE(state.meshes().size(), 2 * (append + 2));
+            int visibleCount = 0;
+            for (const MeshEntry& mesh : state.meshes())
+                visibleCount += mesh.visible ? 1 : 0;
+            QCOMPARE(visibleCount,
+                     qMin(state.meshes().size(), meshcompare::MaxVisibleMeshLayers));
+            QCOMPARE(state.referenceId(), initialReference);
+            QCOMPARE(state.selectedMeshId(), initialSelection);
+            QCOMPARE(renderer.referenceMeshId(), initialReference);
+            QCOMPARE(renderer.selectedMeshId(), initialSelection);
         }
 
+        QCOMPARE(state.meshes().size(), 52);
         recorder.beginCycle(QStringLiteral("idle-shutdown-after-stress"));
         controller.reset();
-        QVERIFY(importer.repositoryReleased(importer.stageCount()));
+        for (int serial = 1; serial <= importer.stageCount(); ++serial)
+            QVERIFY(importer.repositoryReleased(serial));
         recorder.recordRepositoryReleaseBoundary();
 
-        QCOMPARE(importer.stageCount(), ReplacementCount + 1);
-        QCOMPARE(comparer.callCount(), ReplacementCount);
-        QCOMPARE(comparer.returnedCount(), ReplacementCount);
-        QCOMPARE(renderer.replacementTeardownCount(), ReplacementCount);
+        QCOMPARE(importer.stageCount(), AppendCount + 1);
+        QCOMPARE(comparer.callCount(), AppendCount);
+        QCOMPARE(comparer.returnedCount(), AppendCount);
+        QCOMPARE(renderer.sceneChangeTeardownCount(), AppendCount);
         QCOMPARE(
             renderer.eventDisconnectCount(),
-            ReplacementCount + 1);
+            AppendCount + 1);
         QCOMPARE(renderer.clearCount(), 1);
         QVERIFY(!renderer.eventsConnected());
 
         const QVector<LifecycleCycle>& cycles = recorder.cycles();
-        QCOMPARE(cycles.size(), ReplacementCount + 1);
-        const QStringList replacementOrder = {
+        QCOMPARE(cycles.size(), AppendCount + 1);
+        const QStringList appendOrder = {
             AnalysisJoin,
             CallbacksDisconnect,
             ViewportsDestroy,
-            GpuRelease,
-            RepositoryRelease};
-        for (int index = 0; index < ReplacementCount; ++index)
-            verifyCycle(cycles.at(index), replacementOrder);
+            GpuRelease};
+        for (int index = 0; index < AppendCount; ++index)
+            verifyCycle(cycles.at(index), appendOrder);
         verifyCycle(
             cycles.back(),
             {CallbacksDisconnect,
@@ -469,7 +484,7 @@ private slots:
              ViewportsDestroy,
              GpuRelease,
              RepositoryRelease});
-        QCOMPARE(renderer.replacementTeardownCount(), 0);
+        QCOMPARE(renderer.sceneChangeTeardownCount(), 0);
         QCOMPARE(renderer.eventDisconnectCount(), 1);
         QCOMPARE(renderer.clearCount(), 1);
         QVERIFY(!renderer.eventsConnected());

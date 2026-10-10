@@ -60,8 +60,8 @@ StagedWorkspace MeshImportService::stage(const QStringList& paths)
                 nullptr,
                 {},
                 errors};
-    if (entries.isEmpty() || entries.size() > 8)
-        return {OperationResult::failure(QStringLiteral("Import must produce between 1 and 8 mesh layers.")),
+    if (entries.isEmpty())
+        return {OperationResult::failure(QStringLiteral("Import must produce at least one mesh layer.")),
                 nullptr,
                 {},
                 {}};
@@ -82,6 +82,9 @@ StagedWorkspace MeshImportService::stage(const QStringList& paths)
                     {},
                     {}};
     }
+
+    for (int index = 0; index < entries.size(); ++index)
+        entries[index].visible = index < meshcompare::MaxVisibleMeshLayers;
 
     return {OperationResult::success(),
             std::move(repository),

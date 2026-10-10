@@ -374,8 +374,7 @@ OperationResult MeshLabRendererAdapter::prepareScene(
         }
         QVector<MeshColorPresentationUpdate> presentations;
         for (const SceneMesh& mesh : scene.meshes) {
-            if (mesh.presentation.mode != ColorMode::Default)
-                presentations.append({mesh.id, mesh.presentation});
+            presentations.append({mesh.id, mesh.presentation});
         }
         if (!presentations.isEmpty()) {
             result = candidate->setColorPresentations(presentations);
