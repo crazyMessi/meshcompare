@@ -4,6 +4,7 @@
 
 #include <QApplication>
 #include <QCompleter>
+#include <QDialog>
 #include <QFrame>
 #include <QImage>
 #include <QLabel>
@@ -20,6 +21,7 @@
 #include "app/app_theme.h"
 #include "app/camera_commands.h"
 #include "app/camera_panel.h"
+#include "app/camera_sync_commands.h"
 #include "app/tag_editor.h"
 #include "core/workspace_state.h"
 
@@ -230,6 +232,83 @@ public:
     QImage screenshotToCopy;
 };
 
+class RecordingCameraSyncCommands final : public ICameraSyncCommands
+{
+public:
+    using ICameraSyncCommands::ICameraSyncCommands;
+
+    CameraSyncSnapshot cameraSyncSnapshot() const override
+    {
+        ++snapshotCalls;
+        return snapshot;
+    }
+
+    OperationResult configureApiKey(const QString& apiKey) override
+    {
+        ++configureCalls;
+        configuredKeys.append(apiKey);
+        if (!configureResult.ok)
+            return configureResult;
+        snapshot.configured = true;
+        snapshot.credentialStored = true;
+        snapshot.statusMessage = QStringLiteral("API key saved.");
+        emit cameraSyncStateChanged();
+        return configureResult;
+    }
+
+    OperationResult clearApiKey() override
+    {
+        ++clearCalls;
+        if (!clearResult.ok)
+            return clearResult;
+        snapshot.configured = false;
+        snapshot.credentialStored = false;
+        snapshot.syncing = false;
+        snapshot.statusMessage.clear();
+        emit cameraSyncStateChanged();
+        return clearResult;
+    }
+
+    OperationResult startCameraSync(const QString& boardKey) override
+    {
+        ++syncCalls;
+        syncedBoardKeys.append(boardKey);
+        if (!syncResult.ok)
+            return syncResult;
+        snapshot.syncing = true;
+        snapshot.boardKey = boardKey;
+        snapshot.statusMessage = QStringLiteral("Uploading saved views…");
+        emit cameraSyncStateChanged();
+        return syncResult;
+    }
+
+    void completeSync(
+        bool succeeded,
+        const QString& message,
+        const QString& completedAtUtc)
+    {
+        snapshot.syncing = false;
+        snapshot.lastSyncSucceeded = succeeded;
+        snapshot.lastSyncAtUtc = completedAtUtc;
+        snapshot.statusMessage = message;
+        snapshot.result = succeeded
+            ? OperationResult::success()
+            : OperationResult::failure(message);
+        emit cameraSyncCompleted();
+    }
+
+    CameraSyncSnapshot snapshot;
+    OperationResult configureResult = OperationResult::success();
+    OperationResult clearResult = OperationResult::success();
+    OperationResult syncResult = OperationResult::success();
+    mutable int snapshotCalls = 0;
+    int configureCalls = 0;
+    int clearCalls = 0;
+    int syncCalls = 0;
+    QStringList configuredKeys;
+    QStringList syncedBoardKeys;
+};
+
 struct Controls {
     QLabel* uuid = nullptr;
     QLineEdit* uidInput = nullptr;
@@ -248,6 +327,8 @@ struct Controls {
     QPushButton* remove = nullptr;
     QFrame* selectionSection = nullptr;
     QLabel* emptyState = nullptr;
+    QLabel* cloudSummary = nullptr;
+    QPushButton* cloudSync = nullptr;
 };
 
 Controls controls(CameraPanel& panel)
@@ -287,6 +368,10 @@ Controls controls(CameraPanel& panel)
         QStringLiteral("cameraSelectionSection"));
     result.emptyState = panel.findChild<QLabel*>(
         QStringLiteral("cameraEmptyStateLabel"));
+    result.cloudSummary = panel.findChild<QLabel*>(
+        QStringLiteral("cameraCloudSyncSummary"));
+    result.cloudSync = panel.findChild<QPushButton*>(
+        QStringLiteral("cameraCloudSyncButton"));
     return result;
 }
 } // namespace
@@ -300,6 +385,236 @@ private slots:
     {
         QSettings settings;
         settings.remove(QStringLiteral("camera/lastCaptureTags"));
+    }
+
+    void cloudSyncDialogMasksAndStoresTheApiKey()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral("workspace-a");
+        RecordingCameraSyncCommands syncCommands;
+        CameraPanel panel(
+            state,
+            commands,
+            nullptr,
+            CameraPanelServices{},
+            &syncCommands);
+        const Controls ui = controls(panel);
+
+        QVERIFY(ui.cloudSummary != nullptr);
+        QCOMPARE(ui.cloudSummary->text(), QStringLiteral("Cloud · Not configured"));
+        QVERIFY(ui.cloudSync != nullptr);
+        QVERIFY(ui.cloudSync->isEnabled());
+        QTest::mouseClick(ui.cloudSync, Qt::LeftButton);
+
+        auto* dialog = panel.findChild<QDialog*>(
+            QStringLiteral("cameraCloudSyncDialog"));
+        auto* apiKey = panel.findChild<QLineEdit*>(
+            QStringLiteral("cameraCloudApiKeyInput"));
+        auto* boardKey = panel.findChild<QLineEdit*>(
+            QStringLiteral("cameraCloudBoardKeyInput"));
+        auto* saveKey = panel.findChild<QPushButton*>(
+            QStringLiteral("cameraCloudSaveKeyButton"));
+        auto* keyStatus = panel.findChild<QLabel*>(
+            QStringLiteral("cameraCloudKeyStatus"));
+        QVERIFY(dialog != nullptr);
+        QVERIFY(dialog->isVisible());
+        QCOMPARE(dialog->windowModality(), Qt::NonModal);
+        QVERIFY(apiKey != nullptr);
+        QCOMPARE(apiKey->echoMode(), QLineEdit::Password);
+        QVERIFY(apiKey->text().isEmpty());
+        QCOMPARE(boardKey->text(), QStringLiteral("meshcompare-camera-views"));
+        QVERIFY(!saveKey->isEnabled());
+
+        const QString secret = QStringLiteral("cb_test-secret-value");
+        apiKey->setText(secret);
+        QVERIFY(saveKey->isEnabled());
+        QTest::mouseClick(saveKey, Qt::LeftButton);
+
+        QCOMPARE(syncCommands.configureCalls, 1);
+        QCOMPARE(syncCommands.configuredKeys, QStringList{secret});
+        QVERIFY(apiKey->text().isEmpty());
+        QCOMPARE(keyStatus->text(), QStringLiteral("API key: Saved"));
+        const QList<QLabel*> labels = panel.findChildren<QLabel*>();
+        for (QLabel* label : labels)
+            QVERIFY2(!label->text().contains(secret), qPrintable(label->text()));
+    }
+
+    void cloudSyncTracksProgressCompletionAndClearState()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral("workspace-a");
+        RecordingCameraSyncCommands syncCommands;
+        syncCommands.snapshot.configured = true;
+        CameraPanel panel(
+            state,
+            commands,
+            nullptr,
+            CameraPanelServices{},
+            &syncCommands);
+        const Controls ui = controls(panel);
+        QSignalSpy confirmations(
+            &panel, &CameraPanel::confirmationMessage);
+        QTest::mouseClick(ui.cloudSync, Qt::LeftButton);
+
+        auto* boardKey = panel.findChild<QLineEdit*>(
+            QStringLiteral("cameraCloudBoardKeyInput"));
+        auto* syncNow = panel.findChild<QPushButton*>(
+            QStringLiteral("cameraCloudSyncNowButton"));
+        auto* saveKey = panel.findChild<QPushButton*>(
+            QStringLiteral("cameraCloudSaveKeyButton"));
+        auto* clearKey = panel.findChild<QPushButton*>(
+            QStringLiteral("cameraCloudClearKeyButton"));
+        auto* status = panel.findChild<QLabel*>(
+            QStringLiteral("cameraCloudSyncStatus"));
+        auto* lastSync = panel.findChild<QLabel*>(
+            QStringLiteral("cameraCloudLastSync"));
+        QVERIFY(boardKey != nullptr);
+        QVERIFY(syncNow != nullptr);
+        QVERIFY(syncNow->isEnabled());
+        QVERIFY(clearKey->isEnabled());
+        QCOMPARE(lastSync->text(), QStringLiteral("Last sync: Never"));
+
+        QTest::mouseClick(syncNow, Qt::LeftButton);
+        QCOMPARE(syncCommands.syncCalls, 1);
+        QCOMPARE(
+            syncCommands.syncedBoardKeys,
+            QStringList{QStringLiteral("meshcompare-camera-views")});
+        QVERIFY(!syncNow->isEnabled());
+        QVERIFY(!saveKey->isEnabled());
+        QVERIFY(!clearKey->isEnabled());
+        QVERIFY(!boardKey->isEnabled());
+        QCOMPARE(ui.cloudSummary->text(), QStringLiteral("Cloud · Syncing…"));
+        QCOMPARE(status->text(), QStringLiteral("Uploading saved views…"));
+
+        syncCommands.completeSync(
+            true,
+            QStringLiteral("Uploaded 15 screenshots."),
+            QStringLiteral("2026-10-10T08:00:00Z"));
+        QVERIFY(syncNow->isEnabled());
+        QVERIFY(clearKey->isEnabled());
+        QVERIFY(boardKey->isEnabled());
+        QVERIFY(ui.cloudSummary->text().startsWith(QStringLiteral("Cloud · Synced ")));
+        QVERIFY(lastSync->text().contains(QStringLiteral("Succeeded")));
+        QCOMPARE(status->text(), QStringLiteral("Uploaded 15 screenshots."));
+        QCOMPARE(confirmations.count(), 1);
+
+        QTest::mouseClick(clearKey, Qt::LeftButton);
+        QCOMPARE(syncCommands.clearCalls, 1);
+        QVERIFY(!syncNow->isEnabled());
+        QCOMPARE(ui.cloudSummary->text(), QStringLiteral("Cloud · Not configured"));
+    }
+
+    void cloudSyncCanClearAnInvalidStoredCredential()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral("workspace-a");
+        RecordingCameraSyncCommands syncCommands;
+        syncCommands.snapshot.credentialStored = true;
+        syncCommands.snapshot.result = OperationResult::failure(
+            QStringLiteral("The saved Cloud Board API key is invalid."));
+        CameraPanel panel(
+            state,
+            commands,
+            nullptr,
+            CameraPanelServices{},
+            &syncCommands);
+        const Controls ui = controls(panel);
+        QTest::mouseClick(ui.cloudSync, Qt::LeftButton);
+
+        auto* clearKey = panel.findChild<QPushButton*>(
+            QStringLiteral("cameraCloudClearKeyButton"));
+        QVERIFY(clearKey != nullptr);
+        QVERIFY(clearKey->isEnabled());
+        QTest::mouseClick(clearKey, Qt::LeftButton);
+        QCOMPARE(syncCommands.clearCalls, 1);
+        QVERIFY(!syncCommands.snapshot.credentialStored);
+    }
+
+    void cloudSyncKeepsFailuresVisibleWithoutExposingTheKey()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral("workspace-a");
+        RecordingCameraSyncCommands syncCommands;
+        syncCommands.configureResult = OperationResult::failure(
+            QStringLiteral("The API key was rejected."));
+        CameraPanel panel(
+            state,
+            commands,
+            nullptr,
+            CameraPanelServices{},
+            &syncCommands);
+        const Controls ui = controls(panel);
+        QSignalSpy failures(&panel, &CameraPanel::statusMessage);
+        QTest::mouseClick(ui.cloudSync, Qt::LeftButton);
+
+        auto* apiKey = panel.findChild<QLineEdit*>(
+            QStringLiteral("cameraCloudApiKeyInput"));
+        auto* saveKey = panel.findChild<QPushButton*>(
+            QStringLiteral("cameraCloudSaveKeyButton"));
+        auto* status = panel.findChild<QLabel*>(
+            QStringLiteral("cameraCloudSyncStatus"));
+        const QString secret = QStringLiteral("cb_never-display-this");
+        apiKey->setText(secret);
+        QTest::mouseClick(saveKey, Qt::LeftButton);
+
+        QCOMPARE(failures.count(), 1);
+        QVERIFY(status->text().contains(QStringLiteral("rejected")));
+        QCOMPARE(apiKey->echoMode(), QLineEdit::Password);
+        const QList<QLabel*> labels = panel.findChildren<QLabel*>();
+        for (QLabel* label : labels)
+            QVERIFY2(!label->text().contains(secret), qPrintable(label->text()));
+    }
+
+    void cloudSyncFailureLeavesRetryAndCredentialControlsAvailable()
+    {
+        WorkspaceState state;
+        makeReady(state);
+        RecordingCameraCommands commands;
+        commands.snapshot.workspaceUuid = QStringLiteral("workspace-a");
+        RecordingCameraSyncCommands syncCommands;
+        syncCommands.snapshot.configured = true;
+        CameraPanel panel(
+            state,
+            commands,
+            nullptr,
+            CameraPanelServices{},
+            &syncCommands);
+        const Controls ui = controls(panel);
+        QTest::mouseClick(ui.cloudSync, Qt::LeftButton);
+
+        auto* apiKey = panel.findChild<QLineEdit*>(
+            QStringLiteral("cameraCloudApiKeyInput"));
+        auto* boardKey = panel.findChild<QLineEdit*>(
+            QStringLiteral("cameraCloudBoardKeyInput"));
+        auto* syncNow = panel.findChild<QPushButton*>(
+            QStringLiteral("cameraCloudSyncNowButton"));
+        auto* clearKey = panel.findChild<QPushButton*>(
+            QStringLiteral("cameraCloudClearKeyButton"));
+        QVERIFY(apiKey != nullptr);
+        QVERIFY(boardKey != nullptr);
+        QVERIFY(syncNow != nullptr);
+        QVERIFY(clearKey != nullptr);
+
+        QTest::mouseClick(syncNow, Qt::LeftButton);
+        syncCommands.completeSync(
+            false,
+            QStringLiteral("Network unavailable."),
+            QString());
+
+        QCOMPARE(ui.cloudSummary->text(), QStringLiteral("Cloud · Needs attention"));
+        QVERIFY(ui.cloudSync->isEnabled());
+        QVERIFY(apiKey->isEnabled());
+        QVERIFY(boardKey->isEnabled());
+        QVERIFY(syncNow->isEnabled());
+        QVERIFY(clearKey->isEnabled());
     }
 
     void opensScreenshotBrowserForAllLocalWorkspaces()

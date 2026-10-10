@@ -209,6 +209,8 @@ private slots:
 	void readsSingleObjectAndPreservesOpaqueXml();
 	void listIsUuidScopedAndSortedByTimestampThenViewId();
 	void operationOutputsAreAlwaysOverwrittenOnlyAsDocumented();
+	void synchronizedSnapshotReplacesMetadataAfterCopyingScreenshots();
+	void failedSynchronizedSnapshotLeavesCurrentLibraryUntouched();
 	void savePreservesFieldsAndAllocatesMonotonicIds();
 	void saveAllocatesIdsBeyondMachineIntegerRange();
 	void saveWritesUtcMillisecondTimestampAndExactUnicodeXml();
@@ -1811,6 +1813,82 @@ void CameraPoseStoreTest::migrationValidatesCopiedBytesBeforePublishing()
 #else
 	QSKIP("This staged-copy harness requires a POSIX FIFO.");
 #endif
+}
+
+void CameraPoseStoreTest::synchronizedSnapshotReplacesMetadataAfterCopyingScreenshots()
+{
+	QTemporaryDir dir;
+	QVERIFY(dir.isValid());
+	const QString library = dir.filePath(QStringLiteral("poses.json"));
+	CameraPoseStore store(library, QString());
+	QString oldScreenshot;
+	QVERIFY(savePose(store, UuidA, pose(QStringLiteral("<old/>")), nullptr,
+		{QStringLiteral("old")}, &oldScreenshot).ok);
+	QJsonObject root = readRoot(library);
+	root.insert(QStringLiteral("opaque_root_field"), QStringLiteral("preserved"));
+	QVERIFY(writeBytes(library, QJsonDocument(root).toJson(QJsonDocument::Indented)));
+
+	const QString firstSource = dir.filePath(QStringLiteral("first.png"));
+	const QString secondSource = dir.filePath(QStringLiteral("second.png"));
+	QImage first(5, 4, QImage::Format_RGB32);
+	first.fill(QColor(11, 22, 33));
+	QImage second(6, 3, QImage::Format_RGB32);
+	second.fill(QColor(44, 55, 66));
+	QVERIFY(first.save(firstSource, "PNG"));
+	QVERIFY(second.save(secondSource, "PNG"));
+	const QVector<SavedCameraPose> synchronized = {
+		{UuidA, QStringLiteral("remote_001"),
+		 QStringLiteral("2026-10-10T01:02:03.004Z"),
+		 {QStringLiteral("cloud"), QStringLiteral("inspection")},
+		 firstSource, pose(QStringLiteral("<remote-one/>")),
+		 QString::fromUtf8("云端备注\nline two")},
+		{UuidB, QStringLiteral("remote_002"),
+		 QStringLiteral("2026-10-10T02:03:04.005Z"), {},
+		 secondSource, pose(QStringLiteral("<remote-two/>")), {}}};
+
+	const OperationResult replaced = store.replaceAllForSync(synchronized);
+	QVERIFY2(replaced.ok, qPrintable(replaced.error));
+	const QVector<SavedCameraPose> listed = store.listAll();
+	QCOMPARE(listed.size(), 2);
+	QCOMPARE(listed.at(0).viewId, QStringLiteral("remote_001"));
+	QCOMPARE(listed.at(0).tags,
+		QStringList({QStringLiteral("cloud"), QStringLiteral("inspection")}));
+	QCOMPARE(listed.at(0).note, QString::fromUtf8("云端备注\nline two"));
+	QCOMPARE(listed.at(0).pose.viewStateXml, QStringLiteral("<remote-one/>"));
+	QVERIFY(QFileInfo(listed.at(0).screenshotPath).isFile());
+	QVERIFY(listed.at(0).screenshotPath != firstSource);
+	QCOMPARE(QImage(listed.at(0).screenshotPath), first);
+	QCOMPARE(QImage(listed.at(1).screenshotPath), second);
+	QCOMPARE(readBytes(listed.at(0).screenshotPath), readBytes(firstSource));
+	QCOMPARE(readBytes(listed.at(1).screenshotPath), readBytes(secondSource));
+	QCOMPARE(
+		readRoot(library).value(QStringLiteral("opaque_root_field")).toString(),
+		QStringLiteral("preserved"));
+	QVERIFY(QFileInfo(firstSource).isFile());
+	QVERIFY(QFileInfo(secondSource).isFile());
+	QVERIFY(!QFileInfo(oldScreenshot).exists());
+}
+
+void CameraPoseStoreTest::failedSynchronizedSnapshotLeavesCurrentLibraryUntouched()
+{
+	QTemporaryDir dir;
+	QVERIFY(dir.isValid());
+	const QString library = dir.filePath(QStringLiteral("poses.json"));
+	CameraPoseStore store(library, QString());
+	QVERIFY(savePose(store, UuidA, pose(QStringLiteral("<old/>"))).ok);
+	const QByteArray before = readBytes(library);
+	const QVector<SavedCameraPose> invalid = {
+		{UuidB, QStringLiteral("view_001"),
+		 QStringLiteral("2026-10-10T01:02:03.004Z"), {},
+		 dir.filePath(QStringLiteral("missing.png")),
+		 pose(QStringLiteral("<new/>")), QStringLiteral("note")}};
+	const OperationResult replaced = store.replaceAllForSync(invalid);
+	QVERIFY(!replaced.ok);
+	QCOMPARE(readBytes(library), before);
+	const QVector<SavedCameraPose> listed = store.listAll();
+	QCOMPARE(listed.size(), 1);
+	QCOMPARE(listed.front().uuid, UuidA);
+	QCOMPARE(listed.front().pose.viewStateXml, QStringLiteral("<old/>"));
 }
 
 void CameraPoseStoreTest::migrationTreatsDanglingDestinationSymlinkAsExisting()

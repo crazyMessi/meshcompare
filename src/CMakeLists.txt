@@ -27,6 +27,38 @@ target_link_libraries(meshcompare-camera-pose-store
 	PUBLIC meshcompare-core
 	PRIVATE Qt5::Core Qt5::Gui Qt5::Xml)
 
+add_library(meshcompare-cloud-board STATIC
+	services/cloud_api_key_store.cpp
+	services/cloud_api_key_store.h
+	services/cloud_board_client.cpp
+	services/cloud_board_client.h)
+target_include_directories(meshcompare-cloud-board PUBLIC ${MESHCOMPARE_SOURCE_ROOT})
+target_link_libraries(meshcompare-cloud-board
+	PUBLIC meshcompare-core Qt5::Network)
+if(APPLE)
+	find_library(MESHCOMPARE_SECURITY_FRAMEWORK Security REQUIRED)
+	find_library(MESHCOMPARE_CORE_FOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
+	target_link_libraries(meshcompare-cloud-board
+		PRIVATE
+			${MESHCOMPARE_SECURITY_FRAMEWORK}
+			${MESHCOMPARE_CORE_FOUNDATION_FRAMEWORK})
+endif()
+
+add_library(meshcompare-camera-sync STATIC
+	app/camera_sync_commands.h
+	services/camera_cloud_sync_service.cpp
+	services/camera_cloud_sync_service.h
+	services/camera_pose_sync.cpp
+	services/camera_pose_sync.h
+	services/camera_sync_state.cpp
+	services/camera_sync_state.h)
+target_include_directories(meshcompare-camera-sync PUBLIC ${MESHCOMPARE_SOURCE_ROOT})
+target_link_libraries(meshcompare-camera-sync
+	PUBLIC
+		meshcompare-core
+		meshcompare-camera-pose-store
+		meshcompare-cloud-board)
+
 add_library(meshcompare-analysis STATIC
 	services/surface_comparison.cpp
 	services/surface_comparison.h)
@@ -115,6 +147,7 @@ target_link_libraries(meshcompare-ui
 	PUBLIC
 		meshcompare-core
 		meshcompare-camera-pose-store
+		meshcompare-camera-sync
 		meshcompare-color-service
 		meshcompare-controllable-hole-filling
 		meshcompare-python-hole-filling
@@ -168,6 +201,7 @@ target_compile_definitions(meshcompare
 	PRIVATE MESHCOMPARE_VERSION="${PROJECT_VERSION}")
 target_link_libraries(meshcompare PRIVATE
 	meshcompare-ui
+	meshcompare-camera-sync
 	meshcompare-core
 	meshcompare-analysis
 	meshcompare-startup-command-line
@@ -243,6 +277,20 @@ if(BUILD_TESTING)
 		PRIVATE meshcompare-grid-render)
 	add_meshcompare_test(meshcompare-camera-pose-store-test camera_pose_store_test.cpp)
 	target_link_libraries(meshcompare-camera-pose-store-test PRIVATE meshcompare-camera-pose-store)
+	add_meshcompare_test(meshcompare-cloud-board-client-test cloud_board_client_test.cpp)
+	target_link_libraries(meshcompare-cloud-board-client-test PRIVATE meshcompare-cloud-board)
+	add_meshcompare_test(meshcompare-cloud-api-key-store-test cloud_api_key_store_test.cpp)
+	target_link_libraries(meshcompare-cloud-api-key-store-test PRIVATE meshcompare-cloud-board)
+	add_meshcompare_test(meshcompare-camera-pose-sync-test camera_pose_sync_test.cpp)
+	target_link_libraries(meshcompare-camera-pose-sync-test PRIVATE meshcompare-camera-sync)
+	add_meshcompare_test(meshcompare-camera-sync-state-test camera_sync_state_test.cpp)
+	target_link_libraries(meshcompare-camera-sync-state-test PRIVATE meshcompare-camera-sync)
+	add_meshcompare_test(
+		meshcompare-camera-cloud-sync-service-test
+		camera_cloud_sync_service_test.cpp)
+	target_link_libraries(
+		meshcompare-camera-cloud-sync-service-test
+		PRIVATE meshcompare-camera-sync)
 	add_meshcompare_test(meshcompare-renderer-adapter-contract-test renderer_adapter_contract_test.cpp)
 	add_meshcompare_test(meshcompare-workspace-state-test workspace_state_test.cpp)
 	add_meshcompare_test(meshcompare-surface-comparison-test surface_comparison_test.cpp)

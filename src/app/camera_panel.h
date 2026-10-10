@@ -12,6 +12,8 @@
 #include "camera_commands.h"
 
 class ICameraCommands;
+class ICameraSyncCommands;
+class QDialog;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -40,7 +42,8 @@ public:
         WorkspaceState& state,
         ICameraCommands& commands,
         QWidget* parent = nullptr,
-        CameraPanelServices services = {});
+        CameraPanelServices services = {},
+        ICameraSyncCommands* syncCommands = nullptr);
 
     void refreshFromState();
 
@@ -68,6 +71,11 @@ private:
     void openScreenshotBrowser();
     void openCameraPoseLibraryFolder();
     void openSelectedScreenshotFolder();
+    void openCloudSyncDialog();
+    void refreshCloudSyncUi();
+    void saveCloudApiKey();
+    void clearCloudApiKey();
+    void startCloudSync();
     void deleteSelectedPose();
     void updateActionState();
     void reportFailure(const OperationResult& result);
@@ -75,6 +83,7 @@ private:
     WorkspaceState& state_;
     ICameraCommands& commands_;
     CameraPanelServices services_;
+    ICameraSyncCommands* syncCommands_ = nullptr;
     QLabel* uuidLabel_ = nullptr;
     QLineEdit* uidInput_ = nullptr;
     QListWidget* poseList_ = nullptr;
@@ -97,6 +106,17 @@ private:
     QPushButton* openJsonFolderButton_ = nullptr;
     QPushButton* openScreenshotFolderButton_ = nullptr;
     QPushButton* deleteButton_ = nullptr;
+    QLabel* cloudSyncSummaryLabel_ = nullptr;
+    QPushButton* cloudSyncButton_ = nullptr;
+    QDialog* cloudSyncDialog_ = nullptr;
+    QLabel* cloudKeyStatusLabel_ = nullptr;
+    QLineEdit* cloudApiKeyInput_ = nullptr;
+    QLineEdit* cloudBoardKeyInput_ = nullptr;
+    QLabel* cloudLastSyncLabel_ = nullptr;
+    QLabel* cloudSyncStatusLabel_ = nullptr;
+    QPushButton* saveCloudKeyButton_ = nullptr;
+    QPushButton* clearCloudKeyButton_ = nullptr;
+    QPushButton* syncNowButton_ = nullptr;
     ScreenshotBrowser* screenshotBrowser_ = nullptr;
     QString workspaceUuid_;
     QString cameraPoseLibraryPath_;

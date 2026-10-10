@@ -40,6 +40,11 @@ public:
 		OperationResult* result = nullptr) const = 0;
 	virtual QVector<SavedCameraPose> listAll(
 		OperationResult* result = nullptr) const = 0;
+	// Atomically replaces the library metadata with a synchronized snapshot.
+	// Screenshot source paths are copied into a new owned generation before the
+	// JSON file is replaced, so a failed import leaves the current library valid.
+	virtual OperationResult replaceAllForSync(
+		const QVector<SavedCameraPose>& poses) = 0;
 	virtual OperationResult load(
 		const QString& uuid,
 		const QString& viewId,
@@ -99,6 +104,8 @@ public:
 
 	QVector<SavedCameraPose> listAll(
 		OperationResult* result = nullptr) const override;
+	OperationResult replaceAllForSync(
+		const QVector<SavedCameraPose>& poses) override;
 
 	static QString normalizeUuid(const QString& value);
 

@@ -8,6 +8,7 @@
 class CameraPanel;
 class ColoringPanel;
 class ICameraCommands;
+class ICameraSyncCommands;
 class IColoringCommands;
 class QDragEnterEvent;
 class QDropEvent;
@@ -41,7 +42,9 @@ public:
     void refreshWorkspace();
     void bindColoringCommands(IColoringCommands& commands);
     void unbindColoringCommands();
-    void bindCameraCommands(ICameraCommands& commands);
+    void bindCameraCommands(
+        ICameraCommands& commands,
+        ICameraSyncCommands* syncCommands = nullptr);
     void unbindCameraCommands();
     void bindHoleFillingCommands(
         python_hole_filling::ICommands& commands);
@@ -111,5 +114,6 @@ private:
     QLabel* meshCountLabel_ = nullptr;
     ColoringPanel* coloringPanel_ = nullptr;
     CameraPanel* cameraPanel_ = nullptr;
+    bool cameraSyncAvailable_ = false;
     python_hole_filling::Panel* holeFillingPanel_ = nullptr;
 };

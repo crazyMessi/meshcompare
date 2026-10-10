@@ -254,7 +254,7 @@ void StandaloneMainWindow::refreshWorkspace()
     const bool viewSwitchingEnabled =
         state_.phase() == WorkspacePhase::Ready;
     coloringButton_->setEnabled(actionsEnabled);
-    cameraButton_->setEnabled(actionsEnabled);
+    cameraButton_->setEnabled(actionsEnabled || cameraSyncAvailable_);
     holeFillingButton_->setEnabled(viewSwitchingEnabled);
     overlayViewButton_->setEnabled(viewSwitchingEnabled);
     gridViewButton_->setEnabled(viewSwitchingEnabled);
@@ -319,10 +319,14 @@ void StandaloneMainWindow::unbindColoringCommands()
     coloringPanel_ = nullptr;
 }
 
-void StandaloneMainWindow::bindCameraCommands(ICameraCommands& commands)
+void StandaloneMainWindow::bindCameraCommands(
+    ICameraCommands& commands,
+    ICameraSyncCommands* syncCommands)
 {
     unbindCameraCommands();
-    cameraPanel_ = new CameraPanel(state_, commands, centralWidget());
+    cameraSyncAvailable_ = syncCommands != nullptr;
+    cameraPanel_ = new CameraPanel(
+        state_, commands, centralWidget(), {}, syncCommands);
     cameraPanel_->hide();
     connect(
         cameraPanel_,
@@ -341,6 +345,7 @@ void StandaloneMainWindow::unbindCameraCommands()
 {
     delete cameraPanel_;
     cameraPanel_ = nullptr;
+    cameraSyncAvailable_ = false;
 }
 
 void StandaloneMainWindow::bindHoleFillingCommands(

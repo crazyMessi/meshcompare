@@ -123,6 +123,22 @@ public:
         return records_;
     }
 
+    OperationResult replaceAllForSync(
+        const QVector<SavedCameraPose>& poses) override
+    {
+        ++replaceAllForSyncCount_;
+        if (!nextReplaceAllForSyncError_.isEmpty())
+            return OperationResult::failure(takeError(nextReplaceAllForSyncError_));
+        records_ = poses;
+        return OperationResult::success();
+    }
+
+    void failNextReplaceAllForSync(const QString& error)
+    {
+        nextReplaceAllForSyncError_ = error;
+    }
+    int replaceAllForSyncCount() const { return replaceAllForSyncCount_; }
+
     OperationResult load(
         const QString& uuid,
         const QString& viewId,
@@ -294,6 +310,7 @@ public:
         removeCount_ = 0;
         setTagsCount_ = 0;
         setDetailsCount_ = 0;
+        replaceAllForSyncCount_ = 0;
         lastSetDetailsUuid_.clear();
         lastSetDetailsViewId_.clear();
         lastSetDetailsTags_.clear();
@@ -334,11 +351,13 @@ private:
     QString nextSetTagsError_;
     QString nextSetNoteError_;
     QString nextSetDetailsError_;
+    QString nextReplaceAllForSyncError_;
     QString lastSetDetailsUuid_;
     QString lastSetDetailsViewId_;
     QStringList lastSetDetailsTags_;
     QString lastSetDetailsNote_;
     int setDetailsCount_ = 0;
+    int replaceAllForSyncCount_ = 0;
     mutable QStringList* trace_ = nullptr;
     std::function<void()> saveObserver_;
     mutable std::function<void()> listObserver_;

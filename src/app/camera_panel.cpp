@@ -1,6 +1,7 @@
 #include "camera_panel.h"
 
 #include "camera_commands.h"
+#include "camera_sync_commands.h"
 #include "screenshot_browser.h"
 #include "tag_editor.h"
 #include "../core/camera_pose_tags.h"
@@ -11,6 +12,8 @@
 #include <QClipboard>
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QDialog>
+#include <QFormLayout>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QHBoxLayout>
@@ -33,6 +36,8 @@ constexpr int PoseViewIdRole = Qt::UserRole;
 constexpr int PoseTagsRole = Qt::UserRole + 1;
 constexpr int PoseScreenshotPathRole = Qt::UserRole + 2;
 constexpr int PoseNoteRole = Qt::UserRole + 3;
+const QString DefaultCloudBoardKey =
+    QStringLiteral("meshcompare-camera-views");
 
 QDateTime parseSavedAtUtc(const QString& value)
 {
@@ -78,11 +83,13 @@ CameraPanel::CameraPanel(
     WorkspaceState& state,
     ICameraCommands& commands,
     QWidget* parent,
-    CameraPanelServices services)
+    CameraPanelServices services,
+    ICameraSyncCommands* syncCommands)
     : QFrame(parent),
       state_(state),
       commands_(commands),
-      services_(std::move(services))
+      services_(std::move(services)),
+      syncCommands_(syncCommands)
 {
     if (!services_.copyImageToClipboard) {
         services_.copyImageToClipboard = [](const QImage& image) {
@@ -232,6 +239,18 @@ CameraPanel::CameraPanel(
         tr("Open the folder containing the camera pose JSON library"));
     libraryHeader->addWidget(openJsonFolderButton_);
     libraryLayout->addLayout(libraryHeader);
+
+    auto* cloudSyncRow = new QHBoxLayout;
+    cloudSyncRow->setSpacing(7);
+    cloudSyncSummaryLabel_ = new QLabel(tr("Cloud · Not configured"), librarySection);
+    cloudSyncSummaryLabel_->setObjectName(QStringLiteral("cameraCloudSyncSummary"));
+    cloudSyncSummaryLabel_->setTextFormat(Qt::PlainText);
+    cloudSyncRow->addWidget(cloudSyncSummaryLabel_, 1);
+    cloudSyncButton_ = new QPushButton(tr("Cloud Sync"), librarySection);
+    cloudSyncButton_->setObjectName(QStringLiteral("cameraCloudSyncButton"));
+    cloudSyncButton_->setToolTip(tr("Configure and sync saved camera views"));
+    cloudSyncRow->addWidget(cloudSyncButton_);
+    libraryLayout->addLayout(cloudSyncRow);
 
     poseList_ = new QListWidget(librarySection);
     poseList_->setObjectName(QStringLiteral("cameraPoseList"));
@@ -424,7 +443,38 @@ CameraPanel::CameraPanel(
         &QPushButton::clicked,
         this,
         &CameraPanel::deleteSelectedPose);
+    connect(
+        cloudSyncButton_,
+        &QPushButton::clicked,
+        this,
+        &CameraPanel::openCloudSyncDialog);
+    if (syncCommands_ != nullptr) {
+        connect(
+            syncCommands_,
+            &ICameraSyncCommands::cameraSyncStateChanged,
+            this,
+            &CameraPanel::refreshCloudSyncUi);
+        connect(
+            syncCommands_,
+            &ICameraSyncCommands::cameraSyncCompleted,
+            this,
+            [this] {
+                refreshFromState();
+                refreshCloudSyncUi();
+                const CameraSyncSnapshot snapshot =
+                    syncCommands_->cameraSyncSnapshot();
+                if (!snapshot.result.ok) {
+                    reportFailure(snapshot.result);
+                } else if (snapshot.lastSyncSucceeded) {
+                    emit confirmationMessage(tr("Cloud sync completed."));
+                } else if (!snapshot.statusMessage.isEmpty()) {
+                    reportFailure(OperationResult::failure(
+                        snapshot.statusMessage));
+                }
+            });
+    }
 
+    refreshCloudSyncUi();
     refreshFromState();
 }
 
@@ -805,6 +855,293 @@ void CameraPanel::openSelectedScreenshotFolder()
         reportFailure(OperationResult::failure(
             tr("The screenshot folder could not be opened.")));
     }
+}
+
+void CameraPanel::openCloudSyncDialog()
+{
+    if (syncCommands_ == nullptr)
+        return;
+
+    if (cloudSyncDialog_ == nullptr) {
+        cloudSyncDialog_ = new QDialog(this);
+        cloudSyncDialog_->setObjectName(QStringLiteral("cameraCloudSyncDialog"));
+        cloudSyncDialog_->setWindowTitle(tr("Cloud Sync"));
+        cloudSyncDialog_->setWindowModality(Qt::NonModal);
+        cloudSyncDialog_->setMinimumWidth(430);
+
+        auto* root = new QVBoxLayout(cloudSyncDialog_);
+        root->setContentsMargins(16, 16, 16, 16);
+        root->setSpacing(10);
+
+        auto* title = new QLabel(tr("Cloud Sync"), cloudSyncDialog_);
+        title->setObjectName(QStringLiteral("cameraCloudSyncTitle"));
+        root->addWidget(title);
+
+        auto* explanation = new QLabel(
+            tr("Sync saved views, screenshots, tags, and notes to Cloud Board."),
+            cloudSyncDialog_);
+        explanation->setObjectName(QStringLiteral("cameraCloudSyncExplanation"));
+        explanation->setWordWrap(true);
+        root->addWidget(explanation);
+
+        cloudKeyStatusLabel_ = new QLabel(cloudSyncDialog_);
+        cloudKeyStatusLabel_->setObjectName(
+            QStringLiteral("cameraCloudKeyStatus"));
+        cloudKeyStatusLabel_->setTextFormat(Qt::PlainText);
+        root->addWidget(cloudKeyStatusLabel_);
+
+        auto* form = new QFormLayout;
+        form->setHorizontalSpacing(10);
+        form->setVerticalSpacing(8);
+        cloudApiKeyInput_ = new QLineEdit(cloudSyncDialog_);
+        cloudApiKeyInput_->setObjectName(
+            QStringLiteral("cameraCloudApiKeyInput"));
+        cloudApiKeyInput_->setAccessibleName(tr("Cloud Board API key"));
+        cloudApiKeyInput_->setEchoMode(QLineEdit::Password);
+        cloudApiKeyInput_->setClearButtonEnabled(true);
+        cloudApiKeyInput_->setPlaceholderText(tr("Paste API key"));
+        form->addRow(tr("API key"), cloudApiKeyInput_);
+
+        cloudBoardKeyInput_ = new QLineEdit(cloudSyncDialog_);
+        cloudBoardKeyInput_->setObjectName(
+            QStringLiteral("cameraCloudBoardKeyInput"));
+        cloudBoardKeyInput_->setAccessibleName(tr("Cloud Board key"));
+        cloudBoardKeyInput_->setText(DefaultCloudBoardKey);
+        form->addRow(tr("Board key"), cloudBoardKeyInput_);
+        root->addLayout(form);
+
+        auto* keyActions = new QHBoxLayout;
+        keyActions->setSpacing(7);
+        saveCloudKeyButton_ = new QPushButton(tr("Save Key"), cloudSyncDialog_);
+        saveCloudKeyButton_->setObjectName(
+            QStringLiteral("cameraCloudSaveKeyButton"));
+        keyActions->addWidget(saveCloudKeyButton_);
+        clearCloudKeyButton_ = new QPushButton(tr("Clear Key"), cloudSyncDialog_);
+        clearCloudKeyButton_->setObjectName(
+            QStringLiteral("cameraCloudClearKeyButton"));
+        keyActions->addWidget(clearCloudKeyButton_);
+        keyActions->addStretch(1);
+        root->addLayout(keyActions);
+
+        cloudLastSyncLabel_ = new QLabel(cloudSyncDialog_);
+        cloudLastSyncLabel_->setObjectName(
+            QStringLiteral("cameraCloudLastSync"));
+        cloudLastSyncLabel_->setTextFormat(Qt::PlainText);
+        root->addWidget(cloudLastSyncLabel_);
+
+        cloudSyncStatusLabel_ = new QLabel(cloudSyncDialog_);
+        cloudSyncStatusLabel_->setObjectName(
+            QStringLiteral("cameraCloudSyncStatus"));
+        cloudSyncStatusLabel_->setTextFormat(Qt::PlainText);
+        cloudSyncStatusLabel_->setWordWrap(true);
+        root->addWidget(cloudSyncStatusLabel_);
+
+        auto* syncActions = new QHBoxLayout;
+        syncActions->setSpacing(7);
+        syncNowButton_ = new QPushButton(tr("Sync Now"), cloudSyncDialog_);
+        syncNowButton_->setObjectName(
+            QStringLiteral("cameraCloudSyncNowButton"));
+        syncActions->addWidget(syncNowButton_);
+        syncActions->addStretch(1);
+        auto* closeButton = new QPushButton(tr("Close"), cloudSyncDialog_);
+        closeButton->setObjectName(
+            QStringLiteral("cameraCloudSyncCloseButton"));
+        syncActions->addWidget(closeButton);
+        root->addLayout(syncActions);
+
+        connect(
+            cloudApiKeyInput_,
+            &QLineEdit::textChanged,
+            this,
+            [this] {
+                if (saveCloudKeyButton_ != nullptr &&
+                    syncCommands_ != nullptr) {
+                    const CameraSyncSnapshot snapshot =
+                        syncCommands_->cameraSyncSnapshot();
+                    saveCloudKeyButton_->setEnabled(
+                        !snapshot.syncing &&
+                        !cloudApiKeyInput_->text().trimmed().isEmpty());
+                }
+            });
+        connect(
+            cloudBoardKeyInput_,
+            &QLineEdit::textChanged,
+            this,
+            [this] {
+                if (syncNowButton_ != nullptr && syncCommands_ != nullptr) {
+                    const CameraSyncSnapshot snapshot =
+                        syncCommands_->cameraSyncSnapshot();
+                    syncNowButton_->setEnabled(
+                        snapshot.configured &&
+                        !snapshot.syncing &&
+                        !cloudBoardKeyInput_->text().trimmed().isEmpty());
+                }
+            });
+        connect(
+            saveCloudKeyButton_,
+            &QPushButton::clicked,
+            this,
+            &CameraPanel::saveCloudApiKey);
+        connect(
+            clearCloudKeyButton_,
+            &QPushButton::clicked,
+            this,
+            &CameraPanel::clearCloudApiKey);
+        connect(
+            syncNowButton_,
+            &QPushButton::clicked,
+            this,
+            &CameraPanel::startCloudSync);
+        connect(
+            closeButton,
+            &QPushButton::clicked,
+            cloudSyncDialog_,
+            &QDialog::close);
+    }
+
+    refreshCloudSyncUi();
+    cloudSyncDialog_->show();
+    cloudSyncDialog_->raise();
+    cloudSyncDialog_->activateWindow();
+}
+
+void CameraPanel::refreshCloudSyncUi()
+{
+    if (syncCommands_ == nullptr) {
+        cloudSyncSummaryLabel_->setText(tr("Cloud · Unavailable"));
+        cloudSyncButton_->setEnabled(false);
+        return;
+    }
+
+    const CameraSyncSnapshot snapshot = syncCommands_->cameraSyncSnapshot();
+    cloudSyncButton_->setEnabled(true);
+    if (!snapshot.result.ok) {
+        cloudSyncSummaryLabel_->setText(tr("Cloud · Needs attention"));
+    } else if (snapshot.syncing) {
+        cloudSyncSummaryLabel_->setText(tr("Cloud · Syncing…"));
+    } else if (!snapshot.configured) {
+        cloudSyncSummaryLabel_->setText(tr("Cloud · Not configured"));
+    } else if (!snapshot.lastSyncAtUtc.isEmpty() &&
+               snapshot.lastSyncSucceeded) {
+        cloudSyncSummaryLabel_->setText(
+            tr("Cloud · Synced %1").arg(
+                poseDisplayTime(snapshot.lastSyncAtUtc)));
+    } else if (!snapshot.lastSyncAtUtc.isEmpty()) {
+        cloudSyncSummaryLabel_->setText(tr("Cloud · Last sync failed"));
+    } else {
+        cloudSyncSummaryLabel_->setText(tr("Cloud · Ready"));
+    }
+
+    if (cloudSyncDialog_ == nullptr)
+        return;
+
+    cloudKeyStatusLabel_->setText(
+        snapshot.configured
+            ? tr("API key: Saved")
+            : tr("API key: Not configured"));
+    if (!cloudBoardKeyInput_->isModified()) {
+        cloudBoardKeyInput_->setText(
+            snapshot.boardKey.trimmed().isEmpty()
+                ? DefaultCloudBoardKey
+                : snapshot.boardKey.trimmed());
+        cloudBoardKeyInput_->setModified(false);
+    }
+    cloudLastSyncLabel_->setText(
+        snapshot.lastSyncAtUtc.isEmpty()
+            ? tr("Last sync: Never")
+            : tr("Last sync: %1 · %2")
+                  .arg(
+                      poseDisplayTime(snapshot.lastSyncAtUtc),
+                      snapshot.lastSyncSucceeded
+                          ? tr("Succeeded")
+                          : tr("Failed")));
+
+    if (!snapshot.result.ok) {
+        cloudSyncStatusLabel_->setText(snapshot.result.error);
+    } else if (snapshot.syncing) {
+        cloudSyncStatusLabel_->setText(
+            snapshot.statusMessage.isEmpty()
+                ? tr("Syncing camera views…")
+                : snapshot.statusMessage);
+    } else if (!snapshot.statusMessage.isEmpty()) {
+        cloudSyncStatusLabel_->setText(snapshot.statusMessage);
+    } else if (!snapshot.configured) {
+        cloudSyncStatusLabel_->setText(
+            tr("Save an API key before syncing."));
+    } else {
+        cloudSyncStatusLabel_->clear();
+    }
+
+    const bool controlsEnabled = !snapshot.syncing;
+    cloudApiKeyInput_->setEnabled(controlsEnabled);
+    cloudBoardKeyInput_->setEnabled(controlsEnabled);
+    saveCloudKeyButton_->setEnabled(
+        controlsEnabled &&
+        !cloudApiKeyInput_->text().trimmed().isEmpty());
+    clearCloudKeyButton_->setEnabled(
+        controlsEnabled &&
+        (snapshot.configured || snapshot.credentialStored));
+    syncNowButton_->setEnabled(
+        controlsEnabled && snapshot.configured &&
+        !cloudBoardKeyInput_->text().trimmed().isEmpty());
+}
+
+void CameraPanel::saveCloudApiKey()
+{
+    if (syncCommands_ == nullptr || cloudApiKeyInput_ == nullptr)
+        return;
+    const QString apiKey = cloudApiKeyInput_->text();
+    if (apiKey.trimmed().isEmpty()) {
+        cloudSyncStatusLabel_->setText(tr("Enter an API key to save."));
+        return;
+    }
+    const OperationResult result = syncCommands_->configureApiKey(apiKey);
+    if (!result.ok) {
+        cloudSyncStatusLabel_->setText(
+            tr("Could not save the API key: %1").arg(result.error));
+        reportFailure(result);
+        return;
+    }
+    cloudApiKeyInput_->clear();
+    refreshCloudSyncUi();
+    emit confirmationMessage(tr("Cloud API key saved."));
+}
+
+void CameraPanel::clearCloudApiKey()
+{
+    if (syncCommands_ == nullptr)
+        return;
+    const OperationResult result = syncCommands_->clearApiKey();
+    if (!result.ok) {
+        cloudSyncStatusLabel_->setText(
+            tr("Could not clear the API key: %1").arg(result.error));
+        reportFailure(result);
+        return;
+    }
+    if (cloudApiKeyInput_ != nullptr)
+        cloudApiKeyInput_->clear();
+    refreshCloudSyncUi();
+    emit confirmationMessage(tr("Cloud API key cleared."));
+}
+
+void CameraPanel::startCloudSync()
+{
+    if (syncCommands_ == nullptr || cloudBoardKeyInput_ == nullptr)
+        return;
+    const QString boardKey = cloudBoardKeyInput_->text().trimmed();
+    if (boardKey.isEmpty()) {
+        cloudSyncStatusLabel_->setText(tr("Enter a board key before syncing."));
+        return;
+    }
+    const OperationResult result = syncCommands_->startCameraSync(boardKey);
+    if (!result.ok) {
+        cloudSyncStatusLabel_->setText(
+            tr("Could not start cloud sync: %1").arg(result.error));
+        reportFailure(result);
+        return;
+    }
+    cloudBoardKeyInput_->setModified(false);
+    refreshCloudSyncUi();
 }
 
 void CameraPanel::deleteSelectedPose()

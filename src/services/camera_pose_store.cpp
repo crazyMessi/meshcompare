@@ -16,7 +16,9 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QImage>
+#include <QImageReader>
 #include <QImageWriter>
+#include <QMap>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSet>
@@ -1251,6 +1253,147 @@ QVector<SavedCameraPose> CameraPoseStore::listAll(OperationResult* result) const
 		poses.push_back(savedPose(view, storagePath_));
 	setResult(result, OperationResult::success());
 	return poses;
+}
+
+OperationResult CameraPoseStore::replaceAllForSync(
+	const QVector<SavedCameraPose>& poses)
+{
+	ParsedLibrary current;
+	const OperationResult readResult = readLibraryFile(storagePath_, true, &current);
+	if (!readResult.ok)
+		return readResult;
+
+	const QString generation = QStringLiteral("sync-%1")
+		.arg(QUuid::createUuid().toString(QUuid::Id128));
+	const QString generationRelative =
+		QDir(ScreenshotDirectoryName).filePath(generation);
+	QString generationPath;
+	const OperationResult generationPathResult = resolveScreenshotPath(
+		storagePath_, QDir(generationRelative).filePath(QStringLiteral("placeholder")),
+		&generationPath);
+	if (!generationPathResult.ok)
+		return generationPathResult;
+	generationPath = QFileInfo(generationPath).absolutePath();
+
+	QMap<QString, QJsonArray> collections;
+	QSet<QString> identities;
+	QSet<QString> synchronizedScreenshotPaths;
+	for (const SavedCameraPose& source : poses) {
+		const QString uuid = normalizeUuid(source.uuid);
+		if (uuid.isEmpty()) {
+			QDir(generationPath).removeRecursively();
+			return invalidUuidResult();
+		}
+		if (source.viewId.isEmpty() || source.pose.viewStateXml.isEmpty()) {
+			QDir(generationPath).removeRecursively();
+			return failure(QStringLiteral(
+				"A synchronized camera view is missing its ID or camera data."));
+		}
+		if (!source.savedAtUtc.isEmpty()
+			&& !parseTimestamp(source.savedAtUtc).isValid()) {
+			QDir(generationPath).removeRecursively();
+			return failure(QStringLiteral(
+				"A synchronized camera view has an invalid saved time."));
+		}
+		const QString identity = uuid + QChar(0x1f) + source.viewId;
+		if (identities.contains(identity)) {
+			QDir(generationPath).removeRecursively();
+			return failure(QStringLiteral(
+				"The synchronized camera views contain a duplicate view ID."));
+		}
+		identities.insert(identity);
+
+		const QStringList tags =
+			meshcompare::normalizeCameraPoseTags(source.tags);
+		QJsonObject view;
+		view.insert(ViewIdKey, source.viewId);
+		if (!source.savedAtUtc.isEmpty())
+			view.insert(SavedAtUtcKey, source.savedAtUtc);
+		view.insert(ParametersKey, poseParameters(source.pose.viewStateXml));
+		view.insert(ViewStateXmlKey, source.pose.viewStateXml);
+		view.insert(TagsKey, QJsonArray::fromStringList(tags));
+		if (!source.note.isEmpty())
+			view.insert(NoteKey, source.note);
+
+		if (!source.screenshotPath.isEmpty()) {
+			const QFileInfo sourceInfo(source.screenshotPath);
+			if (!sourceInfo.isFile() || sourceInfo.isSymLink()) {
+				QDir(generationPath).removeRecursively();
+				return failure(QStringLiteral(
+					"A synchronized camera screenshot is unavailable."));
+			}
+			QImageReader reader(source.screenshotPath);
+			const QImage image = reader.read();
+			if (image.isNull()) {
+				QDir(generationPath).removeRecursively();
+				return failure(QStringLiteral(
+					"A synchronized camera screenshot cannot be decoded."));
+			}
+			const QString relativePath = QDir(generationRelative).filePath(
+				QDir(readablePathComponent(uuid)).filePath(
+					QDir(screenshotClassification(tags)).filePath(
+						readablePathComponent(source.viewId)
+						+ QStringLiteral(".png"))));
+			QString destinationPath;
+			const OperationResult resolved = resolveScreenshotPath(
+				storagePath_, relativePath, &destinationPath);
+			if (!resolved.ok) {
+				QDir(generationPath).removeRecursively();
+				return resolved;
+			}
+			if (!QDir().mkpath(QFileInfo(destinationPath).absolutePath()) ||
+				!QFile::copy(source.screenshotPath, destinationPath)) {
+				QDir(generationPath).removeRecursively();
+				return failure(QStringLiteral(
+					"A synchronized camera screenshot could not be copied."));
+			}
+			view.insert(ScreenshotPathKey, relativePath);
+			synchronizedScreenshotPaths.insert(relativePath.toCaseFolded());
+		}
+		collections[uuid].append(view);
+	}
+
+	QJsonObject newPoses;
+	for (auto it = collections.cbegin(); it != collections.cend(); ++it)
+		newPoses.insert(it.key(), it.value());
+	QJsonObject root = current.root;
+	root.insert(SchemaKey, 2);
+	root.insert(PosesKey, newPoses);
+	ParsedLibrary validated;
+	const OperationResult valid = parseLibraryRoot(root, &validated);
+	if (!valid.ok) {
+		QDir(generationPath).removeRecursively();
+		return valid;
+	}
+	const OperationResult written = writeLibraryFile(storagePath_, root);
+	if (!written.ok) {
+		QDir(generationPath).removeRecursively();
+		return written;
+	}
+
+	// The JSON replacement is now durable, so screenshots referenced only by
+	// the previous snapshot can be removed without risking a broken library.
+	// Cleanup is best-effort; a locked file merely remains as an orphan.
+	for (auto collection = current.collections.cbegin();
+		 collection != current.collections.cend(); ++collection) {
+		for (const ParsedView& previous : collection.value().views) {
+			if (previous.screenshotRelativePath.isEmpty() ||
+				synchronizedScreenshotPaths.contains(
+					previous.screenshotRelativePath.toCaseFolded())) {
+				continue;
+			}
+			QString previousPath;
+			if (resolveScreenshotPath(
+					storagePath_,
+					previous.screenshotRelativePath,
+					&previousPath).ok) {
+				const QFileInfo previousInfo(previousPath);
+				if (previousInfo.isFile() && !previousInfo.isSymLink())
+					QFile::remove(previousPath);
+			}
+		}
+	}
+	return written;
 }
 
 QString CameraPoseStore::normalizeUuid(const QString& value)

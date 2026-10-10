@@ -9,6 +9,9 @@
 #include "infrastructure/meshlab/meshlab_mesh_loader.h"
 #include "renderer/meshlab/mesh_lab_renderer_adapter.h"
 #include "services/camera_pose_store.h"
+#include "services/camera_cloud_sync_service.h"
+#include "services/cloud_api_key_store.h"
+#include "services/cloud_board_client.h"
 #include "services/diagnostics_log.h"
 #include "services/mesh_import_service.h"
 #include "services/surface_comparison.h"
@@ -20,6 +23,7 @@
 
 #include <QCoreApplication>
 #include <QDebug>
+#include <QDir>
 #include <QGuiApplication>
 #include <QFileInfo>
 #include <QLocale>
@@ -178,6 +182,14 @@ int main(int argc, char** argv)
         StandaloneMainWindow window(state);
         WorkspaceController controller(
             state, importer, renderer, comparer, cameraStore);
+        CloudBoardClient cloudBoardClient;
+        CloudApiKeyStore cloudApiKeyStore;
+        CameraCloudSyncService cameraCloudSync(
+            cameraStore,
+            cloudBoardClient,
+            cloudApiKeyStore,
+            QDir(applicationDataRoot).filePath(
+                QStringLiteral("camera_cloud_sync_state.json")));
         DiagnosticsMenu diagnosticsMenu(
             renderer, state, diagnosticsLog, &window);
         window.setDiagnosticsMenu(&diagnosticsMenu);
@@ -371,7 +383,7 @@ int main(int argc, char** argv)
             return exitCode;
         }
         window.bindColoringCommands(controller);
-        window.bindCameraCommands(controller);
+        window.bindCameraCommands(controller, &cameraCloudSync);
         window.bindHoleFillingCommands(controller);
 
         window.resize(1440, 900);
