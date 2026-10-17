@@ -246,7 +246,7 @@ CameraPanel::CameraPanel(
     cloudSyncSummaryLabel_->setObjectName(QStringLiteral("cameraCloudSyncSummary"));
     cloudSyncSummaryLabel_->setTextFormat(Qt::PlainText);
     cloudSyncRow->addWidget(cloudSyncSummaryLabel_, 1);
-    cloudSyncButton_ = new QPushButton(tr("Cloud Sync"), librarySection);
+    cloudSyncButton_ = new QPushButton(tr("Sync to Cloud…"), librarySection);
     cloudSyncButton_->setObjectName(QStringLiteral("cameraCloudSyncButton"));
     cloudSyncButton_->setToolTip(tr("Configure and sync saved camera views"));
     cloudSyncRow->addWidget(cloudSyncButton_);

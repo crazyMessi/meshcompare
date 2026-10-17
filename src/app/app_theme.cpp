@@ -309,7 +309,8 @@ QLabel#cameraEmptyStateLabel {
 QPushButton#saveCameraPoseButton,
 QPushButton#saveCameraPoseAndCopyScreenshotButton,
 QPushButton#saveCameraPoseChangesButton,
-QPushButton#screenshotSaveChanges {
+QPushButton#screenshotSaveChanges,
+QPushButton#cameraCloudSyncButton {
     min-height: 34px;
     color: #FFFFFF;
     background: #3C64D9;
@@ -320,21 +321,24 @@ QPushButton#screenshotSaveChanges {
 QPushButton#saveCameraPoseButton:hover,
 QPushButton#saveCameraPoseAndCopyScreenshotButton:hover,
 QPushButton#saveCameraPoseChangesButton:hover,
-QPushButton#screenshotSaveChanges:hover {
+QPushButton#screenshotSaveChanges:hover,
+QPushButton#cameraCloudSyncButton:hover {
     background: #4B73EA;
 }
 
 QPushButton#saveCameraPoseButton:pressed,
 QPushButton#saveCameraPoseAndCopyScreenshotButton:pressed,
 QPushButton#saveCameraPoseChangesButton:pressed,
-QPushButton#screenshotSaveChanges:pressed {
+QPushButton#screenshotSaveChanges:pressed,
+QPushButton#cameraCloudSyncButton:pressed {
     background: #3155C2;
 }
 
 QPushButton#saveCameraPoseButton:disabled,
 QPushButton#saveCameraPoseAndCopyScreenshotButton:disabled,
 QPushButton#saveCameraPoseChangesButton:disabled,
-QPushButton#screenshotSaveChanges:disabled {
+QPushButton#screenshotSaveChanges:disabled,
+QPushButton#cameraCloudSyncButton:disabled {
     color: #8B8C87;
     background: #333430;
     border-color: #484944;
